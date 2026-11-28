@@ -97,6 +97,31 @@ pub(super) fn module_object_bindings(source: &SourceText<'_>, statements: &[Stmt
         .collect()
 }
 
+/// The module-scope names that may not hold their single binding: bound
+/// more than once at module scope (an import plus an assignment, `def`,
+/// `del`, loop/`with`/`except` target), bound by a walrus or a `global`
+/// declaration, or written as a module attribute in this file. `*` alone
+/// when the module's bindings cannot be enumerated (a star import, a
+/// module-scope `match`, or a dynamic namespace writer), so no imported
+/// name is trusted (#14150).
+pub(super) fn module_rebound_names(source: &str, statements: &[Stmt]) -> Vec<String> {
+    let facts = ModuleBindingFacts::of(source, statements);
+    if facts.opaque {
+        return vec!["*".to_string()];
+    }
+    let mut names: Vec<String> = facts
+        .counts
+        .iter()
+        .filter(|(_, count)| **count != 1)
+        .map(|(name, _)| name.clone())
+        .collect();
+    names.extend(facts.rebound.iter().cloned());
+    names.extend(facts.attributes.iter().cloned());
+    names.sort();
+    names.dedup();
+    names
+}
+
 /// A module-scope `NAME = <value>` binding nothing in the module rebinds,
 /// with the byte offset where its statement starts.
 #[derive(Clone, Copy, Debug)]
@@ -609,6 +634,21 @@ impl PythonTestRebinding {
             .chain(self.foreign_attributes.iter())
             .any(|attribute| attribute == name || attribute == "*")
     }
+
+    /// Whether the test file, or a workspace write on its module, may assign
+    /// a dunder attribute (`Rates.__getattribute__ = ...`), which can change
+    /// what a class builds or looks up.
+    pub(super) fn assigns_dunder_attribute(&self) -> bool {
+        self.attributes
+            .iter()
+            .chain(self.foreign_attributes.iter())
+            .any(|attribute| {
+                attribute == "*"
+                    || (attribute.len() > 4
+                        && attribute.starts_with("__")
+                        && attribute.ends_with("__"))
+            })
+    }
 }
 
 /// Rebinding facts from one test function's own scope: its parameters and
@@ -671,7 +711,12 @@ pub(super) fn with_module_rebinding(
     module_names.sort();
     module_names.dedup();
     let module_names = Arc::new(module_names);
+    // `collect_scope_bindings` does not record `:=` targets, and a module
+    // statement such as `if TypeError := Exception: pass` binds a module
+    // name. Every walrus target in the source is counted as bound: a
+    // function-local one only makes a consumer decline (#13869).
     let mut module_bound = module.names.clone();
+    module_bound.extend(walrus_target_names(source).into_iter().map(str::to_string));
     module_bound.sort();
     module_bound.dedup();
     let module_bound = Arc::new(module_bound);
@@ -1027,7 +1072,7 @@ pub(super) fn visit_exprs_in_statements(statements: &[Stmt], visit: &mut impl Fn
     });
 }
 
-fn walk_arguments(args: &ast::Arguments, visit: &mut impl FnMut(&Expr)) {
+pub(super) fn walk_arguments(args: &ast::Arguments, visit: &mut impl FnMut(&Expr)) {
     for default in args
         .posonlyargs
         .iter()
@@ -1049,7 +1094,7 @@ fn walk_arguments(args: &ast::Arguments, visit: &mut impl FnMut(&Expr)) {
     }
 }
 
-fn walk_expr(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
+pub(super) fn walk_expr(expr: &Expr, visit: &mut impl FnMut(&Expr)) {
     visit(expr);
     match expr {
         Expr::BoolOp(bool_op) => {
@@ -1783,7 +1828,7 @@ fn collect_global_declarations(statements: &[Stmt], out: &mut Vec<String>) {
 }
 
 /// Visit statement suites at every nesting depth, without crossing expressions.
-fn visit_statements<F: FnMut(&Stmt)>(statements: &[Stmt], out: &mut F) {
+pub(super) fn visit_statements<F: FnMut(&Stmt)>(statements: &[Stmt], out: &mut F) {
     visit_statements_while(statements, &mut |stmt| {
         out(stmt);
         true

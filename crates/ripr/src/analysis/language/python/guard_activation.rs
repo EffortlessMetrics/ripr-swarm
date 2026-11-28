@@ -58,6 +58,87 @@ pub(super) fn python_guarded_arm_gap(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Option<GuardedArmGap> {
+    guarded_arm_gap(
+        owner,
+        owner_source,
+        changed_line,
+        related_candidates,
+        focus,
+        None,
+    )
+}
+
+/// [`python_guarded_arm_gap`] for a removed line read in the old file
+/// (#11889). Module constants and locals resolve on the new side, which an
+/// old-side guard cannot trust, so only what names nothing but the owner's
+/// `parameters` is evaluated:
+///
+/// - an enclosing guard is read through its parameter-only `and` conjuncts.
+///   One provably false conjunct makes the conjunction false whatever the
+///   dropped ones say (`seq_index is None and start < 0` under `start = 0`).
+///   A guard holding `or` or a conditional expression is read whole or not at
+///   all, since dropping an operand there can turn a true guard false;
+/// - an early exit or an `if`/`elif` chain condition excludes a row by
+///   HOLDING, which a partial conjunction cannot show, so it is read only when
+///   the whole condition names parameters alone.
+pub(super) fn python_old_side_guarded_arm_gap(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+    parameters: &[String],
+) -> Option<GuardedArmGap> {
+    guarded_arm_gap(
+        owner,
+        owner_source,
+        changed_line,
+        related_candidates,
+        focus,
+        Some(parameters),
+    )
+}
+
+/// The part of an enclosing guard an old-side read may evaluate: the whole
+/// condition when it names only `parameters`, else its parameter-only `and`
+/// conjuncts, else nothing.
+pub(super) fn parameter_only_guard(condition: &str, parameters: &[String]) -> Option<String> {
+    use super::deleted_lines::guard_names_only_parameters;
+    let conjuncts = super::guard_atoms::split_top_level(condition, " and ");
+    // A dropped call or walrus can rebind a parameter used by a kept
+    // conjunct. Evaluating only the kept text would then use the call-time
+    // value for a different runtime value (#14273).
+    if conjuncts
+        .iter()
+        .any(|conjunct| conjunct_can_rebind(conjunct))
+    {
+        return None;
+    }
+    if guard_names_only_parameters(condition, parameters) {
+        return Some(condition.to_string());
+    }
+    if ["or", "if", "else", "lambda", "for"]
+        .iter()
+        .any(|keyword| keyword_outside_quotes(condition, keyword))
+    {
+        return None;
+    }
+    let kept: Vec<&str> = conjuncts
+        .into_iter()
+        .map(str::trim)
+        .filter(|conjunct| guard_names_only_parameters(conjunct, parameters))
+        .collect();
+    (!kept.is_empty()).then(|| kept.join(" and "))
+}
+
+fn guarded_arm_gap(
+    owner: &PythonOwner,
+    owner_source: &str,
+    changed_line: usize,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+    old_side_parameters: Option<&[String]>,
+) -> Option<GuardedArmGap> {
     let GuardWalk {
         conditions,
         else_chains,
@@ -66,6 +147,29 @@ pub(super) fn python_guarded_arm_gap(
     if conditions.is_empty() && early_exits.is_empty() && else_chains.is_empty() {
         return None;
     }
+    // What each kind of condition may be evaluated as. The reported
+    // conditions stay whole; an unreadable one simply never excludes a row.
+    let readable_guards: Vec<(usize, String)> = conditions
+        .iter()
+        .filter_map(|(line, condition)| match old_side_parameters {
+            None => Some((*line, condition.clone())),
+            Some(parameters) => {
+                parameter_only_guard(condition, parameters).map(|kept| (*line, kept))
+            }
+        })
+        .collect();
+    let readable_whole = |list: &[(usize, String)]| -> Vec<(usize, String)> {
+        list.iter()
+            .filter(|(_, condition)| {
+                old_side_parameters.is_none_or(|parameters| {
+                    super::deleted_lines::guard_names_only_parameters(condition, parameters)
+                })
+            })
+            .cloned()
+            .collect()
+    };
+    let readable_exits = readable_whole(&early_exits);
+    let readable_chains = readable_whole(&else_chains);
     let constants = unrebound_constants(owner, related_candidates);
     let (rows, gaps) =
         strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
@@ -89,7 +193,7 @@ pub(super) fn python_guarded_arm_gap(
     // unevaluable guard is never excluded, so one unreadable input keeps
     // the verdict.
     let every_row_excluded = rows.iter().all(|row| {
-        conditions.iter().any(|(condition_line, condition)| {
+        readable_guards.iter().any(|(condition_line, condition)| {
             super::guard_atoms::guard_condition_holds(
                 owner,
                 condition,
@@ -98,7 +202,7 @@ pub(super) fn python_guarded_arm_gap(
                 &constants,
                 owner_source,
             ) == Some(false)
-        }) || early_exits.iter().any(|(condition_line, condition)| {
+        }) || readable_exits.iter().any(|(condition_line, condition)| {
             // A row that satisfies an earlier `if X: return ...` leaves the
             // owner before the changed line, so the line never runs for it.
             super::guard_atoms::guard_condition_holds(
@@ -109,7 +213,7 @@ pub(super) fn python_guarded_arm_gap(
                 &constants,
                 owner_source,
             ) == Some(true)
-        }) || else_chains.iter().any(|(condition_line, condition)| {
+        }) || readable_chains.iter().any(|(condition_line, condition)| {
             // A row that satisfies any condition of the `if`/`elif` chain
             // owning an `else` arm takes an earlier arm, so the `else` arm
             // holding the changed line never runs for it (#9184).
@@ -357,13 +461,17 @@ fn entered_if_conditions(
         return None;
     }
     let changed = lines.get(changed_index)?;
-    if changed.trim().is_empty() {
+    // An unindented line has no enclosing `if`: every condition below must be
+    // indented less than it. Answer before lexing the whole prefix, which per
+    // changed top-level statement cost O(changed lines x file) (#16426).
+    if changed.trim().is_empty() || leading_whitespace(changed) == 0 {
         return None;
     }
     let ends = super::guard_credit::safe_prefix_line_ends(owner, owner_source, changed_index)?;
     // Python expands tabs and resets indentation on form-feed. Only code
     // indentation matters; comments and string interiors cannot add ancestors.
-    if (owner.start_line..=changed_index).any(|index| {
+    let body_start = owner_body_start(owner_source, owner);
+    if (body_start..=changed_index).any(|index| {
         (index == changed_index || ends[index].is_some())
             && lines[index]
                 .chars()
@@ -381,7 +489,7 @@ fn entered_if_conditions(
         .collect();
     let mut threshold = leading_whitespace(changed);
     let mut conditions = Vec::new();
-    for index in (owner.start_line..changed_index).rev() {
+    for index in (body_start..changed_index).rev() {
         let Some(end) = ends[index] else { continue };
         let raw = owner_source.get(starts[index]..end)?;
         let trimmed = raw.trim();
@@ -472,7 +580,8 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
     let mut else_chains = Vec::new();
     // Docstring text that reads like `else:` / `if X:` is not a branch.
     let scan = scan_triple_quotes(&lines);
-    for index in (owner.start_line..changed_index).rev() {
+    let body_start = owner_body_start(owner_source, owner);
+    for index in (body_start..changed_index).rev() {
         let (masked, starts_in_code) = scan[index];
         let raw = lines[index];
         let trimmed = raw.trim();
@@ -514,7 +623,7 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
             if trimmed != "else:" {
                 return None;
             }
-            else_chains.extend(else_chain_conditions(&lines, index, owner)?);
+            else_chains.extend(else_chain_conditions(&lines, index, body_start)?);
             threshold = indent;
             continue;
         }
@@ -559,13 +668,13 @@ fn walk_guards(owner: &PythonOwner, owner_source: &str, changed_line: usize) -> 
 fn else_chain_conditions(
     lines: &[&str],
     else_index: usize,
-    owner: &PythonOwner,
+    body_start: usize,
 ) -> Option<Vec<(usize, String)>> {
     let scan = scan_triple_quotes(lines);
     let in_string: Vec<bool> = scan.iter().map(|(inside, _)| *inside).collect();
     let else_indent = leading_whitespace(lines.get(else_index)?);
     let mut chain = Vec::new();
-    for index in (owner.start_line..else_index).rev() {
+    for index in (body_start..else_index).rev() {
         let raw = lines[index];
         let trimmed = raw.trim();
         // A sibling header that opens a multi-line string (a `for`/`while`
@@ -738,7 +847,7 @@ fn early_exit_conditions(
         return Vec::new();
     }
     let mut found = Vec::new();
-    for index in (owner.start_line..changed_index).rev() {
+    for index in (owner_body_start(owner_source, owner)..changed_index).rev() {
         if in_string[index] {
             // Docstring or multi-line string text is not code.
             continue;
@@ -874,6 +983,57 @@ pub(super) fn condition_holds(
     (!unreadable).then_some(true)
 }
 
+/// Whether a conjunct has call or walrus syntax that can change a parameter
+/// another conjunct reads. A call is a `(` outside string literals that
+/// follows `)`, `]` or a name; a grouping parenthesis follows an operator or
+/// a keyword (`(x is None)`, `kind in ('a', 'b')`, `not (x)`) and is not one
+/// (#14273).
+pub(super) fn conjunct_has_call_or_walrus(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut quote = None;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match quote {
+            Some(_) if byte == b'\\' => index += 1,
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None if byte == b'\'' || byte == b'"' => quote = Some(byte),
+            None if byte == b':' && bytes.get(index + 1) == Some(&b'=') => return true,
+            None if byte == b'(' && callee_precedes(&text[..index]) => return true,
+            None => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+/// Whether the text before a `(` ends in something that can be called.
+fn callee_precedes(before: &str) -> bool {
+    let before = before.trim_end();
+    if before.ends_with(')') || before.ends_with(']') {
+        return true;
+    }
+    let name_start = before
+        .bytes()
+        .rposition(|byte| !is_identifier_byte(byte))
+        .map_or(0, |position| position + 1);
+    let name = &before[name_start..];
+    !name.is_empty() && !["in", "is", "not", "and", "or", "if", "else"].contains(&name)
+}
+
+/// Whether a conjunct can rebind or mutate a parameter another conjunct
+/// reads. The `isinstance(` and `len(` atoms the guard reader evaluates
+/// itself are not such a call; anything called inside or after them is.
+pub(super) fn conjunct_can_rebind(conjunct: &str) -> bool {
+    let conjunct = conjunct.trim();
+    let rest = conjunct
+        .strip_prefix("isinstance(")
+        .or_else(|| conjunct.strip_prefix("len("))
+        .unwrap_or(conjunct);
+    conjunct_has_call_or_walrus(rest)
+}
+
 /// True when `text` applies `or`, `not` or a conditional expression
 /// (`a if b else c`) outside string literals; none of them is the single
 /// comparison this reader extracts.
@@ -998,6 +1158,16 @@ pub(super) fn line_rebinds_parameter(line: &str, name: &str) -> bool {
         if rest.starts_with(',') && line_is_assignment(line) {
             return true;
         }
+        // The last target of a bracketed list: `(_, total) = ..`,
+        // `[_, total] = ..`. A subscript store (`seen[total] = ..`)
+        // over-refuses the same safe way.
+        let closed = rest.trim_start_matches([')', ']', ' ']);
+        if closed.len() < rest.len()
+            && let Some(after) = closed.strip_prefix('=')
+            && !after.starts_with('=')
+        {
+            return true;
+        }
     }
     false
 }
@@ -1026,6 +1196,12 @@ pub(super) fn parameter_rebound_before(
         return false;
     };
     let guard_indent = indent_width(guard_raw);
+    // A multi-line signature's continuation lines (`    total: int | None =
+    // None,`) read like annotated assignments, so the scan starts after the
+    // owner's own header when the guard sits below it (#15292). A one-line or
+    // unrecognized header keeps the scan from the line after `owner_start`.
+    let owner_start = def_header_end(owner_source, owner_start, guard_line.saturating_add(1))
+        .unwrap_or(owner_start);
     let loop_enclosed = lines
         .get(owner_start..guard_line)
         .unwrap_or(&[])
@@ -1082,6 +1258,47 @@ pub(super) fn name_rebound_in_owner(owner_source: &str, owner: &PythonOwner, nam
     !owner_binding_lines(owner_source, owner, name).is_empty()
 }
 
+/// The 1-based last line of the owner's own multi-line `def` header (#15292).
+fn owner_header_end(owner_source: &str, owner: &PythonOwner) -> Option<usize> {
+    def_header_end(owner_source, owner.start_line, owner.end_line)
+}
+
+/// The zero-based index of the first line below the owner's `def` header: the
+/// line after `owner.start_line`, or after the whole header when it spans
+/// several lines. The upward walks from a changed line stop here, so a
+/// header's closing `) -> T:` is not read as an unreadable dedent (#15292).
+pub(super) fn owner_body_start(owner_source: &str, owner: &PythonOwner) -> usize {
+    owner_header_end(owner_source, owner).unwrap_or(owner.start_line)
+}
+
+/// The 1-based last line of the multi-line `def` header of the owner that
+/// starts on 1-based `start_line`, when that header ends before 1-based
+/// `end_line` (#15292). The shared span search looks ahead for the first
+/// `def`, so a header it does not recognize (`def\tquote(`) could hand back a
+/// later nested or sibling definition's span. A span counts only when no line
+/// before its `def` (from the owner's first line: decorators) starts a
+/// definition of its own.
+fn def_header_end(owner_source: &str, start_line: usize, end_line: usize) -> Option<usize> {
+    let (def_line, header_end) =
+        super::no_behavior::multi_line_def_header_span(owner_source, start_line)?;
+    let starts_definition = |text: &str| {
+        let trimmed = text.trim_start();
+        let trimmed = trimmed
+            .strip_prefix("async")
+            .unwrap_or(trimmed)
+            .trim_start();
+        trimmed
+            .strip_prefix("def")
+            .is_some_and(|rest| !rest.starts_with(|ch: char| ch.is_alphanumeric() || ch == '_'))
+    };
+    let earlier_definition = owner_source
+        .lines()
+        .skip(start_line.checked_sub(1)?)
+        .take(def_line.checked_sub(start_line)?)
+        .any(starts_definition);
+    (!earlier_definition && header_end > start_line && header_end < end_line).then_some(header_end)
+}
+
 /// Every owner-body line (zero-based index into `owner_source`, trimmed text)
 /// that binds `name`, by the same over-refusing reading as
 /// [`name_rebound_in_owner`].
@@ -1090,11 +1307,17 @@ pub(super) fn owner_binding_lines<'a>(
     owner: &PythonOwner,
     name: &str,
 ) -> Vec<(usize, &'a str)> {
+    // A multi-line signature's continuation lines (`    max_age: int | None =
+    // None,`) read like annotated assignments, so the scan starts after the
+    // whole header (#15292). The shared header owner gives no span for a
+    // one-line or unrecognized header, which keeps the over-refusing reading
+    // from the line after `owner.start_line`.
+    let body_start = owner_header_end(owner_source, owner).unwrap_or(owner.start_line);
     owner_source
         .lines()
         .enumerate()
-        .skip(owner.start_line)
-        .take(owner.end_line.saturating_sub(owner.start_line))
+        .skip(body_start)
+        .take(owner.end_line.saturating_sub(body_start))
         .map(|(index, line)| (index, line.trim()))
         .filter(|(_, line)| {
             // A condition header ends in `:`, which the annotated-assignment
@@ -1311,6 +1534,7 @@ mod tests {
             line: 1,
             text: "quote(..)".to_string(),
             elements: std::collections::BTreeMap::new(),
+            dict_keys: std::collections::BTreeMap::new(),
             bindings: bindings
                 .iter()
                 .map(|(parameter, value)| {
@@ -1324,6 +1548,47 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    /// #15292: parameters of a multi-line `def` header (`max_age: int | None =
+    /// None,`) are not body rebindings, while a real rebinding in the body is.
+    #[test]
+    fn multiline_signature_parameters_are_not_rebinding() -> Result<(), String> {
+        let header = "def quote(\n    self,\n    total: int | None = None,\n    rate: float = 1.0,\n) -> int:\n";
+        let clean = format!("{header}    age = self.now() - 1\n    return age > total\n");
+        let owner = quote_owner(&clean)?;
+        assert!(!name_rebound_in_owner(&clean, &owner, "total"));
+        assert!(!name_rebound_in_owner(&clean, &owner, "rate"));
+        // The body binding of a local is still read, and so is a body rebinding
+        // of a header parameter.
+        assert!(name_rebound_in_owner(&clean, &owner, "age"));
+        let rebound = format!("{header}    total = total or 0\n    return total > 1\n");
+        let owner = quote_owner(&rebound)?;
+        assert!(name_rebound_in_owner(&rebound, &owner, "total"));
+        // A single-line header with a default keeps reading as before.
+        let single = "def quote(total=5):\n    return total > 1\n";
+        let owner = quote_owner(single)?;
+        assert!(!name_rebound_in_owner(single, &owner, "total"));
+        // Brackets, `#` and an escaped quote inside string defaults, a
+        // decorator and `async` keep the header end, and a body rebinding
+        // after such a header is still read.
+        let quoted = "@cached\nasync def quote(\n    sep: str = \"(#\\\"\",\n    total: int = 0,\n) -> dict[str, int]:\n    return total > 1\n";
+        let owner = quote_owner(quoted)?;
+        assert!(!name_rebound_in_owner(quoted, &owner, "sep"));
+        assert!(!name_rebound_in_owner(quoted, &owner, "total"));
+        let rebound = format!("{quoted}    total = 1\n");
+        let owner = quote_owner(&rebound)?;
+        assert!(name_rebound_in_owner(&rebound, &owner, "total"));
+        // A header the span search does not recognize never borrows a later
+        // nested definition's span: the body rebinding before it is read.
+        let tabbed = "def\tquote(total):\n    total = 10\n    def helper(\n        x,\n    ):\n        return x\n    return total > helper(1)\n";
+        let owner = quote_owner(tabbed)?;
+        assert!(name_rebound_in_owner(tabbed, &owner, "total"));
+        // Nor a later sibling definition's span at the owner's indentation.
+        let sibling = "def\tquote(total):\n    total = 10\n    return total > 1\n\n\ndef other(\n    x,\n):\n    return x\n";
+        let owner = quote_owner(sibling)?;
+        assert!(name_rebound_in_owner(sibling, &owner, "total"));
+        Ok(())
     }
 
     #[test]
@@ -1403,7 +1668,7 @@ mod tests {
         let owner = quote_owner("def quote(total):\n    return total\n")?;
         let chain = |source: &str, else_index: usize| {
             let lines: Vec<&str> = source.lines().collect();
-            else_chain_conditions(&lines, else_index, &owner)
+            else_chain_conditions(&lines, else_index, owner.start_line)
         };
         // Blank lines and comments between arms belong to the chain.
         let chained = "def quote(total):\n    if total > 1:\n        return 1\n\n    # note\n    elif total > 0:\n        return 2\n    else:\n        return 3\n";
@@ -1487,7 +1752,7 @@ mod tests {
         // for/else after an `if`: the `for` header line is masked string text.
         let source = "def quote(total):\n    if total > 1:\n        y = 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        pass\n    else:\n        return 3\n";
         let lines: Vec<&str> = source.lines().collect();
-        assert_eq!(else_chain_conditions(&lines, 6, &owner), None);
+        assert_eq!(else_chain_conditions(&lines, 6, owner.start_line), None);
         // Line 8 is the `return 3` inside the loop's `else`; line 7 is the
         // `else:` itself.
         assert!(walk_guards(&owner, source, 8).is_none());
@@ -1495,7 +1760,7 @@ mod tests {
         let plain =
             "def quote(total):\n    if total > 1:\n        return 1\n    else:\n        return 3\n";
         let lines: Vec<&str> = plain.lines().collect();
-        assert!(else_chain_conditions(&lines, 3, &owner).is_some());
+        assert!(else_chain_conditions(&lines, 3, owner.start_line).is_some());
         // A loop body under a string-opening header is not under the `if`.
         let body = "def quote(total):\n    if total > 1:\n        return 1\n    for s in (\"\"\"\na\"\"\", \"b\"):\n        return 2\n";
         assert!(walk_guards(&owner, body, 6).is_none());
@@ -1696,6 +1961,50 @@ mod tests {
             eval_comparison("total > 1000", 2, &row, &[], source, 0),
             None
         );
+    }
+
+    /// #15292: the guard-side scan starts below a multi-line `def` header, so
+    /// its annotated defaults are not rebindings, while body rebindings and
+    /// headers the span search does not recognize keep the refusal.
+    #[test]
+    fn rebound_scan_starts_below_a_multi_line_header() {
+        let header = "def quote(\n    self,\n    total: int | None = None,\n    rate: float = 1.0,\n) -> int:\n";
+        let clean = format!("{header}    if total > 1000:\n        return 42\n");
+        assert!(!parameter_rebound_before(&clean, 1, 5, "total"));
+        assert!(!parameter_rebound_before(&clean, 1, 5, "rate"));
+        let rebound =
+            format!("{header}    total = total or 0\n    if total > 1000:\n        return 42\n");
+        assert!(parameter_rebound_before(&rebound, 1, 6, "total"));
+        assert!(!parameter_rebound_before(&rebound, 1, 6, "rate"));
+        // A decorator, `async` and brackets inside a string default keep the
+        // header end.
+        let quoted = "@cached\nasync def quote(\n    sep: str = \"(#\\\"\",\n    total: int = 0,\n) -> int:\n    if total > 1000:\n        return 42\n";
+        assert!(!parameter_rebound_before(quoted, 1, 5, "total"));
+        assert!(!parameter_rebound_before(quoted, 1, 5, "sep"));
+        // An unrecognized header never borrows a later nested definition's
+        // span: the rebinding above that definition is still read.
+        let tabbed = "def\tquote(total):\n    total = 10\n    def helper(\n        x,\n    ):\n        return x\n    if total > 1000:\n        return 42\n";
+        assert!(parameter_rebound_before(tabbed, 1, 6, "total"));
+        // The last target of a parenthesized or bracketed tuple is a
+        // rebinding; a parenthesized read in a comparison is not.
+        for target in ["(_, total) = (0, 2000)", "[_, total] = [0, 2000]"] {
+            let unpacked =
+                format!("{header}    {target}\n    if total > 1000:\n        return 42\n");
+            assert!(
+                parameter_rebound_before(&unpacked, 1, 6, "total"),
+                "{target}"
+            );
+        }
+        let grouped = format!(
+            "{header}    seen = (total) == 2000\n    if total > 1000:\n        return 42\n"
+        );
+        assert!(!parameter_rebound_before(&grouped, 1, 6, "total"));
+        // A loop above the guard still widens the scan to the whole owner.
+        let looped = format!(
+            "{header}    for step in range(3):\n        if total > 1000:\n            return 42\n        total = step\n"
+        );
+        assert!(parameter_rebound_before(&looped, 1, 6, "total"));
+        assert!(!parameter_rebound_before(&looped, 1, 6, "rate"));
     }
 
     #[test]

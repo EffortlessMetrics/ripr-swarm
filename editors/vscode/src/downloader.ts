@@ -640,6 +640,8 @@ const ZIP_UNIX_IFMT = 0xf000;
 const ZIP_UNIX_IFREG = 0x8000;
 const ZIP_UNIX_IFDIR = 0x4000;
 const ZIP_MAX_COMMENT_BYTES = 0xffff;
+/** Win32 device names, including superscript-digit and console aliases, with any extension. */
+const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[0-9\u00b9\u00b2\u00b3]|lpt[0-9\u00b9\u00b2\u00b3]) *(\..*)?$/i;
 
 /**
  * Reads the central directory of a zip archive without extracting anything
@@ -661,14 +663,29 @@ export function listZipCentralDirectoryEntries(archive: Buffer): ZipCentralDirec
   if (eocd < 0) {
     throw new Error('Server archive is not a readable zip: end-of-central-directory record not found.');
   }
+  // The chosen record's comment must end the file exactly. A trailing byte or
+  // an earlier record hidden inside a later comment would let this reader and
+  // the extractor disagree about which directory is real.
+  if (eocd + 22 + archive.readUInt16LE(eocd + 20) !== archive.length) {
+    throw new Error('Refusing server archive: end-of-central-directory comment does not end the file.');
+  }
   if (archive.readUInt16LE(eocd + 4) !== 0 || archive.readUInt16LE(eocd + 6) !== 0) {
     throw new Error('Refusing multi-disk server archive.');
   }
+  const recordedOnDisk = archive.readUInt16LE(eocd + 8);
   const recordedCount = archive.readUInt16LE(eocd + 10);
   const centralSize = archive.readUInt32LE(eocd + 12);
   const centralOffset = archive.readUInt32LE(eocd + 16);
-  if (centralOffset + centralSize > archive.length) {
-    throw new Error('Refusing server archive: central directory extends past the end of the file.');
+  // ZIP64 moves the real counts and offsets into another record this reader
+  // does not parse; a managed server archive never needs it.
+  if (recordedCount === 0xffff || recordedOnDisk === 0xffff || centralSize === 0xffffffff || centralOffset === 0xffffffff) {
+    throw new Error('Refusing ZIP64 server archive.');
+  }
+  if (recordedOnDisk !== recordedCount) {
+    throw new Error('Refusing multi-disk server archive.');
+  }
+  if (centralOffset + centralSize > eocd) {
+    throw new Error('Refusing server archive: central directory extends past the end-of-central-directory record.');
   }
   const entries: ZipCentralDirectoryEntry[] = [];
   let cursor = centralOffset;
@@ -703,7 +720,9 @@ export function listZipCentralDirectoryEntries(archive: Buffer): ZipCentralDirec
  * `assertSafeTarListing`: rejects traversal, absolute, drive-qualified or NUL
  * names, symlink members (Unix mode in the external attributes), NTFS reparse
  * points (DOS attributes), any other non-file/directory member type, and
- * oversized member counts.
+ * oversized member counts. Because `Expand-Archive` writes through Win32, it
+ * also rejects empty names, any `:` (alternate data streams), segments ending
+ * in a dot or space, and reserved device names such as `CON` or `COM¹`.
  */
 export function assertSafeZipListing(entries: readonly ZipCentralDirectoryEntry[]): void {
   if (entries.length > ARCHIVE_MAX_MEMBERS) {
@@ -711,8 +730,18 @@ export function assertSafeZipListing(entries: readonly ZipCentralDirectoryEntry[
   }
   for (const entry of entries) {
     const segments = entry.name.split(/[\\/]/);
-    if (/^[\\/]/.test(entry.name) || /^[A-Za-z]:/.test(entry.name) || entry.name.includes('\0') || segments.includes('..')) {
+    // A ':' anywhere is a drive prefix or an NTFS alternate data stream on
+    // the Windows extractor; an empty name has no member to write.
+    if (entry.name.length === 0 || /^[\\/]/.test(entry.name) || entry.name.includes(':') || entry.name.includes('\0') || segments.includes('..')) {
       throw new Error(`Refusing server archive member with unsafe path ${JSON.stringify(entry.name)}.`);
+    }
+    for (const segment of segments) {
+      // Win32 strips trailing dots and spaces (so `.. ` becomes `..`) and maps
+      // device names to devices whatever the extension. A lone `.` is a no-op
+      // component (`./ripr.exe`); `..` is refused above.
+      if (segment.length > 0 && segment !== '.' && (/[. ]$/.test(segment) || WINDOWS_RESERVED_NAME.test(segment))) {
+        throw new Error(`Refusing server archive member with unsafe Windows path ${JSON.stringify(entry.name)}.`);
+      }
     }
     if ((entry.externalAttributes & ZIP_DOS_REPARSE_POINT) !== 0) {
       throw new Error(`Refusing server archive reparse-point member: ${JSON.stringify(entry.name)}.`);

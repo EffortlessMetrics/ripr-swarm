@@ -139,3 +139,26 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_arguments (12)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_arguments --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — typescript_mock_count_arguments (13)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_arguments --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`

@@ -1,0 +1,10 @@
+[package]
+name = "ripr-eval-smoke"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Smoke harness for the Tier 2 evals workspace; drives the ripr CLI as a subprocess."
+
+[lints]
+workspace = true

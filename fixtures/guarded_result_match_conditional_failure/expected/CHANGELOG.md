@@ -467,3 +467,69 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — guarded_result_match_conditional_failure (34)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_conditional_failure --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — guarded_result_match_conditional_failure (35)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_conditional_failure --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_conditional_failure (36)
+
+Reason:
+RIPR-SPEC-0003: the no-changed-Rust-line next step says ripr cannot trace the change and points at the tests that use the macro, attribute or item instead of asking to move the line (#15412)
+
+Command:
+`cargo xtask goldens bless guarded_result_match_conditional_failure --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — guarded_result_match_conditional_failure (37)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless guarded_result_match_conditional_failure --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — guarded_result_match_conditional_failure (38)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless guarded_result_match_conditional_failure --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — guarded_result_match_conditional_failure (39)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless guarded_result_match_conditional_failure --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

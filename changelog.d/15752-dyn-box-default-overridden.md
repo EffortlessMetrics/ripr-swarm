@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A test that binds `let s: Box<dyn Shape> = Box::new(Square(3));` and calls `s.area()` no longer credits a changed `Shape::area` default as a direct owner call when `impl Shape for Square` overrides `area`: the call runs `Square`'s override, so the test cannot notice the change. The same `Square(3).area()` call was already refused. When the boxed value's type cannot be read and some impl of the trait overrides the method, the default is not credited either (#15752).

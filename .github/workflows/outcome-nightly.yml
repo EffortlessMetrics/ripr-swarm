@@ -1,18 +1,16 @@
 name: Outcome Page
 
-# Nightly outcome page (#12903): rebuilds the pinned 68-diff repair-start set (24 Rust, 22 Python, 22 TypeScript)
+# On-demand outcome page (#12903): rebuilds the pinned 68-diff repair-start set (24 Rust, 22 Python, 22 TypeScript)
 # against a fresh release `ripr`, writes one dated receipt, and renders one page
 # with the repair-start rate, first-useful-result time, agent fix success and
 # the false-actionable rate, with trend and the bar for each. The lane fails
 # when the repair-start count falls more than the stated tolerance below the
 # floor in benchmarks/repair_start/bars.json, or when the instrument breaks.
 # Receipts accumulate as the `outcome-receipts` artifact (the default branch
-# cannot be written by a nightly job); the previous run's receipts feed the trend.
+# cannot be written by this read-only job); the previous run's receipts feed the trend.
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "47 6 * * *"
 
 permissions:
   contents: read

@@ -108,6 +108,12 @@ fn native_output(
         .stdin(Stdio::null())
         .stdout(capture(&stdout)?)
         .stderr(capture(&stderr)?);
+    // The isolated fixture owns its own profile. A caller such as a CI shard
+    // may select a different workspace debug level; do not let that override
+    // the fixture's line-tables-only premise.
+    command
+        .env_remove("CARGO_PROFILE_DEV_DEBUG")
+        .env_remove("CARGO_PROFILE_TEST_DEBUG");
     for (name, value) in environment {
         command.env(name, value);
     }

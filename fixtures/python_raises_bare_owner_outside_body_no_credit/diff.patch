@@ -1,0 +1,13 @@
+diff --git a/src/levels.py b/src/levels.py
+index a9e2f75..9038de2 100644
+--- a/src/levels.py
++++ b/src/levels.py
+@@ -1,7 +1,7 @@
+ def parse(text):
+     if not text:
+-        raise ValueError("empty level")
++        raise ValueError("blank level")
+     return text.upper()
+ 
+ 
+ def other(text):

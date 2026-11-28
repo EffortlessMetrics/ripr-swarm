@@ -181,3 +181,14 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_noop_multiline_docstring_interior (15)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless python_noop_multiline_docstring_interior --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

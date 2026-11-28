@@ -10,7 +10,7 @@ use super::language::{GeneratedRustSources, LanguageId, route};
 use super::seam_cache::corpus_fingerprint;
 use super::workspace;
 use crate::config::RiprConfig;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Apply diff-aware generated-source policy before observing absent Rust input.
@@ -33,7 +33,7 @@ pub(crate) fn absent_changed_rust_file_limitations(
             .map(PathBuf::as_path)
             .filter(|path| route(path) == Some(LanguageId::Rust) && !generated.contains(path)),
     );
-    workspace::supplement_absent_file_limitations(&absent)
+    workspace::supplement_absent_file_limitations(root, &absent)
 }
 
 /// Discovered Rust files after the generated-source predicate `ripr check`
@@ -44,6 +44,9 @@ pub(crate) struct AnalyzableRustCorpus {
     pub(crate) skipped_generated: Vec<PathBuf>,
     pub(crate) naming_only_skips: Vec<PathBuf>,
     pub(crate) fingerprint: Option<String>,
+    /// Directories and files the tolerant walk could not read and left out of
+    /// every field above. Empty for the strict walk, which refuses instead.
+    pub(crate) unreadable_paths: Vec<PathBuf>,
 }
 
 /// Size of admitted workspace and owner-attribution inputs. File sizes use
@@ -55,6 +58,28 @@ pub(crate) struct CorpusPayloadSize {
     pub(crate) total_bytes: u64,
 }
 
+/// Classification retained in the review-comments receipt when admission fails.
+#[derive(Debug)]
+pub(crate) struct CorpusPayloadError {
+    pub(crate) category: &'static str,
+    pub(crate) detail: String,
+}
+
+impl From<String> for CorpusPayloadError {
+    fn from(detail: String) -> Self {
+        Self {
+            category: "analysis_failed",
+            detail,
+        }
+    }
+}
+
+impl From<CorpusPayloadError> for String {
+    fn from(error: CorpusPayloadError) -> Self {
+        error.detail
+    }
+}
+
 /// Use the inventory's discovery/generated-file predicate, without computing
 /// its cache fingerprint. Add changed owner inputs because attribution also
 /// reads files outside that canonical corpus. Count each present path once;
@@ -63,16 +88,32 @@ pub(crate) fn analyzable_corpus_payload_size(
     root: &Path,
     config: &RiprConfig,
     owner_files: &[PathBuf],
-) -> Result<CorpusPayloadSize, String> {
+) -> Result<CorpusPayloadSize, CorpusPayloadError> {
+    let (discovered, unreadable) = workspace::discover_rust_files_tolerating_unreadable(root)?;
+    if !unreadable.is_empty() {
+        let owners = owner_files.iter().cloned().collect();
+        workspace::refuse_unreadable_dir_over_changed_path(&unreadable, &owners)?;
+        let paths = unreadable
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect::<Vec<_>>();
+        if let Some(reason) = workspace::unreadable_paths_partial_reason(&paths) {
+            return Err(CorpusPayloadError {
+                category: crate::analysis_outcome::AnalysisLimitationKind::LanguageScopeUnsupported
+                    .as_str(),
+                detail: format!("review-comments evidence is incomplete: {reason}"),
+            });
+        }
+    }
     let generated_sources = GeneratedRustSources::for_repo(root, &config.languages().rust);
     let mut analyzable = Vec::new();
-    for path in workspace::discover_rust_files(root)? {
+    for path in discovered {
         super::cancellation::checkpoint()?;
         if !generated_sources.contains(&path) {
             analyzable.push(path);
         }
     }
-    corpus_payload_size_for_paths(root, analyzable, owner_files)
+    corpus_payload_size_for_paths(root, analyzable, owner_files).map_err(Into::into)
 }
 
 fn corpus_payload_size_for_paths(
@@ -123,6 +164,20 @@ pub(crate) fn discover_analyzable_rust_corpus(
     Ok(partition_analyzable_rust_corpus(root, discovered, config))
 }
 
+/// [`discover_analyzable_rust_corpus`] that skips an unreadable below-root
+/// directory or file and records it in `unreadable_paths` so the caller
+/// discloses the gap; an unreadable root is still an error.
+pub(crate) fn discover_analyzable_rust_corpus_tolerating_unreadable(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<AnalyzableRustCorpus, String> {
+    let (discovered, unreadable_paths) =
+        workspace::discover_readable_rust_files(root, &BTreeSet::new())?;
+    let mut corpus = partition_analyzable_rust_corpus(root, discovered, config);
+    corpus.unreadable_paths = unreadable_paths;
+    Ok(corpus)
+}
+
 pub(crate) fn partition_analyzable_rust_corpus(
     root: &Path,
     discovered: Vec<PathBuf>,
@@ -141,18 +196,43 @@ pub(crate) fn discover_analyzable_rust_corpus_for_changed_paths(
     changed_paths: &[PathBuf],
 ) -> Result<(AnalyzableRustCorpus, bool), String> {
     let discovered = workspace::discover_rust_files(root)?;
+    Ok(partition_changed_path_corpus(
+        root,
+        config,
+        changed_paths,
+        discovered,
+    ))
+}
+
+/// Tolerant form of [`discover_analyzable_rust_corpus_for_changed_paths`]: an
+/// unreadable unchanged path is skipped and recorded, while a changed path is
+/// never dropped (an unreadable changed file keeps failing the run).
+pub(crate) fn discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable(
+    root: &Path,
+    config: &RiprConfig,
+    changed_paths: &[PathBuf],
+) -> Result<(AnalyzableRustCorpus, bool), String> {
+    let keep = changed_paths.iter().cloned().collect::<BTreeSet<_>>();
+    let (discovered, unreadable_paths) = workspace::discover_readable_rust_files(root, &keep)?;
+    let (mut corpus, diff_bound) =
+        partition_changed_path_corpus(root, config, changed_paths, discovered);
+    corpus.unreadable_paths = unreadable_paths;
+    Ok((corpus, diff_bound))
+}
+
+fn partition_changed_path_corpus(
+    root: &Path,
+    config: &RiprConfig,
+    changed_paths: &[PathBuf],
+    discovered: Vec<PathBuf>,
+) -> (AnalyzableRustCorpus, bool) {
     let generated = GeneratedRustSources::for_changed_paths(
         root,
         &config.languages().rust,
         changed_paths.iter().map(PathBuf::as_path),
     );
     let canonical = GeneratedRustSources::for_repo(root, &config.languages().rust);
-    Ok(partition_with_generated_sources(
-        root,
-        discovered,
-        generated,
-        Some(canonical),
-    ))
+    partition_with_generated_sources(root, discovered, generated, Some(canonical))
 }
 
 fn partition_with_generated_sources(
@@ -183,6 +263,7 @@ fn partition_with_generated_sources(
             skipped_generated,
             naming_only_skips,
             fingerprint,
+            unreadable_paths: Vec::new(),
         },
         diff_bound,
     )
@@ -492,5 +573,41 @@ mod tests {
             vec!["src/ffi.rs".to_string()]
         );
         Ok(())
+    }
+    #[test]
+    fn tolerant_corpus_matches_strict_when_nothing_is_unreadable() -> Result<(), String> {
+        let root =
+            std::env::temp_dir().join(format!("ripr-tolerant-corpus-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), "pub fn a() {}\n")
+            .map_err(|error| error.to_string())?;
+        let config = RiprConfig::default();
+        let strict = super::discover_analyzable_rust_corpus(&root, &config)?;
+        let tolerant =
+            super::discover_analyzable_rust_corpus_tolerating_unreadable(&root, &config)?;
+        let changed =
+            super::discover_analyzable_rust_corpus_for_changed_paths_tolerating_unreadable(
+                &root,
+                &config,
+                &paths(&["src/lib.rs"]),
+            )?;
+        let _ = std::fs::remove_dir_all(&root);
+        assert_eq!(tolerant, strict);
+        assert!(tolerant.unreadable_paths.is_empty());
+        assert_eq!(tolerant.analyzable, paths(&["src/lib.rs"]));
+        assert!(changed.0.unreadable_paths.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn tolerant_corpus_keeps_an_unreadable_root_an_error() {
+        let root =
+            std::env::temp_dir().join(format!("ripr-tolerant-noroot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let config = RiprConfig::default();
+        let refused =
+            super::discover_analyzable_rust_corpus_tolerating_unreadable(&root, &config).err();
+        assert!(refused.is_some(), "an absent root must stay an error");
     }
 }

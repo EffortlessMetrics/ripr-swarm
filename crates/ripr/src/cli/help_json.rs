@@ -36,7 +36,7 @@ use crate::output::gate::{GATE_STATUS_BLOCKED, GATE_STATUS_CONFIG_ERROR};
 /// Schema version of the `help --json` document. Bump on any material shape
 /// change to the DTO; the value is pinned by unit tests and documented in
 /// `docs/OUTPUT_SCHEMA.md`.
-pub(crate) const HELP_JSON_SCHEMA_VERSION: u64 = 4;
+pub(crate) const HELP_JSON_SCHEMA_VERSION: u64 = 5;
 
 /// Top-level limitations of the machine document: what governs its identity
 /// and what a consumer must not infer from it.
@@ -98,8 +98,10 @@ struct CommandJsonRow {
     writes_json_artifacts: bool,
     /// Flags parsed from the command's help body.
     flags: Vec<crate::cli::help_flags::FlagJson>,
-    /// `own_help_body`, `shared_help_body` (flags are the union for a group), or
-    /// `no_help_body` (the command has no help body of its own, so an empty
+    /// `own_help_body`, `leaf_section` (one subcommand of a shared-body family:
+    /// flags are its usage line plus its own options section only, #14314),
+    /// `shared_help_body` (flags are the union for a group whose leaves have
+    /// no section mapping), or `no_help_body` (the command has no help body of its own, so an empty
     /// `flags` list says nothing about the flags it accepts).
     flags_scope: &'static str,
     example: &'static str,
@@ -342,6 +344,7 @@ fn command_row(entry: &CommandCatalogEntry, metadata_row: &CommandMetadata) -> C
             .count()
             > 1
     });
+    let leaf_help = crate::cli::help_leaf::leaf_help(entry.path);
     CommandJsonRow {
         id: entry.id,
         path: entry.path,
@@ -378,11 +381,15 @@ fn command_row(entry: &CommandCatalogEntry, metadata_row: &CommandMetadata) -> C
         state_target: metadata_row.state_target,
         accepts_json_flag: metadata_row.accepts_json_flag.spelling(),
         writes_json_artifacts: metadata_row.writes_json_artifacts,
-        flags: help_body
-            .map(|body| crate::cli::help_flags::flags_for(entry.path, body))
-            .unwrap_or_default(),
+        flags: match (leaf_help.as_deref(), help_body) {
+            (Some(scoped), _) => crate::cli::help_flags::flags_for(entry.path, scoped),
+            (None, Some(body)) => crate::cli::help_flags::flags_for(entry.path, body),
+            (None, None) => Vec::new(),
+        },
         flags_scope: if help_body.is_none() {
             "no_help_body"
+        } else if leaf_help.is_some() {
+            "leaf_section"
         } else if shared_body {
             "shared_help_body"
         } else {

@@ -21,6 +21,8 @@ Linked plan:
 Linked issues:
 
 - #9450 (ux(check): formatting-only rewraps and reindents seed probes and lead Start-here)
+- #14760 (Start here picks a line that only uses a table renamed in the diff)
+- #15931 (writing `Self` for the implementing type is reported as changed behavior)
 
 Linked PRs:
 
@@ -131,6 +133,73 @@ computed directly from source position.
 
 A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
 
+### Rule 4: a line that only applies an in-file rename the diff establishes is neutral
+
+A 1:1 replaced pair whose only differences are identifiers renamed at their
+declaration in the same file's diff seeds no probe on either side, and the
+declaration line itself seeds none (`static HEADER_NAME_MAP` ->
+`static TOKEN_MAP` with `HEADER_NAME_MAP[b as usize]` -> `TOKEN_MAP[b as
+usize]`). `crates/ripr/src/analysis/probes/identifier_rename.rs` owns the
+decision. The rename is established only when all of these hold:
+
+- exactly one `static`, `const`, `fn` or `type` declaration line changes
+  only its name (`struct`/`enum` names reach derived `Debug`; `main` and
+  foreign items inside an `extern "ABI" { .. }` block are bound by
+  spelling);
+- the whole item, through its item-level `;` or a `fn` body's closing `}`,
+  is byte-identical after the respelling;
+- the old name no longer appears in the new file's code and the new name
+  did not appear in the old file's code;
+- every attribute directly above the declaration, across blank lines, is
+  name-blind (`inline`, `cfg`, `allow`, doc, ...);
+- neither name is spelled after `.` or `::`, as a field, inside any macro
+  invocation or `macro_rules!` body, or inside a `struct`/`enum`/`union`
+  body, where the same spelling may name something else or be printed;
+- neither file names an identifier starting with `stringify`,
+  `concat_idents`, `type_name`, `paste` or `function_name`.
+
+A use-site pair is neutral only when every differing identifier is an
+established rename and the rest of the raw line is byte-identical. A
+rename whose declaration and use sites sit in different files stays
+probed.
+
+### Rule 5: `Self` written for the implementing type's own name is neutral
+
+Inside `impl Shell { .. }` or `impl Generator for Shell { .. }`, `Shell::Bash`
+and `Self::Bash` name the same item (the `clippy::use_self` cleanup). A 1:1
+replaced pair whose only differences trade `Self` with one type name seeds
+no probe on either side, in both directions.
+`crates/ripr/src/analysis/probes/self_type_respelling.rs` owns the decision
+and reads both files with the syntax parser. The pair is neutral only when
+all of these hold on each side:
+
+- the two lines are byte-identical apart from the traded identifiers, and
+  every trade on the line uses the same type name;
+- the token is code, not comment, string or macro input (`dbg!(Shell::new())`
+  prints its tokens), and is the unqualified first segment of a path with no
+  generic arguments;
+- the innermost enclosing `impl` implements exactly that bare name: not
+  `Shell<T>`, `&Shell`, `Box<Shell>` or a qualified path;
+- only the associated item that holds the token sits between it and that
+  `impl`, no enclosing block declares an item or `use`, no generic
+  parameter or binding pattern in that item spells the type name, and the
+  item, the `impl` and every module around it carry only token-blind
+  attributes (`inline`, `cfg`,
+  `allow`, `doc`, ...), so no attribute macro receives the spelling;
+- the scope that holds the `impl` (file, module or block) itself declares
+  the name as a `struct`, `enum` or `union` without generic parameters, and
+  declares or imports nothing else under that name. A defaulted parameter
+  lets `Wrap::new()` infer what `Self::new()` fixes, and a type alias or a
+  renamed import can hide one;
+- a path that is the name alone in value position (`Shell(n)`, a `Shell(x)`
+  pattern) additionally needs that declaration to be a tuple or unit
+  `struct`. Beside a type alias, a function of the same name makes
+  `Shell(n)` another item than `Self(n)`;
+- both files parse without error and neither line holds a position macro.
+
+Non-claim: a type declared in another file than its `impl` is not read, so
+its respelling stays probed.
+
 ## Required Evidence
 
 - Unit: `is_behavior_neutral_rewrap` accepts `["let a = b;"]` against
@@ -159,6 +228,21 @@ A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
    no probe.
 5. A rewrap whose block contains a string literal or a `stringify!`
    continuation: still probed.
+6. A table renamed at its declaration with its values unchanged and its use
+   site respelled: no probe on either line; the diff's real change keeps
+   its probe.
+7. The same rename with a changed body, a pre-existing new name, a remaining
+   old-name use, a name-observing attribute, a same-spelled field, method,
+   variant or macro token: the use site keeps its probe.
+8. `Shell::Bash =>` respelled `Self::Bash =>` inside `impl Generator for
+   Shell`, and the reverse: no probe on either line; a real change in the
+   same diff keeps its probe.
+9. The same respelling for another type's name, with another token changed,
+   inside `dbg!`, in an `impl` for `&Shell`, in a nested `impl`, under a
+   shadowing generic parameter, under an attribute macro, outside any
+   `impl`, for a type declared with generic parameters, behind an alias or
+   an import, or in another file, or as the bare value `Shell(n)` where no
+   tuple or unit `struct` beside the `impl` owns the name: still probed.
 
 ## Test Mapping
 
@@ -181,6 +265,20 @@ A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
   `rewrap_keeps_separated_dots_apart` (example 5 family).
 - `numeric_dot_split_and_join_keep_their_probes` keeps changed numeric-dot
   tokens probed in both directions through the production block route.
+- `crates/ripr/src/analysis/probes/identifier_rename_tests.rs` (Rule 4, real
+  Git fixtures): `a_proven_rename_seeds_no_probe_but_the_real_change_does`
+  (example 6), `a_renamed_function_and_its_callers_seed_no_probe`,
+  `a_use_site_that_changes_more_than_the_name_stays_probed`,
+  `the_same_use_site_edit_without_a_proven_rename_is_probed` and
+  `a_rename_that_may_not_mean_the_same_item_stays_probed` (example 7),
+  `renaming_an_entry_point_is_never_proven`.
+- `crates/ripr/tests/self_type_respelling.rs` (Rule 5,
+  real Git fixtures):
+  `self_for_the_implementing_type_seeds_no_probe_in_either_direction` and
+  `a_real_change_beside_the_respelling_keeps_its_probe` (example 8),
+  `a_spelling_the_files_do_not_prove_equivalent_stays_probed`,
+  `a_name_the_scope_does_not_declare_as_a_plain_type_stays_probed` and
+  `a_bare_value_path_needs_the_struct_that_owns_the_name` (example 9).
 
 ## Implementation Mapping
 
@@ -189,6 +287,12 @@ A token change inside a rewrap (`a + b` -> `a + c`) still seeds its probe.
   comparison via `squeeze_bracket_spaces`; `is_behavior_neutral_respelling`
   treats raw-differing, trim-equal pairs as neutral. Call sites in
   `probes_for_file_with_relations` are unchanged.
+- `crates/ripr/src/analysis/probes/identifier_rename.rs`:
+  `rename_only_lines` (Rule 4), applied in `probes_for_file_with_relations`
+  beside the respelling and whitespace replacement-pair filters.
+- `crates/ripr/src/analysis/probes/self_type_respelling.rs`:
+  `self_type_respelled_lines` (Rule 5), applied in
+  `probes_for_file_with_relations` after the rename filter.
 
 ## Metrics
 

@@ -59,6 +59,16 @@ struct CargoMessage {
     executable: Option<String>,
     #[serde(default)]
     fresh: bool,
+    #[serde(default)]
+    package_id: String,
+    #[serde(default)]
+    profile: Option<CargoProfile>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct CargoProfile {
+    #[serde(default)]
+    test: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -274,12 +284,16 @@ fn select_binary_artifact(
         )
     })?;
     let mut matches = Vec::new();
+    let mut test_units = Vec::new();
     for line in output.lines().filter(|line| !line.trim().is_empty()) {
         let Ok(message) = serde_json::from_str::<CargoMessage>(line) else {
             continue;
         };
         if message.reason != "compiler-artifact" {
             continue;
+        }
+        if let Some(unit) = test_support_unit(&message) {
+            test_units.push(unit);
         }
         let Some(target) = message.target else {
             continue;
@@ -307,6 +321,13 @@ fn select_binary_artifact(
             fresh: message.fresh,
         });
     }
+    if !test_units.is_empty() {
+        return Err(format!(
+            "the production build compiled {} test unit(s) or test-support feature(s); shipped executables carry no development tests (#15216): {}",
+            test_units.len(),
+            test_units.join("; ")
+        ));
+    }
     match matches.as_slice() {
         [artifact] => Ok(artifact.clone()),
         [] => Err(format!(
@@ -318,6 +339,42 @@ fn select_binary_artifact(
             many.len()
         )),
     }
+}
+
+/// A production unit is not a test harness and enables no test-support
+/// feature. `ripr`'s dev-dependencies enable `ripr-contract/test-fixtures` and
+/// `tokio/test-util`; the workspace resolver keeps those out of an ordinary
+/// `cargo build -p ripr`, but a test build, `--all-targets` or a normal
+/// dependency edge enabling them would unify them into the shipped executable
+/// (#15216). Feature words are matched whole, so `attestation` is not `test`.
+fn test_support_unit(message: &CargoMessage) -> Option<String> {
+    let unit = message
+        .target
+        .as_ref()
+        .map_or(message.package_id.as_str(), |target| target.name.as_str());
+    if message.profile.as_ref().is_some_and(|profile| profile.test) {
+        return Some(format!("{unit} is a test harness ({})", message.package_id));
+    }
+    let features: Vec<&str> = message
+        .features
+        .iter()
+        .map(String::as_str)
+        .filter(|feature| is_test_support_feature(feature))
+        .collect();
+    if features.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{unit} enables {} ({})",
+        features.join(", "),
+        message.package_id
+    ))
+}
+
+fn is_test_support_feature(feature: &str) -> bool {
+    feature
+        .split(['-', '_'])
+        .any(|word| matches!(word, "test" | "tests" | "testing" | "fixtures"))
 }
 
 fn normalized_release_features(
@@ -481,6 +538,150 @@ mod tests {
     }
 
     use super::*;
+
+    fn artifact_line(
+        package_id: &str,
+        name: &str,
+        kind: &str,
+        features: &[&str],
+        test: bool,
+    ) -> String {
+        serde_json::json!({
+            "reason": "compiler-artifact",
+            "package_id": package_id,
+            "target": {"name": name, "kind": [kind]},
+            "profile": {"opt_level": "3", "test": test},
+            "features": features,
+            "executable": null,
+            "fresh": true,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn production_units_reject_test_harnesses_and_test_support_features() -> Result<(), String> {
+        let contract = "path+file:///w/crates/ripr-contract#0.11.0";
+        let clean = artifact_line(
+            contract,
+            "ripr_contract",
+            "lib",
+            &["lang-rust", "lang-python"],
+            false,
+        );
+        let clean: CargoMessage = serde_json::from_str(&clean).map_err(|err| err.to_string())?;
+        if let Some(unit) = test_support_unit(&clean) {
+            return Err(format!("a production unit was refused: {unit}"));
+        }
+        for (line, expected) in [
+            (
+                artifact_line(
+                    contract,
+                    "ripr_contract",
+                    "lib",
+                    &["lang-rust", "test-fixtures"],
+                    false,
+                ),
+                "ripr_contract enables test-fixtures",
+            ),
+            (
+                artifact_line(
+                    "registry+https://github.com/rust-lang/crates.io-index#tokio@1.54.1",
+                    "tokio",
+                    "lib",
+                    &["rt", "test-util"],
+                    false,
+                ),
+                "tokio enables test-util",
+            ),
+            (
+                artifact_line(
+                    "path+file:///w/crates/ripr#0.11.0",
+                    "ripr",
+                    "bin",
+                    &["lang-rust"],
+                    true,
+                ),
+                "ripr is a test harness",
+            ),
+        ] {
+            let message: CargoMessage =
+                serde_json::from_str(&line).map_err(|err| err.to_string())?;
+            let Some(unit) = test_support_unit(&message) else {
+                return Err(format!("expected `{expected}` to be refused"));
+            };
+            if !unit.contains(expected) {
+                return Err(format!(
+                    "unexpected refusal `{unit}`; expected `{expected}`"
+                ));
+            }
+        }
+        for feature in [
+            "test",
+            "tests",
+            "testing",
+            "test-fixtures",
+            "test_util",
+            "mock-fixtures",
+        ] {
+            if !is_test_support_feature(feature) {
+                return Err(format!("{feature} must read as test support"));
+            }
+        }
+        for feature in [
+            "default",
+            "attestation",
+            "latest",
+            "contest",
+            "lang-rust",
+            "std",
+        ] {
+            if is_test_support_feature(feature) {
+                return Err(format!("{feature} must not read as test support"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn binary_selection_refuses_a_build_that_unified_a_test_feature() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-producer-15216-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let executable = dir.join("ripr");
+        fs::write(&executable, b"binary").map_err(|err| err.to_string())?;
+        let features = vec!["lang-rust".to_string()];
+        let mut bin: serde_json::Value = serde_json::from_str(&artifact_line(
+            "path+file:///w/crates/ripr#0.11.0",
+            "ripr",
+            "bin",
+            &["lang-rust"],
+            false,
+        ))
+        .map_err(|err| err.to_string())?;
+        bin["executable"] = serde_json::Value::String(executable.to_string_lossy().into_owned());
+        let contract_clean =
+            artifact_line("c#0.11.0", "ripr_contract", "lib", &["lang-rust"], false);
+        let contract_test = artifact_line(
+            "c#0.11.0",
+            "ripr_contract",
+            "lib",
+            &["lang-rust", "test-fixtures"],
+            false,
+        );
+        let clean = format!("{contract_clean}\n{bin}\n");
+        let unified = format!("{contract_test}\n{bin}\n");
+        let selected = select_binary_artifact(&clean, &executable, &features);
+        let refused = select_binary_artifact(&unified, &executable, &features);
+        let _ = fs::remove_dir_all(&dir);
+        let selected = selected?;
+        if selected.features != features {
+            return Err(format!("unexpected features {:?}", selected.features));
+        }
+        let error = require_error(refused, "unified test-fixtures build")?;
+        if !error.contains("ripr_contract enables test-fixtures") {
+            return Err(format!("unexpected refusal: {error}"));
+        }
+        Ok(())
+    }
 
     #[test]
     fn canonical_feature_set_rejects_wrong_feature_build() -> Result<(), String> {

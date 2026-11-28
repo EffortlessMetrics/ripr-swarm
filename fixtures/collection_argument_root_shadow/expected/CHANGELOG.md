@@ -336,3 +336,71 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — collection_argument_root_shadow (26)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless collection_argument_root_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — collection_argument_root_shadow (27)
+
+Reason:
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless collection_argument_root_shadow --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — collection_argument_root_shadow (28)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless collection_argument_root_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — collection_argument_root_shadow (29)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless collection_argument_root_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — collection_argument_root_shadow (30)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless collection_argument_root_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — collection_argument_root_shadow (31)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless collection_argument_root_shadow --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

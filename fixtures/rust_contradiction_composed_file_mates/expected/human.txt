@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_contradiction_composed_file_mates/input
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked on 1 candidate line: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 0 no test path, 2 unclear. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -23,9 +23,8 @@ Start here:
     existing tests. Trace their inputs through the local or computed operand (including default and
     empty cases) to see which side of the changed condition they exercise, then name an input that
     would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or
-    strengthen a test only if this inspection finds a gap. Compare the original and changed
-    implementations with a focused run using the project's configured test runner (`cargo test` for
-    ordinary Cargo tests). Static classification may remain unknown
+    tighten a test only if this finds a gap; compare old and new code with the project's configured
+    test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
   Evidence: reach yes · infection unknown · propagation yes · observation yes · assertion not established
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -33,13 +32,14 @@ Start here:
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
-      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;
+      both can rest on a test link ripr could not confirm; the reach stage says which;
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
     - reach yes: Related tests appear to reach is_adult: adult_boundary
-    - infection unknown: Activation credit withheld from 1 related test(s): an assertion statically contradicts the changed owner's folded behavior, so that test fails at baseline and…
-    - 12 more detail line(s) in --format human-full
+    - propagation yes: Changed behavior appears to influence returned value: age >= 18
+    - 11 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
   (finding id, for explain/context)

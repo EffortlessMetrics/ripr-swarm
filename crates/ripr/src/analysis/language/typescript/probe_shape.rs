@@ -271,6 +271,191 @@ pub(crate) fn classify_probe_shape_detail(line_text: &str) -> TypeScriptProbeSha
     TypeScriptProbeShape::ambiguous_fallback()
 }
 
+/// The shape a finding presents (#14381). Analysis keeps the conservative
+/// ambiguous fallback, `(Predicate, Control)` with `specific: false`, for a
+/// changed line it does not recognise, because its gates, oracle admission and
+/// credit are calibrated on it. Only what the finding says about itself (probe
+/// family and delta) reads as a value, and only for a plain single-name
+/// `const`/`let`/`var` declaration whose right side carries no condition, so a
+/// declaration such as `const desc = Object.getOwnPropertyDescriptor(raw, key);`
+/// is no longer described as "a condition or comparison changed". A
+/// recognised (specific) shape is returned unchanged.
+pub(crate) fn presented_typescript_shape(
+    probe_shape: &TypeScriptProbeShape,
+    line_text: &str,
+) -> (ProbeFamily, DeltaKind) {
+    if !probe_shape.specific
+        && matches!(probe_shape.family, ProbeFamily::Predicate)
+        && matches!(probe_shape.delta, DeltaKind::Control)
+        && is_typescript_plain_value_declaration(line_text)
+    {
+        (ProbeFamily::ReturnValue, DeltaKind::Value)
+    } else {
+        (probe_shape.family.clone(), probe_shape.delta.clone())
+    }
+}
+
+/// A single-name `const`/`let`/`var` declaration whose initializer is a plain
+/// value expression (#14381): `const desc = Object.getOwnPropertyDescriptor(raw,
+/// key);`, `let total: number = base - bonus;`. The recognizer is closed: the
+/// target is one identifier with at most a simple type annotation, the whole
+/// statement ends on the line with `;`, and any initializer that could carry a
+/// comparison, boolean or nullish operator, conditional, negation, membership
+/// or type test, arrow function, `await` or `yield` keeps the conservative
+/// predicate default. Quoted text is ignored when looking for those markers.
+pub(crate) fn is_typescript_plain_value_declaration(line_text: &str) -> bool {
+    let trimmed = line_text.trim();
+    // `export const x = ...;` declares the same plain value (#14391 review).
+    let trimmed = trimmed
+        .strip_prefix("export ")
+        .map_or(trimmed, str::trim_start);
+    let Some(rest) = ["const ", "let ", "var "]
+        .iter()
+        .find_map(|keyword| trimmed.strip_prefix(keyword))
+    else {
+        return false;
+    };
+    let Some((target, initializer)) = rest.split_once('=') else {
+        return false;
+    };
+    let target = match target.split_once(':') {
+        Some((name, annotation)) => {
+            let annotation = annotation.trim();
+            let clean = !annotation.is_empty()
+                && annotation.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric()
+                        || matches!(
+                            ch,
+                            '_' | '$' | '.' | '[' | ']' | '<' | '>' | ',' | '|' | ' '
+                        )
+                });
+            if !clean {
+                return false;
+            }
+            name.trim()
+        }
+        None => target.trim(),
+    };
+    let is_identifier = target
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == '$')
+        && target
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$');
+    if !is_identifier {
+        return false;
+    }
+    // The statement must end on this line with `;`. Without it the
+    // initializer may continue (`const message = isError` followed by
+    // `? "x" : "y";`, or a leading `&&`/`||`/`??` continuation), so the
+    // changed condition could sit on a later line. A trailing comment or a
+    // further `;` joins more text and is refused too.
+    let Some(initializer) = initializer.trim().strip_suffix(';') else {
+        return false;
+    };
+    let initializer = initializer.trim_end();
+    if initializer.is_empty()
+        || initializer.ends_with(',')
+        || bracket_depth_outside_quotes(initializer) != Some(0)
+    {
+        return false;
+    }
+    // A template interpolation runs code the quote blanking would hide
+    // (`${ready ? 'yes' : 'no'}`), so any `${` keeps the fallback.
+    if initializer.contains("${") {
+        return false;
+    }
+    // Brackets are spaced out and any whitespace run (tabs included) reads
+    // as one space, so the word-bounded markers below see `key\tin\tobj`,
+    // `key in(obj)` and `typeof(value)` as their spaced forms.
+    let code = without_quoted_text(initializer)
+        .replace("?.", ".")
+        .replace('(', " ( ")
+        .replace(')', " ) ")
+        .replace('[', " [ ")
+        .replace(']', " ] ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let padded = format!(" {code} ");
+    ![
+        "<",
+        ">",
+        "=",
+        "!",
+        "?",
+        "&&",
+        "||",
+        ";",
+        "//",
+        "/*",
+        " in ",
+        " instanceof ",
+        "typeof ",
+        "await ",
+        "yield",
+        "function",
+    ]
+    .iter()
+    .any(|marker| padded.contains(marker))
+}
+
+/// Net bracket depth of `text` outside quoted strings, or `None` when a closer
+/// appears before its opener or a string never closes.
+fn bracket_depth_outside_quotes(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(opener) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == opener {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' | '`' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    quote.is_none().then_some(depth)
+}
+
+/// `text` with the contents of `"…"`, `'…'` and `` `…` `` literals blanked, so
+/// an operator inside a string is not read as code.
+fn without_quoted_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in text.chars() {
+        if let Some(opener) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == opener {
+                quote = None;
+                out.push(ch);
+                continue;
+            }
+            out.push(' ');
+            continue;
+        }
+        if matches!(ch, '"' | '\'' | '`') {
+            quote = Some(ch);
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// Returns `true` for an added TypeScript/JavaScript line that carries no
 /// behavior of its own: blank, comment-only, or punctuation-only (`}`, `});`,
 /// `)`, `],`). Mirrors the Rust `should_ignore_changed_line` filter; such a
@@ -1300,10 +1485,11 @@ fn comparison_operand_after(expression: &str, operator_end: usize) -> Option<Str
 }
 
 fn is_simple_typescript_discriminator_operand(value: &str) -> bool {
-    !value.is_empty()
-        && value.chars().all(|ch| {
-            ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '"' || ch == '\''
-        })
+    oxc_syntax::identifier::is_identifier_name(value)
+        || (!value.is_empty()
+            && value
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '"' | '\'')))
 }
 
 fn is_simple_typescript_object_key(value: &str) -> bool {
@@ -1456,44 +1642,204 @@ pub(crate) struct TypeScriptChangedField {
     pub(crate) key: String,
     /// The new value's source text.
     pub(crate) value: String,
+    /// The old value's source text.
+    pub(crate) old_value: String,
 }
 
-/// The changed field of `return { a: 1, b: 2 }` against the old line: both
-/// lines return a literal of simple `key: value` fields with the same keys
-/// in the same order, and exactly one value differs. A shorthand or spread
-/// member, a computed key, a different key list or two changed values read
-/// `None`, so the caller keeps the first-field reading.
-pub(crate) fn ts_changed_object_field(
+/// #14858: members a number or boolean primitive answers through
+/// `Number.prototype`, `Boolean.prototype` and `Object.prototype`.
+const PRIMITIVE_PROTOTYPE_MEMBERS: &[&str] = &[
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+    "toExponential",
+    "toFixed",
+    "toLocaleString",
+    "toPrecision",
+    "toString",
+    "valueOf",
+    "__proto__",
+    "__defineGetter__",
+    "__defineSetter__",
+    "__lookupGetter__",
+    "__lookupSetter__",
+];
+
+/// #14858: a literal whose evaluation has no effect and depends on nothing:
+/// a number, a quoted string without interpolation, `true`, `false`, `null`
+/// or `undefined`.
+fn is_plain_literal_value(text: &str) -> bool {
+    let text = text.trim();
+    if matches!(text, "null" | "undefined") || is_number_or_boolean_literal(text) {
+        return true;
+    }
+    let mut chars = text.chars();
+    match (chars.next(), text.chars().last()) {
+        (Some(open @ ('"' | '\'')), Some(close)) if open == close && text.len() >= 2 => text
+            .get(1..text.len() - 1)
+            .is_some_and(|inner| !inner.contains(open) && !inner.contains('\\')),
+        _ => false,
+    }
+}
+
+/// #14858: a decimal number literal (`3`, `-1.5`, `1_000`) or `true`/`false`.
+fn is_number_or_boolean_literal(text: &str) -> bool {
+    if matches!(text, "true" | "false") {
+        return true;
+    }
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    !digits.is_empty()
+        && digits.starts_with(|character: char| character.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == '.' || character == '_')
+}
+
+impl TypeScriptChangedField {
+    /// #14858: the child keys of this field's value that the change moves, when
+    /// the new value is an object literal of simple `key: value` members.
+    /// `None` when the new value is not such a literal, so the caller cannot
+    /// say which children moved and keeps the existing credit.
+    ///
+    /// A child moved when its value differs from the old literal's same key.
+    /// A key the old literal had and the new one dropped is moved too.
+    ///
+    /// When the old value is a number or boolean literal, every new child is
+    /// new, and so is every member the old primitive answered through its
+    /// prototype (`toFixed`, `valueOf`, ...): such a read changed from that
+    /// member to the new child. Any other old value (a string, an array,
+    /// `null`, an expression) has members or behavior this check does not
+    /// model (`.length`, a throw), so it reads `None` and keeps the credit.
+    ///
+    /// Every member of each literal must be a plain literal value (a number, a
+    /// string, `true`, `false`, `null`, `undefined`) and none may be
+    /// `__proto__`: an initializer with effects (`n: (counter = 5)`) or a
+    /// prototype entry can change a child whose text is unchanged, so either
+    /// reads `None` and keeps the credit.
+    pub(crate) fn changed_children(&self) -> Option<Vec<String>> {
+        let members = |value: &str| {
+            let fields = returned_object_fields(&format!("return {value}"))?;
+            fields
+                .iter()
+                .all(|(key, value)| key != "__proto__" && is_plain_literal_value(value))
+                .then_some(fields)
+        };
+        let new = members(self.value.as_str())?;
+        if returned_object_fields(&format!("return {}", self.old_value)).is_some()
+            && members(self.old_value.as_str()).is_none()
+        {
+            return None;
+        }
+        let Some(old) = members(self.old_value.as_str()) else {
+            if !is_number_or_boolean_literal(self.old_value.trim()) {
+                return None;
+            }
+            let mut moved: Vec<String> = new.into_iter().map(|(key, _)| key).collect();
+            moved.extend(
+                PRIMITIVE_PROTOTYPE_MEMBERS
+                    .iter()
+                    .map(|name| (*name).to_string()),
+            );
+            return Some(moved);
+        };
+        let mut moved: Vec<String> = new
+            .iter()
+            .filter(|(key, value)| {
+                old.iter()
+                    .find(|(old_key, _)| old_key == key)
+                    .is_none_or(|(_, old_value)| old_value != value)
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        moved.extend(
+            old.iter()
+                .filter(|(key, _)| !new.iter().any(|(new_key, _)| new_key == key))
+                .map(|(key, _)| key.clone()),
+        );
+        Some(moved)
+    }
+}
+
+/// Every field of `return { a: 1, b: 2 }` whose value changed against the old
+/// line: both lines return a literal of simple `key: value` fields with the
+/// same keys in the same order. A shorthand or spread member, a computed key,
+/// a different key list or fewer than two fields read `None`, so the caller
+/// keeps the first-field reading. `Some(vec![])` means the shapes match and no
+/// value differs.
+///
+/// #14857: the caller needs the whole set, not just the single-field case, so
+/// a change that moves two values on one line can still tell a read of a
+/// changed field from a read of an untouched sibling.
+pub(crate) fn ts_changed_object_fields(
     old_line: Option<&str>,
     new_line: &str,
-) -> Option<TypeScriptChangedField> {
+) -> Option<Vec<TypeScriptChangedField>> {
     let old = returned_object_fields(old_line?)?;
     let new = returned_object_fields(new_line)?;
     if old.len() != new.len() || old.len() < 2 {
         return None;
     }
-    let mut changed = None;
-    for ((old_key, old_value), (new_key, new_value)) in old.iter().zip(&new) {
+    let mut changed = Vec::new();
+    for ((old_key, old_value), (new_key, new_value)) in old.into_iter().zip(new) {
         if old_key != new_key {
             return None;
         }
         if old_value != new_value {
-            if changed.is_some() {
-                return None;
-            }
-            changed = Some(TypeScriptChangedField {
-                key: new_key.clone(),
-                value: new_value.clone(),
+            changed.push(TypeScriptChangedField {
+                key: new_key,
+                value: new_value,
+                old_value,
             });
         }
     }
-    changed
+    Some(changed)
 }
 
-/// `(key, value)` per field of the object literal a `return` line returns,
-/// split at top-level commas; `None` when the line is not exactly one
-/// literal of simple `key: value` fields.
-fn returned_object_fields(line: &str) -> Option<Vec<(String, String)>> {
+/// The one changed field of `return { a: 1, b: 2 }` against the old line.
+/// `None` when the shape is not a simple literal, or when two or more values
+/// differ (the caller then reads [`ts_changed_object_fields`]).
+///
+/// Production reads the whole set; this single-field form is kept for the
+/// unit tests that pin the shape contract.
+#[cfg(test)]
+pub(crate) fn ts_changed_object_field(
+    old_line: Option<&str>,
+    new_line: &str,
+) -> Option<TypeScriptChangedField> {
+    let mut changed = ts_changed_object_fields(old_line, new_line)?;
+    if changed.len() == 1 {
+        changed.pop()
+    } else {
+        None
+    }
+}
+
+/// The unchanged shorthand in an ordinary two-member return. A numeric literal
+/// cannot mutate the binding read by the shorthand as the object is built.
+pub(crate) fn ts_unchanged_shorthand_sibling<'a>(
+    old_line: Option<&str>,
+    new_line: &'a str,
+) -> Option<&'a str> {
+    fn pair(line: &str) -> Option<(&str, &str, &str)> {
+        let (field, sibling) = returned_object_body(line)?.split_once(',')?;
+        let (key, value) = field.split_once(':')?;
+        let (key, value, sibling) = (key.trim(), value.trim(), sibling.trim());
+        (value_hiding_guard::is_plain_identifier(key)
+            && key != "__proto__"
+            && value_hiding_guard::is_plain_identifier(sibling)
+            && key != sibling
+            && !value.is_empty()
+            && value.bytes().all(|byte| byte.is_ascii_digit()))
+        .then_some((key, value, sibling))
+    }
+
+    let (old_key, old_value, old_sibling) = pair(old_line?)?;
+    let (key, value, sibling) = pair(new_line)?;
+    (key == old_key && sibling == old_sibling && value != old_value).then_some(sibling)
+}
+
+fn returned_object_body(line: &str) -> Option<&str> {
     let text = line.trim().trim_end_matches(';').trim();
     let expression = text.strip_prefix("return ")?.trim();
     let expression = expression
@@ -1501,7 +1847,14 @@ fn returned_object_fields(line: &str) -> Option<Vec<(String, String)>> {
         .and_then(|inner| inner.strip_suffix(')'))
         .unwrap_or(expression)
         .trim();
-    let body = expression.strip_prefix('{')?.strip_suffix('}')?;
+    expression.strip_prefix('{')?.strip_suffix('}')
+}
+
+/// `(key, value)` per field of the object literal a `return` line returns,
+/// split at top-level commas; `None` when the line is not exactly one
+/// literal of simple `key: value` fields.
+fn returned_object_fields(line: &str) -> Option<Vec<(String, String)>> {
+    let body = returned_object_body(line)?;
     let mut fields = Vec::new();
     let mut depth = 0usize;
     let mut quote: Option<char> = None;

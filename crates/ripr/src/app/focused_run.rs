@@ -14,7 +14,10 @@
 //! a `started` test with no terminal event, and unclosed or mismatched suites
 //! are refused. The retained record is the normalized record, not the caller's
 //! bytes. It states what was checked and what was not: ripr did not observe the
-//! run, and the result does not gate finish.
+//! run. Whether a result is required to finish is decided by the caller of
+//! this module: only an attempt that follows a new-test proposal needs one.
+
+pub(crate) mod edit_coverage;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -149,6 +152,9 @@ pub(crate) struct FocusedRunScope<'a> {
     pub(crate) file_source: &'a str,
     /// The governed inline module name when the target is an inline module.
     pub(crate) inline_module: Option<&'a str>,
+    /// That file's text when the attempt began, when it is recoverable
+    /// exactly (#16311); `None` reads the edited-test coverage as unknown.
+    pub(crate) baseline_source: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -166,10 +172,17 @@ pub(crate) struct FocusedRunRecord {
     failed: usize,
     /// Tests that ran but are not defined in the file or module; not counted.
     uncounted_ran: usize,
+    /// Whether a ran test is one the attempt's edit added or changed
+    /// (#16311): `covered`, `not_covered` or `unknown`.
+    edited_test: &'static str,
     claim: &'static str,
 }
 
 impl FocusedRunRecord {
+    pub(crate) fn failed_count(&self) -> usize {
+        self.failed
+    }
+
     pub(crate) fn counted(&self) -> usize {
         self.ran_tests.len()
     }
@@ -181,6 +194,19 @@ impl FocusedRunRecord {
         Ok(bytes)
     }
 
+    /// The counts status and the finish summary report for this record
+    /// (#14079): the same reading `read_retained_focused_run` gives back
+    /// from the retained text.
+    pub(crate) fn reported(&self) -> crate::output::agent_receipt::ReportedTestRun {
+        crate::output::agent_receipt::ReportedTestRun {
+            file: self.file.clone(),
+            ran: self.counted(),
+            passed: self.passed,
+            failed: self.failed,
+            edited_test: Some(self.edited_test),
+        }
+    }
+
     pub(crate) fn summary(&self) -> String {
         format!(
             "{} test(s) ran in `{}` ({} passed, {} failed)",
@@ -190,6 +216,67 @@ impl FocusedRunRecord {
             self.failed
         )
     }
+}
+
+/// Read back a retained focused run record for status (#14079). The record
+/// is the canonical text the finish committed for `attempt_id`; a record of
+/// another schema, kind or attempt, or one whose counts do not parse, reads
+/// as absent, so status never reports a run it cannot attribute.
+pub(crate) fn read_retained_focused_run(
+    record: &str,
+    attempt_id: &str,
+) -> Option<crate::output::agent_receipt::ReportedTestRun> {
+    let value: Value = serde_json::from_str(record).ok()?;
+    let text = |key: &str| value.get(key).and_then(Value::as_str);
+    let count = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|count| usize::try_from(count).ok())
+    };
+    if text("schema_version") != Some(FOCUSED_RUN_SCHEMA_VERSION)
+        || text("kind") != Some(FOCUSED_RUN_RECORD_KIND)
+        || text("attempt_id") != Some(attempt_id)
+    {
+        return None;
+    }
+    Some(crate::output::agent_receipt::ReportedTestRun {
+        file: text("file")?.to_string(),
+        ran: value.get("ran_tests").and_then(Value::as_array)?.len(),
+        passed: count("passed")?,
+        failed: count("failed")?,
+        // A record from before #16311 carries no coverage reading.
+        edited_test: text("edited_test")
+            .and_then(edit_coverage::EditedTestCoverage::parse)
+            .map(edit_coverage::EditedTestCoverage::as_str),
+    })
+}
+
+/// Whether a supplied focused-run record makes the same claim as the pending
+/// record an interrupted finish retained. Equal bytes match. A pending record
+/// written before #16311 carries no `edited_test` reading, which is derived
+/// from the same inputs, so it matches a supplied record that differs only by
+/// that reading; every other field must still be equal.
+pub(crate) fn same_focused_claim(supplied: &str, pending: &str) -> bool {
+    if supplied == pending {
+        return true;
+    }
+    let (Ok(mut supplied), Ok(pending)) = (
+        serde_json::from_str::<Value>(supplied),
+        serde_json::from_str::<Value>(pending),
+    ) else {
+        return false;
+    };
+    if pending.get("edited_test").is_some() {
+        return false;
+    }
+    match supplied.as_object_mut() {
+        Some(object) => {
+            object.remove("edited_test");
+        }
+        None => return false,
+    }
+    supplied == pending
 }
 
 /// Validate a caller-supplied focused result against the attempt's scope.
@@ -334,6 +421,18 @@ pub(crate) fn validate_focused_run(
         ));
     }
     let failed = failed_in_scope.len();
+    let ran_tests: Vec<String> = ran_in_scope.into_iter().collect();
+    let edited = scope
+        .baseline_source
+        .and_then(|before| edit_coverage::edited_tests(scope.file, before, scope.file_source));
+    // The coverage reading attributes each counted test exactly as the gate
+    // above counted it, so a declared test target outside `tests/` reads the
+    // same as a conventional one.
+    let ran_internal: Vec<&str> = ran_tests
+        .iter()
+        .filter_map(|name| file_internal_name(name, &name_scope))
+        .collect();
+    let edited_test = edit_coverage::coverage(edited.as_ref(), &ran_internal).as_str();
     Ok(FocusedRunRecord {
         schema_version: FOCUSED_RUN_SCHEMA_VERSION,
         kind: FOCUSED_RUN_RECORD_KIND,
@@ -341,10 +440,11 @@ pub(crate) fn validate_focused_run(
         head: scope.head.to_string(),
         file: scope.file.to_string(),
         module: scope.inline_module.map(str::to_string),
-        passed: ran_in_scope.len() - failed,
+        passed: ran_tests.len() - failed,
         failed,
         uncounted_ran: uncounted.len(),
-        ran_tests: ran_in_scope.into_iter().collect(),
+        edited_test,
+        ran_tests,
         claim: "caller-supplied; ripr checked shape, attempt and HEAD binding, file membership, per-test outcomes and reported completion; ripr did not run or observe the tests",
     })
 }
@@ -355,6 +455,15 @@ pub(crate) fn validate_focused_run(
 /// `tests/` file); nothing is then counted rather than guessed. A `#[path]`
 /// module is not detectable from the file alone and stays a caller's claim.
 fn inline_scope_path(file: &str, module: &str) -> Option<Vec<String>> {
+    let mut path = file_module_path(file)?;
+    path.push(module.to_string());
+    Some(path)
+}
+
+/// The module path `file` itself contributes to a libtest name: empty for a
+/// crate root or an integration-test file, `a::b` for `src/a/b.rs`. `None`
+/// when it cannot be derived from the file alone.
+fn file_module_path(file: &str) -> Option<Vec<String>> {
     let parts: Vec<&str> = file.split('/').collect();
     let mut path: Vec<String> = Vec::new();
     if let Some(at) = parts.iter().position(|part| *part == "src") {
@@ -375,8 +484,19 @@ fn inline_scope_path(file: &str, module: &str) -> Option<Vec<String>> {
             _ => return None,
         }
     }
-    path.push(module.to_string());
     Some(path)
+}
+
+/// A libtest name with the file's own module path removed: the
+/// file-internal path `analysis::executable_test_function_names` reports
+/// (`tests::adds`). `None` when the name does not carry that prefix.
+fn file_internal_path<'a>(name: &'a str, file_prefix: &str) -> Option<&'a str> {
+    if file_prefix.is_empty() {
+        Some(name)
+    } else {
+        name.strip_prefix(file_prefix)
+            .and_then(|rest| rest.strip_prefix("::"))
+    }
 }
 
 enum NameScope {
@@ -403,6 +523,19 @@ fn name_scope(scope: &FocusedRunScope<'_>) -> Result<NameScope, String> {
     }
 }
 
+/// The file-internal name `analysis::executable_test_function_names` reports
+/// for a counted libtest name, under the attribution `name_is_in_scope` used.
+fn file_internal_name<'a>(name: &'a str, scope: &NameScope) -> Option<&'a str> {
+    match scope {
+        NameScope::AnyPath => Some(name),
+        NameScope::Prefix(prefix) => {
+            let (_, file_parts) = prefix.split_last()?;
+            file_internal_path(name, &file_parts.join("::"))
+        }
+        NameScope::Nothing => None,
+    }
+}
+
 fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -> bool {
     match scope {
         NameScope::Prefix(prefix) => {
@@ -412,13 +545,7 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
                 return false;
             };
             let file_prefix = file_parts.join("::");
-            let path = if file_prefix.is_empty() {
-                Some(name)
-            } else {
-                name.strip_prefix(&file_prefix)
-                    .and_then(|rest| rest.strip_prefix("::"))
-            };
-            path.is_some_and(|path| {
+            file_internal_path(name, &file_prefix).is_some_and(|path| {
                 path.strip_prefix(module)
                     .is_some_and(|rest| rest.starts_with("::"))
                     && defined.contains(path)
@@ -427,6 +554,150 @@ fn name_is_in_scope(name: &str, defined: &BTreeSet<String>, scope: &NameScope) -
         NameScope::AnyPath => defined.contains(name),
         NameScope::Nothing => false,
     }
+}
+
+/// The flag a proposal attempt's printed after-phase command carries (#16164):
+/// `FILE` is a placeholder the caller replaces with the focused result it
+/// produced, the same placeholder the refusal recovery names.
+pub(crate) const PROPOSAL_FOCUSED_RESULT_FLAG: &str = " --test-result FILE";
+
+/// How a caller produces `FILE` for [`PROPOSAL_FOCUSED_RESULT_FLAG`]. One
+/// source for the up-front requirement (start, status, continue) and the
+/// gate's missing-result refusal, so the two cannot drift apart (#16164).
+/// Libtest JSON output is unstable, so the run needs a nightly toolchain, and
+/// it must select the proposed file's own package and target: from a
+/// workspace root a bare `cargo test` runs only the default members.
+const PROPOSAL_FOCUSED_RESULT_HOW_TO: &str = "run the new test on a nightly toolchain, selecting its package and target (`cargo +nightly test -p PACKAGE --test TARGET -- -Z unstable-options --format json`, or `--lib` in place of `--test TARGET` for an inline test), and pass its events with `--test-result FILE`";
+
+/// The shape of `FILE`, named once so the requirement says how to build it.
+const PROPOSAL_FOCUSED_RESULT_FILE_SHAPE: &str = "FILE is a JSON document saved outside the checkout with schema_version `0.1`, kind `focused_test_result`, attempt_id, head, test_file and libtest_events";
+
+/// The requirement a new-test proposal attempt must meet to finish, stated for
+/// `subject` (an attempt id in backticks, or "this attempt").
+///
+/// `resolved_run` is the command resolved for the proposed file's own package
+/// and target (#16186, from `app::test_stub::focused_result_run_command`),
+/// with the proposed file exactly as the result's `test_file` must spell it.
+/// When present it replaces the generic placeholder form; `None` (an inline
+/// test, an unresolved target, or a surface without the proposed file) keeps
+/// the generic guidance.
+pub(crate) fn proposal_focused_result_requirement(
+    subject: &str,
+    resolved_run: Option<(&str, &str)>,
+) -> String {
+    match resolved_run {
+        Some((command, test_file)) => format!(
+            "{subject} follows a new-test proposal, so finishing needs a focused test result; run the new test file's target on a nightly toolchain (`{command}`) and pass its events with `--test-result FILE`. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}; its test_file is `{test_file}`"
+        ),
+        None => format!(
+            "{subject} follows a new-test proposal, so finishing needs a focused test result; {PROPOSAL_FOCUSED_RESULT_HOW_TO}. {PROPOSAL_FOCUSED_RESULT_FILE_SHAPE}"
+        ),
+    }
+}
+
+/// The full-proof finish gate for an attempt that follows a new-test proposal
+/// (#13203 slice C): a finish needs a recorded focused result with at least one
+/// counted test and no failed test. The result's attribution stays the
+/// caller's claim; a failed test counts as having run, so it is refused here.
+pub(crate) fn require_passing_run(
+    record: Option<&FocusedRunRecord>,
+    attempt_id: &str,
+    baseline: Option<&ProposalBaseline>,
+) -> Result<(), String> {
+    let Some(record) = record else {
+        return Err(proposal_focused_result_requirement(
+            &format!("attempt `{attempt_id}`"),
+            None,
+        ));
+    };
+    if record.counted() == 0 {
+        return Err(format!(
+            "attempt `{attempt_id}` has a focused test result with no counted test; run the new test and pass its events with `--test-result FILE`"
+        ));
+    }
+    if record.failed_count() > 0 {
+        return Err(format!(
+            "the focused test result reports {} failed test(s) for attempt `{attempt_id}`; fix the test or the code, rerun it and pass the new events with `--test-result FILE`",
+            record.failed_count()
+        ));
+    }
+    require_new_test(&record.ran_tests, attempt_id, baseline)
+}
+
+/// The selected file's tests when an inline-proposal attempt began: the input
+/// of the inline-proposal gate, which must not credit a test that already
+/// existed.
+#[derive(Debug)]
+pub(crate) struct ProposalBaseline {
+    /// The module path the file contributes to libtest names; `None` when it
+    /// cannot be derived, and then no ran test is credited as new.
+    file_prefix: Option<String>,
+    /// File-internal test paths (`tests::adds`).
+    tests: BTreeSet<String>,
+}
+
+/// Test names defined by the selected file when the attempt began.
+pub(crate) fn baseline_test_names(file: &str, source: &str) -> Result<ProposalBaseline, String> {
+    Ok(ProposalBaseline {
+        file_prefix: file_module_path(file).map(|parts| parts.join("::")),
+        tests: executable_test_names(file, source)?,
+    })
+}
+
+/// An inline proposal adds a test to a file that already holds tests, so a
+/// passing run must include a test the baseline did not define. A ran name is
+/// new only when, with the file's module path removed, its file-internal path
+/// is not a baseline path; a name whose path cannot be derived is not new.
+fn require_new_test(
+    ran: &[String],
+    attempt_id: &str,
+    baseline: Option<&ProposalBaseline>,
+) -> Result<(), String> {
+    let Some(baseline) = baseline else {
+        return Ok(());
+    };
+    let is_new = |name: &str| {
+        baseline.file_prefix.as_deref().is_some_and(|prefix| {
+            file_internal_path(name, prefix).is_some_and(|path| !baseline.tests.contains(path))
+        })
+    };
+    if !ran.iter().any(|name| is_new(name)) {
+        return Err(format!(
+            "attempt `{attempt_id}` follows an inline new-test proposal, but every counted test already existed in the file when the attempt began; run the newly added test and pass its events with `--test-result FILE`"
+        ));
+    }
+    Ok(())
+}
+
+/// Apply C's gate to a normalized claim committed by an older B producer.
+/// This checks the retained claim's outcome; it does not attest execution.
+pub(crate) fn require_passing_recorded_run(
+    raw: &str,
+    attempt_id: &str,
+    baseline: Option<&ProposalBaseline>,
+) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct Outcome {
+        schema_version: String,
+        kind: String,
+        attempt_id: String,
+        ran_tests: Vec<String>,
+        passed: usize,
+        failed: usize,
+    }
+    let outcome: Outcome = serde_json::from_str(raw).map_err(|error| {
+        format!("the retained focused result cannot be read: {error}; inspect the retained attempt")
+    })?;
+    if outcome.schema_version != FOCUSED_RUN_SCHEMA_VERSION
+        || outcome.kind != FOCUSED_RUN_RECORD_KIND
+        || outcome.attempt_id != attempt_id
+        || outcome.ran_tests.is_empty()
+        || outcome.failed != 0
+        || outcome.passed != outcome.ran_tests.len()
+    {
+        return Err("the retained focused result is not a counted passing run; inspect the retained attempt and start a new attempt".to_string());
+    }
+    require_new_test(&outcome.ran_tests, attempt_id, baseline)
 }
 
 fn executable_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, String> {
@@ -438,6 +709,57 @@ fn executable_test_names(file: &str, source: &str) -> Result<BTreeSet<String>, S
 mod tests {
     use super::*;
 
+    /// #14079: status reads a retained record back as the counts the finish
+    /// recorded, and reads a record of another attempt, another kind, or
+    /// without parseable counts as absent.
+    #[test]
+    fn a_retained_record_reads_back_only_for_its_own_attempt_and_kind() -> Result<(), String> {
+        let record = FocusedRunRecord {
+            schema_version: FOCUSED_RUN_SCHEMA_VERSION,
+            kind: FOCUSED_RUN_RECORD_KIND,
+            attempt_id: "attempt-1".to_string(),
+            head: "abc123".to_string(),
+            file: "tests/math.rs".to_string(),
+            module: None,
+            ran_tests: vec!["adds".to_string(), "subtracts".to_string()],
+            passed: 1,
+            failed: 1,
+            uncounted_ran: 3,
+            edited_test: "covered",
+            claim: "caller-supplied",
+        };
+        let text = String::from_utf8(record.render()?).map_err(|error| error.to_string())?;
+        let reading = read_retained_focused_run(&text, "attempt-1");
+        assert_eq!(reading, Some(record.reported()));
+        let reading = reading.ok_or("the record did not read back")?;
+        assert_eq!(
+            (
+                reading.file.as_str(),
+                reading.ran,
+                reading.passed,
+                reading.failed
+            ),
+            ("tests/math.rs", 2, 1, 1)
+        );
+        assert_eq!(read_retained_focused_run(&text, "attempt-2"), None);
+        assert_eq!(
+            read_retained_focused_run(
+                &text.replace(FOCUSED_RUN_RECORD_KIND, FOCUSED_RUN_INPUT_KIND),
+                "attempt-1"
+            ),
+            None
+        );
+        assert_eq!(
+            read_retained_focused_run(
+                &text.replace("\"failed\": 1", "\"failed\": \"1\""),
+                "attempt-1"
+            ),
+            None
+        );
+        assert_eq!(read_retained_focused_run("not json", "attempt-1"), None);
+        Ok(())
+    }
+
     const SOURCE: &str = "#[test]\nfn adds() {}\n\n#[test]\nfn subtracts() {}\n\nfn helper() {}\n";
 
     fn scope<'a>(inline_module: Option<&'a str>) -> FocusedRunScope<'a> {
@@ -447,6 +769,7 @@ mod tests {
             file: "tests/math.rs",
             file_source: SOURCE,
             inline_module,
+            baseline_source: None,
         }
     }
 
@@ -487,6 +810,30 @@ mod tests {
             Ok(1),
             "{record:?}"
         );
+    }
+
+    /// #16311: the coverage reading attributes ran tests the way the gate
+    /// counted them, so a `[[test]]` target declared outside `tests/` reads
+    /// `covered` or `not_covered` rather than `unknown`.
+    #[test]
+    fn a_declared_target_outside_tests_reads_its_edited_test_coverage() {
+        let before = "#[test]\nfn adds() {}\n\nfn helper() {}\n";
+        let declared = FocusedRunScope {
+            file: "spec/math.rs",
+            baseline_source: Some(before),
+            ..scope(None)
+        };
+        let reading = |name: &str| {
+            let raw = document(
+                "attempt-1",
+                "abc123",
+                "spec/math.rs",
+                serde_json::json!([ok(name)]),
+            );
+            validate_focused_run(&raw, &declared).map(|record| record.edited_test)
+        };
+        assert_eq!(reading("subtracts"), Ok("covered"));
+        assert_eq!(reading("adds"), Ok("not_covered"));
     }
 
     #[test]
@@ -573,6 +920,7 @@ mod tests {
             file: "src/lib.rs",
             file_source: source,
             inline_module: Some("tests"),
+            baseline_source: None,
         };
         let counted = document(
             "attempt-1",
@@ -605,6 +953,7 @@ mod tests {
             file: "src/lib.rs",
             file_source: source,
             inline_module: Some("tests"),
+            baseline_source: None,
         };
         for name in [
             "tests::outside",
@@ -643,6 +992,7 @@ mod tests {
             file,
             file_source: source,
             inline_module: Some("tests"),
+            baseline_source: None,
         };
         let raw = document("attempt-1", "abc123", file, serde_json::json!([ok(name)]));
         validate_focused_run(&raw, &inline).map(|record| record.counted())
@@ -742,6 +1092,121 @@ mod tests {
             Ok(1),
             "{record:?}"
         );
+    }
+
+    #[test]
+    fn the_finish_gate_needs_a_counted_passing_run() {
+        let ran = |events: Value| {
+            validate_focused_run(
+                &document("attempt-1", "abc123", "tests/math.rs", events),
+                &scope(None),
+            )
+        };
+        let passing = ran(serde_json::json!([ok("adds")]));
+        assert!(
+            passing
+                .as_ref()
+                .is_ok_and(|r| require_passing_run(Some(r), "attempt-1", None).is_ok()),
+            "{passing:?}"
+        );
+        let failing = ran(serde_json::json!([
+            ok("adds"),
+            {"type": "test", "event": "failed", "name": "subtracts"}
+        ]));
+        let failing = failing.as_ref().map_err(String::clone);
+        let verdict = failing.map(|r| require_passing_run(Some(r), "attempt-1", None));
+        assert!(
+            verdict
+                .as_ref()
+                .is_ok_and(|v| v.as_ref().err().is_some_and(|e| e.contains("1 failed"))),
+            "{verdict:?}"
+        );
+        let missing = require_passing_run(None, "attempt-1", None)
+            .err()
+            .unwrap_or_default();
+        assert!(missing.contains("needs a focused test result"), "{missing}");
+        let baseline = ProposalBaseline {
+            file_prefix: Some(String::new()),
+            tests: ["adds".to_string()].into(),
+        };
+        let old_only = ran(serde_json::json!([ok("adds")]));
+        let old_only = old_only.as_ref().map_err(String::clone);
+        let verdict = old_only.map(|r| require_passing_run(Some(r), "attempt-1", Some(&baseline)));
+        assert!(
+            verdict.as_ref().is_ok_and(|v| v
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("already existed"))),
+            "{verdict:?}"
+        );
+        let with_new = ran(serde_json::json!([ok("adds"), ok("subtracts")]));
+        assert!(
+            with_new.as_ref().is_ok_and(|r| {
+                require_passing_run(Some(r), "attempt-1", Some(&baseline)).is_ok()
+            }),
+            "{with_new:?}"
+        );
+    }
+
+    #[test]
+    fn a_legacy_pending_claim_matches_only_without_the_derived_reading() {
+        let legacy = "{\n  \"attempt_id\": \"a\",\n  \"passed\": 1,\n  \"failed\": 0\n}\n";
+        let current = "{\n  \"attempt_id\": \"a\",\n  \"passed\": 1,\n  \"failed\": 0,\n  \"edited_test\": \"covered\"\n}\n";
+        let changed = "{\n  \"attempt_id\": \"a\",\n  \"passed\": 0,\n  \"failed\": 1,\n  \"edited_test\": \"covered\"\n}\n";
+        let other = "{\n  \"attempt_id\": \"a\",\n  \"passed\": 1,\n  \"failed\": 0,\n  \"edited_test\": \"unknown\"\n}\n";
+        assert!(same_focused_claim(current, current));
+        // A pre-#16311 pending record: only the derived reading may differ.
+        assert!(same_focused_claim(current, legacy));
+        assert!(!same_focused_claim(changed, legacy));
+        // A current pending record keeps the exact byte comparison.
+        assert!(!same_focused_claim(other, current));
+        assert!(!same_focused_claim("not json", legacy));
+    }
+
+    #[test]
+    fn the_new_test_check_compares_file_internal_paths_exactly() {
+        let before = "fn production() {}\n\n#[test]\nfn existing_discount() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn old() {}\n}\n";
+        let check = |file: &str, names: &[&str]| {
+            let baseline = baseline_test_names(file, before)?;
+            let ran: Vec<String> = names.iter().map(|name| name.to_string()).collect();
+            require_new_test(&ran, "attempt-1", Some(&baseline))
+        };
+        let refused = |result: Result<(), String>| {
+            result
+                .err()
+                .is_some_and(|error| error.contains("already existed"))
+        };
+        let in_math = baseline_test_names("src/math.rs", before);
+        assert_eq!(
+            in_math
+                .as_ref()
+                .map(|b| (b.file_prefix.clone(), b.tests.clone())),
+            Ok((
+                Some("math".to_string()),
+                ["existing_discount".to_string(), "tests::old".to_string()].into()
+            )),
+            "{in_math:?}"
+        );
+        // A governed `tests::existing_discount` is new even though a
+        // top-level `existing_discount` already existed.
+        assert_eq!(
+            check("src/math.rs", &["math::tests::existing_discount"]),
+            Ok(())
+        );
+        assert!(refused(check("src/math.rs", &["math::tests::old"])));
+        assert_eq!(
+            check("src/math.rs", &["math::tests::old", "math::tests::added"]),
+            Ok(())
+        );
+        // A name without the file's module path is not credited.
+        assert!(refused(check("src/math.rs", &["tests::added"])));
+        assert!(refused(check("src/math.rs", &["other::tests::added"])));
+        // A crate root contributes no prefix.
+        assert_eq!(check("src/lib.rs", &["tests::existing_discount"]), Ok(()));
+        assert!(refused(check("src/lib.rs", &["tests::old"])));
+        assert!(refused(check("src/lib.rs", &["existing_discount"])));
+        // A file whose module path cannot be derived credits nothing.
+        assert!(refused(check("src/bin/tool.rs", &["tests::added"])));
     }
 
     #[test]

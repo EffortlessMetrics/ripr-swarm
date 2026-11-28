@@ -3,6 +3,7 @@
 //! The Action's `run:` blocks are extracted from the YAML and executed under
 //! bash with stand-in `curl`, `ripr` and `git` remotes, so install routing and
 //! base derivation are exercised without the network or a real release.
+//! The first-run archive workflow uses the same shell replay harness.
 #![cfg(unix)]
 
 use std::error::Error;
@@ -17,8 +18,8 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 const ACTION: &str = include_str!("../../../.github/actions/ripr-check/action.yml");
 
 /// The body of a step's `run: |` block (de-indented), found by step name.
-fn run_block(step: &str) -> TestResult<String> {
-    let lines: Vec<&str> = ACTION.lines().collect();
+fn run_block(workflow: &str, step: &str) -> TestResult<String> {
+    let lines: Vec<&str> = workflow.lines().collect();
     let header = format!("- name: {step}");
     let start = lines
         .iter()
@@ -60,14 +61,24 @@ fn stand_in(dir: &Path, name: &str, script: &str) -> TestResult<()> {
     Ok(())
 }
 
+fn stand_in_download(dir: &Path, script: &str) -> TestResult {
+    stand_in(dir, "curl", script)
+}
+
 /// Passes the host tools the blocks need through, but never `cargo`.
 fn tool_dir(root: &Path) -> TestResult<PathBuf> {
     let bin = root.join("bin");
     fs::create_dir_all(&bin)?;
     for tool in [
         "mkdir",
+        "bash",
+        "tee",
+        "touch",
+        "uname",
+        "mktemp",
         "awk",
         "tar",
+        "gzip",
         "git",
         "sha256sum",
         "shasum",
@@ -80,6 +91,9 @@ fn tool_dir(root: &Path) -> TestResult<PathBuf> {
         "cp",
         "basename",
         "chmod",
+        "cat",
+        "head",
+        "wc",
     ] {
         let real = ["/usr/bin", "/bin", "/usr/local/bin"]
             .iter()
@@ -130,7 +144,7 @@ fn bash(script: &str, dir: &Path, path: &Path, env: &[(&str, &str)]) -> TestResu
 
 fn install(version: &str, os: &str, arch: &str, root: &Path, bin: &Path) -> TestResult<Run> {
     bash(
-        &run_block("Install ripr")?,
+        &run_block(ACTION, "Install ripr")?,
         root,
         bin,
         &[
@@ -192,9 +206,8 @@ fn a_checksum_mismatch_fails_before_extraction() -> TestResult {
     let root = scratch("checksum")?;
     let bin = tool_dir(&root)?;
     // Writes an archive and a .sha256 that does not match it.
-    stand_in(
+    stand_in_download(
         &bin,
-        "curl",
         "for last; do :; done; f=${last##*/}; case \"$last\" in *.sha256) echo 0000 > \"$f\";; *) echo not-a-tarball > \"$f\";; esac",
     )?;
     let run = install("0.10.0", "Linux", "X64", &root, &bin)?;
@@ -437,7 +450,7 @@ mod zip_route {
         fn run(&self, os: &str, arch: &str) -> TestResult<Run> {
             let systemroot = self.root.join("winroot");
             bash(
-                &run_block("Install ripr")?,
+                &run_block(ACTION, "Install ripr")?,
                 &self.root,
                 &self.bin,
                 &[
@@ -810,7 +823,47 @@ fn check(work: &Path, bin: &Path, base: &str, base_ref: Option<&str>) -> TestRes
     if let Some(base_ref) = base_ref {
         env.push(("GITHUB_BASE_REF", base_ref));
     }
-    bash(&run_block("Run ripr check")?, work, bin, &env)
+    check_steps(work, bin, &env)
+}
+
+/// Runs the base step and then, as the runner does after a success, the
+/// check step with the picked base; the result carries both steps' text.
+fn check_steps(work: &Path, bin: &Path, env: &[(&str, &str)]) -> TestResult<Run> {
+    let picked = work.join("base-step-output.txt");
+    let picked_env = picked.to_str().ok_or("path")?.to_string();
+    let mut base_env: Vec<(&str, &str)> = env
+        .iter()
+        .copied()
+        .filter(|(key, _)| *key != "GITHUB_OUTPUT")
+        .collect();
+    base_env.push(("GITHUB_OUTPUT", &picked_env));
+    let first = bash(
+        &run_block(ACTION, "Pick the ripr check base")?,
+        work,
+        bin,
+        &base_env,
+    )?;
+    if !first.ok() {
+        return Ok(first);
+    }
+    let text = fs::read_to_string(&picked).unwrap_or_default();
+    fs::remove_file(&picked)?;
+    let base = text
+        .lines()
+        .find_map(|line| line.strip_prefix("base="))
+        .unwrap_or_default()
+        .to_string();
+    let mut check_env: Vec<(&str, &str)> = env.to_vec();
+    check_env.push(("RIPR_BASE", &base));
+    let second = bash(&run_block(ACTION, "Run ripr check")?, work, bin, &check_env)?;
+    let mut output = second.output;
+    let mut stdout = first.output.stdout;
+    stdout.extend_from_slice(&output.stdout);
+    output.stdout = stdout;
+    let mut stderr = first.output.stderr;
+    stderr.extend_from_slice(&output.stderr);
+    output.stderr = stderr;
+    Ok(Run { output })
 }
 
 fn recorded_argv(work: &Path) -> TestResult<String> {
@@ -891,4 +944,818 @@ fn an_unfetchable_base_warns_and_leaves_the_message_to_ripr() -> TestResult {
     );
     assert!(recorded_argv(&work)?.ends_with("--base origin/no-such-branch"));
     Ok(())
+}
+
+/// A `--depth 1` clone of the feature branch while `main` moved on: the
+/// checkout `actions/checkout` makes by default, with no merge base yet.
+fn shallow_clone(root: &Path) -> TestResult<PathBuf> {
+    let origin = root.join("origin");
+    fs::create_dir_all(&origin)?;
+    git(&origin, &["init", "-q", "-b", "main"])?;
+    for n in 0..3 {
+        fs::write(origin.join("a.txt"), format!("main {n}"))?;
+        git(&origin, &["add", "."])?;
+        git(&origin, &["commit", "-qm", "main"])?;
+    }
+    git(&origin, &["checkout", "-qb", "feature"])?;
+    for n in 0..3 {
+        fs::write(origin.join("b.txt"), format!("feature {n}"))?;
+        git(&origin, &["add", "."])?;
+        git(&origin, &["commit", "-qm", "feature"])?;
+    }
+    git(&origin, &["checkout", "-q", "main"])?;
+    fs::write(origin.join("a.txt"), "main moved")?;
+    git(&origin, &["commit", "-qam", "main moved"])?;
+    let work = root.join("work");
+    let url = format!("file://{}", origin.display());
+    git(
+        root,
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            "--single-branch",
+            "--branch",
+            "feature",
+            &url,
+            work.to_str().ok_or("path")?,
+        ],
+    )?;
+    Ok(work)
+}
+
+/// The host `git`, for stand-ins that record or fail some calls and pass the
+/// rest through.
+fn real_git() -> TestResult<String> {
+    let found = Command::new("sh").args(["-c", "command -v git"]).output()?;
+    Ok(String::from_utf8_lossy(&found.stdout).trim().to_string())
+}
+
+fn git_succeeds(dir: &Path, args: &[&str]) -> TestResult<bool> {
+    Ok(Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()?
+        .status
+        .success())
+}
+
+#[test]
+fn a_default_shallow_checkout_is_deepened_until_it_meets_the_base() -> TestResult {
+    let root = scratch("shallow")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_clone(&root)?;
+    assert!(
+        !git_succeeds(&work, &["rev-parse", "--verify", "--quiet", "HEAD~1"])?,
+        "fixture must start at depth 1"
+    );
+    let run = check(&work, &bin, "", Some("main"))?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        git_succeeds(&work, &["merge-base", "HEAD", "origin/main"])?,
+        "the checkout still has no merge base with origin/main: {}",
+        run.text()
+    );
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base origin/main"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_full_checkout_is_not_deepened() -> TestResult {
+    // Discriminating alternate: a non-shallow single-branch checkout keeps
+    // the plain base fetch and never runs `git fetch --deepen`.
+    let root = scratch("not-shallow")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let real_git = real_git()?;
+    stand_in(
+        &bin,
+        "git",
+        &format!("echo \"$@\" >> \"$PWD/git.calls\"; exec {real_git} \"$@\""),
+    )?;
+    let work = single_branch_clone(&root)?;
+    let run = check(&work, &bin, "", Some("main"))?;
+    assert!(run.ok(), "{}", run.text());
+    let calls = fs::read_to_string(work.join("git.calls"))?;
+    assert!(!calls.contains("--deepen"), "{calls}");
+    assert!(!calls.contains("--depth"), "{calls}");
+    Ok(())
+}
+
+fn check_with_files(work: &Path, bin: &Path) -> TestResult<(Run, String, String)> {
+    let summary = work.join("step-summary.md");
+    let output = work.join("step-output.txt");
+    let summary_env = summary.to_str().ok_or("path")?.to_string();
+    let output_env = output.to_str().ok_or("path")?.to_string();
+    let run = check_steps(
+        work,
+        bin,
+        &[
+            ("RIPR_INPUT_BASE", "origin/feature~1"),
+            ("RIPR_INPUT_MODE", "draft"),
+            ("RIPR_INPUT_FORMAT", "human"),
+            ("GITHUB_STEP_SUMMARY", &summary_env),
+            ("GITHUB_OUTPUT", &output_env),
+        ],
+    )?;
+    let summary = fs::read_to_string(&summary).unwrap_or_default();
+    let output = fs::read_to_string(&output).unwrap_or_default();
+    Ok((run, summary, output))
+}
+
+#[test]
+fn a_completed_check_lands_in_the_job_summary_and_outputs() -> TestResult {
+    let root = scratch("summary")?;
+    let bin = tool_dir(&root)?;
+    stand_in(
+        &bin,
+        "ripr",
+        "echo 'Start here: src/lib.rs:3 weakly_exposed'",
+    )?;
+    let work = single_branch_clone(&root)?;
+    let (run, summary, output) = check_with_files(&work, &bin)?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        run.text().contains("Start here: src/lib.rs:3"),
+        "{}",
+        run.text()
+    );
+    assert!(summary.contains("### ripr check"), "{summary}");
+    assert!(summary.contains("never fail this step"), "{summary}");
+    assert!(
+        summary.contains("Start here: src/lib.rs:3 weakly_exposed"),
+        "{summary}"
+    );
+    assert!(output.contains("exit-code=0\n"), "{output}");
+    let report = output
+        .lines()
+        .find_map(|line| line.strip_prefix("report="))
+        .ok_or("no report output")?;
+    assert!(
+        fs::read_to_string(report)?.contains("weakly_exposed"),
+        "report file {report}"
+    );
+    assert!(!run.text().contains("::error"), "{}", run.text());
+    Ok(())
+}
+
+#[test]
+fn a_check_that_could_not_complete_fails_with_its_reason() -> TestResult {
+    let root = scratch("failed")?;
+    let bin = tool_dir(&root)?;
+    stand_in(
+        &bin,
+        "ripr",
+        "echo 'This is a shallow clone, so `origin/main` and `HEAD` share no fetched history.' >&2\necho '100% sure' >&2\nexit 2",
+    )?;
+    let work = single_branch_clone(&root)?;
+    let (run, summary, output) = check_with_files(&work, &bin)?;
+    assert_eq!(run.output.status.code(), Some(2), "{}", run.text());
+    assert!(
+        run.text().contains(
+            "::error title=ripr check exited 2::ripr could not complete the analysis (usage, configuration or operational error). This is a shallow clone"
+        ),
+        "{}",
+        run.text()
+    );
+    // One annotation line: newlines and `%` are escaped, not emitted raw.
+    assert!(
+        run.text().contains("history.%0A100%25 sure"),
+        "{}",
+        run.text()
+    );
+    assert!(
+        summary.contains("**Exit 2: ripr could not complete"),
+        "{summary}"
+    );
+    assert!(summary.contains("share no fetched history"), "{summary}");
+    assert!(output.contains("exit-code=2\n"), "{output}");
+    Ok(())
+}
+
+#[test]
+fn a_shallow_checkout_that_already_has_the_base_is_still_deepened() -> TestResult {
+    let root = scratch("shallow-base")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_clone(&root)?;
+    git(
+        &work,
+        &[
+            "fetch",
+            "-q",
+            "--depth=1",
+            "origin",
+            "+refs/heads/main:refs/remotes/origin/main",
+        ],
+    )?;
+    assert!(
+        !git_succeeds(&work, &["merge-base", "HEAD", "origin/main"])?,
+        "fixture must start with the base but no merge base"
+    );
+    let run = check(&work, &bin, "", Some("main"))?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        git_succeeds(&work, &["merge-base", "HEAD", "origin/main"])?,
+        "{}",
+        run.text()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_failed_deepen_warns_once_and_leaves_the_message_to_ripr() -> TestResult {
+    let root = scratch("deepen-fails")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_clone(&root)?;
+    let real_git = real_git()?;
+    stand_in(
+        &bin,
+        "git",
+        &format!(
+            "for a in \"$@\"; do case \"$a\" in --deepen=*) echo deepen >> \"$PWD/deepen.calls\"; exit 1 ;; esac; done; exec {real_git} \"$@\""
+        ),
+    )?;
+    let run = check(&work, &bin, "", Some("main"))?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        run.text().contains("could not deepen the shallow checkout"),
+        "{}",
+        run.text()
+    );
+    assert_eq!(fs::read_to_string(work.join("deepen.calls"))?, "deepen\n");
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base origin/main"
+    );
+    Ok(())
+}
+
+#[test]
+fn replayed_report_text_cannot_issue_workflow_commands() -> TestResult {
+    let root = scratch("stop-commands")?;
+    let bin = tool_dir(&root)?;
+    stand_in(
+        &bin,
+        "ripr",
+        "echo '::add-mask::quoted source'\nprintf '::add-mask::quoted stderr' >&2",
+    )?;
+    let work = single_branch_clone(&root)?;
+    let (run, _, _) = check_with_files(&work, &bin)?;
+    assert!(run.ok(), "{}", run.text());
+    let out = String::from_utf8_lossy(&run.output.stdout).to_string();
+    let stop = out
+        .find("::stop-commands::ripr-")
+        .ok_or_else(|| out.clone())?;
+    let token = out[stop + "::stop-commands::".len()..]
+        .lines()
+        .next()
+        .ok_or("token")?
+        .to_string();
+    let quoted = out
+        .find("::add-mask::quoted source")
+        .ok_or_else(|| out.clone())?;
+    let quoted_stderr = out
+        .find("::add-mask::quoted stderr")
+        .ok_or_else(|| out.clone())?;
+    let resume = out
+        .find(&format!("::{token}::"))
+        .ok_or_else(|| out.clone())?;
+    assert!(stop < quoted && quoted < resume, "{out}");
+    assert!(stop < quoted_stderr && quoted_stderr < resume, "{out}");
+    // stderr ended without a newline; the resume marker still starts a line.
+    assert!(out.contains(&format!("\n::{token}::\n")), "{out}");
+
+    // Discriminating alternate: the github format is meant to annotate.
+    stand_in(
+        &bin,
+        "ripr",
+        "printf '::warning file=src/lib.rs,line=3::gap'\necho '::add-mask::quoted stderr' >&2",
+    )?;
+    let run = bash(
+        &run_block(ACTION, "Run ripr check")?,
+        &work,
+        &bin,
+        &[
+            ("RIPR_BASE", "origin/feature~1"),
+            ("RIPR_INPUT_MODE", "draft"),
+            ("RIPR_INPUT_FORMAT", "github"),
+        ],
+    )?;
+    assert!(run.ok(), "{}", run.text());
+    // The annotations come before the guard; ripr's stderr stays inside it.
+    let out = String::from_utf8_lossy(&run.output.stdout).to_string();
+    let annotation = out
+        .find("::warning file=src/lib.rs")
+        .ok_or_else(|| out.clone())?;
+    let stop = out
+        .find("::stop-commands::ripr-")
+        .ok_or_else(|| out.clone())?;
+    let quoted_stderr = out
+        .find("::add-mask::quoted stderr")
+        .ok_or_else(|| out.clone())?;
+    assert!(annotation < stop && stop < quoted_stderr, "{out}");
+    // The report ended without a newline; the stop marker still starts a line.
+    assert!(out.contains("\n::stop-commands::ripr-"), "{out}");
+    Ok(())
+}
+
+#[test]
+fn each_invocation_keeps_its_own_report() -> TestResult {
+    // Two checks in one job share RUNNER_TEMP; the first `report` output must
+    // still hold the first report after the second check runs.
+    let root = scratch("two-reports")?;
+    let bin = tool_dir(&root)?;
+    let work = single_branch_clone(&root)?;
+    let report_of = |text: &str| -> TestResult<String> {
+        stand_in(&bin, "ripr", &format!("echo '{text}'"))?;
+        let (run, _, output) = check_with_files(&work, &bin)?;
+        assert!(run.ok(), "{}", run.text());
+        fs::remove_file(work.join("step-output.txt"))?;
+        Ok(output
+            .lines()
+            .find_map(|line| line.strip_prefix("report="))
+            .ok_or("no report output")?
+            .to_string())
+    };
+    let first = report_of("first check")?;
+    let second = report_of("second check")?;
+    assert_ne!(first, second);
+    assert_eq!(fs::read_to_string(&first)?, "first check\n");
+    assert_eq!(fs::read_to_string(&second)?, "second check\n");
+    Ok(())
+}
+
+/// Runs the check step with extra event variables, as a push or a pull
+/// request job sets them.
+fn check_event(work: &Path, bin: &Path, base: &str, event: &[(&str, &str)]) -> TestResult<Run> {
+    let mut env = vec![
+        ("RIPR_INPUT_BASE", base),
+        ("RIPR_INPUT_MODE", "draft"),
+        ("RIPR_INPUT_FORMAT", "human"),
+    ];
+    env.extend_from_slice(event);
+    check_steps(work, bin, &env)
+}
+
+fn origin_rev(root: &Path, rev: &str) -> TestResult<String> {
+    let out = Command::new("git")
+        .args(["rev-parse", rev])
+        .current_dir(root.join("origin"))
+        .output()?;
+    assert!(out.status.success(), "rev-parse {rev}");
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[test]
+fn an_explicit_branch_base_on_a_shallow_checkout_is_fetched_and_deepened() -> TestResult {
+    // #15399: an explicit `base: origin/main` got no fetch and no deepen, so
+    // the default shallow checkout reported a missing merge base.
+    let root = scratch("explicit-shallow")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_clone(&root)?;
+    let run = check(&work, &bin, "origin/main", None)?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        git_succeeds(&work, &["merge-base", "HEAD", "origin/main"])?,
+        "{}",
+        run.text()
+    );
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base origin/main"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_branch_base_the_checkout_lacks_is_fetched_as_its_remote_branch() -> TestResult {
+    let root = scratch("explicit-bare")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = single_branch_clone(&root)?;
+    let run = check(&work, &bin, "main", None)?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(git_succeeds(
+        &work,
+        &["rev-parse", "--verify", "--quiet", "origin/main^{commit}"]
+    )?);
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base origin/main"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_base_that_is_no_remote_branch_reaches_ripr_unchanged() -> TestResult {
+    // A tag or other ref the checkout lacks is not renamed to `origin/<name>`,
+    // so ripr's missing-base message names what the workflow asked for.
+    let root = scratch("explicit-bare-missing")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = single_branch_clone(&root)?;
+    let run = check(&work, &bin, "v9.9.9", None)?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        run.text().contains("could not fetch the base 'v9.9.9'"),
+        "{}",
+        run.text()
+    );
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base v9.9.9"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_base_that_looks_like_an_option_is_refused_before_git_or_ripr_run() -> TestResult {
+    let root = scratch("dash-base")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    stand_in(&bin, "git", "echo \"$@\" >> \"$PWD/git.calls\"")?;
+    let work = root.join("work");
+    fs::create_dir_all(&work)?;
+    let run = check(&work, &bin, "--upload-pack=touch pwned", None)?;
+    assert_eq!(run.output.status.code(), Some(2), "{}", run.text());
+    assert!(
+        run.text().contains("::error title=ripr check input::"),
+        "{}",
+        run.text()
+    );
+    assert!(!work.join("ripr.argv").exists(), "ripr ran");
+    assert!(!work.join("git.calls").exists(), "git ran");
+    Ok(())
+}
+
+#[test]
+fn a_push_to_another_branch_compares_with_the_fetched_default_branch() -> TestResult {
+    let root = scratch("push-branch")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_clone(&root)?;
+    let before = origin_rev(&root, "feature~1")?;
+    let run = check_event(
+        &work,
+        &bin,
+        "",
+        &[
+            ("GITHUB_EVENT_NAME", "push"),
+            ("GITHUB_REF", "refs/heads/feature"),
+            ("RIPR_DEFAULT_BRANCH", "main"),
+            ("RIPR_EVENT_BEFORE", &before),
+        ],
+    )?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        git_succeeds(&work, &["merge-base", "HEAD", "origin/main"])?,
+        "{}",
+        run.text()
+    );
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human --base origin/main"
+    );
+    Ok(())
+}
+
+/// A `--depth 1` clone of `main` after a push of two commits.
+fn shallow_default_clone(root: &Path) -> TestResult<PathBuf> {
+    let origin = root.join("origin");
+    fs::create_dir_all(&origin)?;
+    git(&origin, &["init", "-q", "-b", "main"])?;
+    for n in 0..4 {
+        fs::write(origin.join("a.txt"), format!("main {n}"))?;
+        git(&origin, &["add", "."])?;
+        git(&origin, &["commit", "-qm", "main"])?;
+    }
+    let work = root.join("work");
+    let url = format!("file://{}", origin.display());
+    git(
+        root,
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "1",
+            "--single-branch",
+            "--branch",
+            "main",
+            &url,
+            work.to_str().ok_or("path")?,
+        ],
+    )?;
+    Ok(work)
+}
+
+#[test]
+fn a_push_to_the_default_branch_compares_with_the_commit_before_the_push() -> TestResult {
+    // #15399: comparing the default branch with itself found nothing to check.
+    let root = scratch("push-default")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_default_clone(&root)?;
+    let before = origin_rev(&root, "main~2")?;
+    assert!(
+        !git_succeeds(&work, &["cat-file", "-e", &format!("{before}^{{commit}}")])?,
+        "fixture must start without the commit before the push"
+    );
+    let run = check_event(
+        &work,
+        &bin,
+        "",
+        &[
+            ("GITHUB_EVENT_NAME", "push"),
+            ("GITHUB_REF", "refs/heads/main"),
+            ("RIPR_DEFAULT_BRANCH", "main"),
+            ("RIPR_EVENT_BEFORE", &before),
+        ],
+    )?;
+    assert!(run.ok(), "{}", run.text());
+    assert!(
+        git_succeeds(&work, &["merge-base", "HEAD", &before])?,
+        "{}",
+        run.text()
+    );
+    assert_eq!(
+        recorded_argv(&work)?,
+        format!("check --root . --mode draft --format human --base {before}")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_first_push_to_the_default_branch_leaves_the_base_to_ripr() -> TestResult {
+    let root = scratch("push-first")?;
+    let bin = tool_dir(&root)?;
+    stand_in(&bin, "ripr", "echo \"$@\" > \"$PWD/ripr.argv\"")?;
+    let work = shallow_default_clone(&root)?;
+    let zero = "0".repeat(40);
+    let run = check_event(
+        &work,
+        &bin,
+        "",
+        &[
+            ("GITHUB_EVENT_NAME", "push"),
+            ("GITHUB_REF", "refs/heads/main"),
+            ("RIPR_DEFAULT_BRANCH", "main"),
+            ("RIPR_EVENT_BEFORE", &zero),
+        ],
+    )?;
+    assert!(run.ok(), "{}", run.text());
+    assert_eq!(
+        recorded_argv(&work)?,
+        "check --root . --mode draft --format human"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_failure_reason_keeps_the_fix_hint_and_drops_progress_lines() -> TestResult {
+    let root = scratch("reason")?;
+    let bin = tool_dir(&root)?;
+    stand_in(
+        &bin,
+        "ripr",
+        "for n in 1 2 3; do echo \"ripr progress: analyzing $n\" >&2; done\n\
+         echo 'ripr could not read ripr.toml:' >&2\n\
+         echo '  unknown key `mdoe` at line 3' >&2\n\
+         echo '  did you mean `mode`?' >&2\n\
+         echo 'Fix: rename the key, then run ripr doctor' >&2\n\
+         exit 2",
+    )?;
+    let work = single_branch_clone(&root)?;
+    let (run, summary, _) = check_with_files(&work, &bin)?;
+    assert_eq!(run.output.status.code(), Some(2), "{}", run.text());
+    let error = run
+        .text()
+        .lines()
+        .find(|line| line.starts_with("::error title=ripr check exited 2::"))
+        .ok_or("no error annotation")?
+        .to_string();
+    assert!(error.contains("Fix: rename the key"), "{error}");
+    assert!(!error.contains("ripr progress:"), "{error}");
+    assert!(summary.contains("did you mean `mode`?"), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn the_action_silences_progress_without_a_flag_a_pinned_release_may_lack() -> TestResult {
+    // `--quiet` on `ripr check` is newer than the default pinned release, so
+    // the argv stays flag-free (the recorded-argv tests above) and the
+    // environment switch, ignored by releases that predate it, does the work.
+    assert!(ACTION.contains("RIPR_QUIET: '1'"));
+    assert!(ACTION.contains("'Analysis mode: instant, draft, fast, deep, or ready'"));
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod first_run_archive {
+    use super::*;
+
+    const WORKFLOW: &str = include_str!("../../../.github/workflows/first-run-archive.yml");
+    const QUICKSTART: &str = include_str!("../../../docs/QUICKSTART.md");
+    const README: &str = include_str!("../../../README.md");
+
+    fn archive_fixture(case: &str) -> TestResult<(PathBuf, PathBuf)> {
+        let root = scratch(case)?;
+        let bin = tool_dir(&root)?;
+        let served = root.join("served");
+        fs::create_dir(&served)?;
+        // Both commands report the same version. Separate markers identify which ran.
+        stand_in(
+            &served,
+            "ripr",
+            "touch \"$HOME/archive.called\"; echo 'ripr 0.10.0'",
+        )?;
+        stand_in(
+            &bin,
+            "ripr",
+            "touch \"$HOME/ambient.called\"; echo 'ripr 0.10.0'",
+        )?;
+        stand_in_download(
+            &bin,
+            "case \"$2\" in
+               *.sha256) [ \"$CASE\" != checksum-download-failed ] || exit 22
+                         cp \"$HOME/served/checksum\" \"$(basename \"$2\")\" ;;
+               *) cp \"$HOME/served/archive\" \"$(basename \"$2\")\" ;;
+             esac",
+        )?;
+        fs::write(served.join("README-server.txt"), "archive fixture\n")?;
+        let member = if case == "executable-missing" {
+            "README-server.txt"
+        } else {
+            "ripr"
+        };
+        let prepare = bash(
+            "tar -czf served/archive -C served \"$ARCHIVE_MEMBER\"
+             { sha256sum served/archive || shasum -a 256 served/archive; } | awk '{print $1}' > served/checksum",
+            &root,
+            &bin,
+            &[("ARCHIVE_MEMBER", member)],
+        )?;
+        assert!(prepare.ok(), "{}", prepare.text());
+        if case == "checksum-mismatch" {
+            fs::write(served.join("checksum"), format!("{:064}\n", 0))?;
+        }
+        if case == "partial-extraction" {
+            // Extract real bytes, then simulate tar reporting a late error.
+            fs::rename(bin.join("tar"), bin.join("fixture-tar"))?;
+            stand_in(
+                &bin,
+                "tar",
+                "fixture-tar \"$@\" || exit $?
+                 echo 'fixture: extraction failed after writing files' >&2
+                 exit 2",
+            )?;
+        }
+        Ok((root, bin))
+    }
+
+    #[test]
+    fn unix_receipt_requires_a_successful_archive_install() -> TestResult {
+        for case in [
+            "valid",
+            "checksum-mismatch",
+            "checksum-download-failed",
+            "executable-missing",
+            "partial-extraction",
+        ] {
+            let (root, bin) = archive_fixture(case)?;
+            fs::create_dir(root.join("docs"))?;
+            fs::write(root.join("docs/QUICKSTART.md"), QUICKSTART)?;
+            let extract = bash(
+                &run_block(WORKFLOW, "Extract the documented snippets")?,
+                &root,
+                &bin,
+                &[],
+            )?;
+            assert!(extract.ok(), "{}", extract.text());
+            let install = bash(
+                &run_block(
+                    WORKFLOW,
+                    "Install with the documented snippet (Linux and macOS)",
+                )?,
+                &root,
+                &bin,
+                &[
+                    ("CASE", case),
+                    ("VERSION", "0.10.0"),
+                    ("GITHUB_OUTPUT", "output"),
+                ],
+            )?;
+            let timing = if install.ok() {
+                fs::read_to_string(root.join("bin-test/output"))?
+            } else {
+                String::new()
+            };
+            let (_, seconds) = timing.trim().split_once('=').unwrap_or(("", ""));
+            let receipt = bash(
+                &run_block(WORKFLOW, "Record the archive cell for the install receipt")?,
+                &root,
+                &bin,
+                &[
+                    ("OS_LABEL", "test-host"),
+                    ("OUTCOME", if install.ok() { "success" } else { "failure" }),
+                    ("SECONDS_TO_INSTALL", seconds),
+                    ("VERSION", "0.10.0"),
+                ],
+            )?;
+            assert!(receipt.ok(), "{}", receipt.text());
+            let cell = fs::read_to_string(root.join("runner-temp/cell/cell.json"))?;
+            let valid = case == "valid";
+            let expected = if valid { "works" } else { "failed" };
+            assert!(
+                cell.contains(&format!("\"status\":\"{expected}\"")),
+                "{case}: {cell}\n{}",
+                install.text()
+            );
+            assert_eq!(install.ok(), valid, "{case}: {}", install.text());
+            assert_eq!(root.join("archive.called").exists(), valid, "{case}");
+            assert!(
+                !root.join("ambient.called").exists(),
+                "{case} ran ambient ripr"
+            );
+            assert_eq!(
+                root.join("bin-test/ripr-bin/ripr").is_file(),
+                valid || case == "partial-extraction",
+                "{case}"
+            );
+            if case == "partial-extraction" {
+                assert!(
+                    install
+                        .text()
+                        .contains("extraction failed after writing files"),
+                    "{}",
+                    install.text()
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn readme_does_not_analyze_with_a_stale_or_ambient_install() -> TestResult {
+        let (_, section) = README
+            .split_once("\n## The first useful run\n")
+            .ok_or("README is missing its first useful run")?;
+        let fence = "\x60\x60\x60";
+        let (_, snippet) = section
+            .split_once(&format!("\n{fence}bash\n"))
+            .ok_or("README is missing its archive install snippet")?;
+        let (snippet, _) = snippet
+            .split_once(&format!("\n{fence}"))
+            .ok_or("README archive install snippet is not closed")?;
+        for case in [
+            "valid",
+            "checksum-mismatch",
+            "checksum-download-failed",
+            "executable-missing",
+            "partial-extraction",
+        ] {
+            let (root, bin) = archive_fixture(case)?;
+            if case == "checksum-download-failed" {
+                fs::copy(
+                    root.join("served/checksum"),
+                    root.join("ripr-server-v0.10.0-x86_64-unknown-linux-gnu.tar.gz.sha256"),
+                )?;
+            }
+            let install = bash(
+                &format!("set +e\n{snippet}"),
+                &root,
+                &bin,
+                &[("CASE", case)],
+            )?;
+            let valid = case == "valid";
+            assert_eq!(install.ok(), valid, "{case}: {}", install.text());
+            assert_eq!(root.join("archive.called").exists(), valid, "{case}");
+            assert!(
+                !root.join("ambient.called").exists(),
+                "{case} ran ambient ripr"
+            );
+            assert_eq!(
+                root.join("ripr-bin/ripr").is_file(),
+                valid || case == "partial-extraction",
+                "{case}"
+            );
+            if case == "partial-extraction" {
+                assert!(
+                    install
+                        .text()
+                        .contains("extraction failed after writing files"),
+                    "{}",
+                    install.text()
+                );
+            }
+        }
+        Ok(())
+    }
 }

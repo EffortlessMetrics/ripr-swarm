@@ -824,3 +824,48 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_boundary_gap (37)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_boundary_gap (38)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless python_boundary_gap --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`
+
+## Pending — python_boundary_gap (39)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless python_boundary_gap --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — python_boundary_gap (40)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

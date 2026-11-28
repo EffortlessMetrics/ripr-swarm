@@ -5,7 +5,7 @@
 use super::activation::{ActivationWithBoundaryInput, sort_value_facts};
 use super::context::ProbeContext;
 use super::owner_pin::{OwnerPinSyntax, builtin_type_unshadowed, targeted_free_call_reaches_owner};
-use super::reach::{includes_external_docs_with, names_identifier_outside_fn_definition};
+use super::reach::{file_includes_external_docs, names_identifier_outside_fn_definition};
 use super::targeted_calls::{TargetedCallShape, TargetedCallSyntax};
 use crate::analysis::facts::{
     FunctionImplContext, FunctionSummary, OracleFact, RustIndex, TestSummary,
@@ -282,7 +282,8 @@ fn boundary(context: &ProbeContext<'_>, syntax: &OwnerPinSyntax) -> Option<Liter
         .files()
         .iter()
         .try_fold(0usize, |count, (path, facts)| {
-            if includes_external_docs_with(&facts.source, false) {
+            // The producer's stored answer (#13754), else the gated parse.
+            if file_includes_external_docs(facts.data()) {
                 return None;
             }
             // Reuse the native free-function reach boundary: source that

@@ -970,9 +970,18 @@ pub(super) fn empty_scope_marker_payload(snapshot: &AnalysisSnapshot) -> Option<
 pub(super) fn empty_scope_diagnostic(snapshot: &AnalysisSnapshot) -> Diagnostic {
     // The not-all-clear fact and recovery route come from the shared wording
     // owner (#12416), so the marker cannot drift from hover and status.
+    //
+    // `snapshot.base` is the base the run resolved, which is a branch name
+    // even when no base was requested. The cause sentence needs the requested
+    // base, which the bound input identity records; hover and status read the
+    // same requested value from the session configuration (#15951).
+    let requested_base = match snapshot.input_identity.as_ref() {
+        Some(identity) => identity.requested_base.as_deref(),
+        None => snapshot.base.as_deref(),
+    };
     let disclosure = super::backend::empty_scope_disclosure(
         snapshot.analysis_outcome.as_ref(),
-        snapshot.base.as_deref(),
+        requested_base,
         false,
     )
     .unwrap_or_else(|| super::backend::EMPTY_SCOPE_LSP_RETRY_ROUTE.to_string());
@@ -1059,6 +1068,10 @@ pub(super) fn delivery_omission_diagnostic(
     }
 }
 
+/// The recovery for a document outside the selected workspace root: saving
+/// or refreshing analyzes only that root, so neither can lift the pause.
+pub(super) const OUTSIDE_ANALYZED_ROOT_ROUTE: &str = "ripr analyzes one workspace root per server, so saving or refreshing cannot fix this; open this file's repository in its own editor window or session to analyze it.";
+
 /// One visible summary of a dirty-buffer withdrawal (#7771). This is a
 /// delivery limitation, never a source finding or action. Retracted when
 /// quarantine lifts because the restored publish re-serves the saved-state
@@ -1079,6 +1092,14 @@ pub(super) fn quarantine_withdrawal_diagnostic(reason: DocumentStalenessReason) 
         DocumentStalenessReason::NoAnalyzedSavedContent => (
             "save_then_refresh",
             "Save the file if it is new, then refresh (`ripr.refresh`) so ripr can restore them.",
+        ),
+        DocumentStalenessReason::SavedContentNotYetAnalyzed => (
+            "await_analysis_or_refresh",
+            "They return when ripr analyzes the saved file; run `ripr.refresh` if they do not.",
+        ),
+        DocumentStalenessReason::OutsideAnalyzedRoot => (
+            "open_repository_in_own_session",
+            OUTSIDE_ANALYZED_ROOT_ROUTE,
         ),
     };
     Diagnostic {
@@ -1108,30 +1129,63 @@ pub(super) fn withdrawn_quarantine_diagnostics(reason: DocumentStalenessReason) 
 /// only starts analysis when configuration is valid and the workspace root
 /// authority admits analysis, so a blocked state must not advertise
 /// save/refresh — a wrong actionable route is worse than none.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum AnalysisPendingRecovery {
     /// Configuration valid, root admitted: the ordinary cold-start state.
     SaveOrRefresh,
+    /// Configuration valid, root admitted, and an analysis attempt is queued
+    /// or running (#14447): asking the user to save or refresh to start
+    /// analysis would be wrong while one is already under way.
+    AnalysisRunning,
     /// Configuration invalid: `refresh_diagnostics` returns before
     /// analysis until the configuration is repaired.
     FixConfiguration,
     /// The root authority blocks analysis; carries the authority's own
     /// recovery route (`refresh` or `use_single_workspace_root_and_restart`).
     RootBlocked(&'static str),
+    /// Configuration valid, root admitted, no snapshot, and the latest
+    /// attempt failed (for example the root is not inside a Git work tree, or
+    /// the repository has no commits). A bare retry fails the same way, so
+    /// the marker names the recorded failure (already bounded and
+    /// path-redacted by the health owner) instead of the cold-start route.
+    AnalysisFailed {
+        kind: AnalysisFailureKind,
+        detail: String,
+    },
 }
 
 impl AnalysisPendingRecovery {
     pub(super) fn recovery_id(&self) -> &'static str {
         match self {
             Self::SaveOrRefresh => "save_or_refresh",
+            Self::AnalysisRunning => "analysis_running",
             Self::FixConfiguration => "fix_configuration",
             Self::RootBlocked(route) => route,
+            Self::AnalysisFailed { .. } => "fix_failure_then_refresh",
         }
     }
 
-    fn route_text(&self) -> &'static str {
+    /// The served payload identity: the recovery id, plus a digest of the
+    /// failure detail for a failed attempt, so a different failure re-renders
+    /// instead of answering `unchanged` with stale reason text.
+    pub(super) fn payload_identity(&self) -> String {
         match self {
+            Self::AnalysisFailed { kind, detail } => format!(
+                "{}:{}",
+                self.recovery_id(),
+                stable_diagnostic_id(
+                    "ripr-analysis-failed-marker-v1",
+                    [kind.as_str(), detail.as_str()]
+                )
+            ),
+            _ => self.recovery_id().to_string(),
+        }
+    }
+
+    fn route_text(&self) -> String {
+        let route = match self {
             Self::SaveOrRefresh => "Save a file or run `ripr.refresh` to start analysis.",
+            Self::AnalysisRunning => "Results replace this marker when it finishes.",
             Self::FixConfiguration => {
                 "Fix the workspace configuration and reload it; analysis cannot start until the configuration is valid."
             }
@@ -1139,7 +1193,19 @@ impl AnalysisPendingRecovery {
             Self::RootBlocked(_) => {
                 "Select a single workspace root and restart the language server."
             }
-        }
+            Self::AnalysisFailed { detail, .. } => {
+                let detail = detail.trim_end();
+                let separator = if detail.ends_with(['.', '!', '?']) {
+                    " "
+                } else {
+                    ". "
+                };
+                return format!(
+                    "The last analysis attempt failed: {detail}{separator}Fix that cause, then save a file or run `ripr.refresh` to analyze again."
+                );
+            }
+        };
+        route.to_string()
     }
 }
 
@@ -1169,9 +1235,30 @@ fn analysis_pending_diagnostic_for(
     recovery: AnalysisPendingRecovery,
     withdrawn: bool,
 ) -> Diagnostic {
-    let message = if withdrawn {
+    let message = if withdrawn && matches!(recovery, AnalysisPendingRecovery::AnalysisFailed { .. })
+    {
+        // #15312: the retained findings answer an earlier base, so they are
+        // withdrawn rather than shown as the answer to the current one.
+        format!(
+            "ripr could not analyze this workspace with the current settings, so previously \
+             reported findings are withdrawn — this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else if withdrawn {
         format!(
             "ripr analysis is paused and previously reported findings are withdrawn — \
+             this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else if recovery == AnalysisPendingRecovery::AnalysisRunning {
+        format!(
+            "ripr analysis is in progress, so no findings are reported yet — \
+             this is not evidence of a clean workspace. {}",
+            recovery.route_text()
+        )
+    } else if matches!(recovery, AnalysisPendingRecovery::AnalysisFailed { .. }) {
+        format!(
+            "ripr could not analyze this workspace, so no findings are reported — \
              this is not evidence of a clean workspace. {}",
             recovery.route_text()
         )
@@ -1182,6 +1269,23 @@ fn analysis_pending_diagnostic_for(
             recovery.route_text()
         )
     };
+    let mut data = serde_json::json!({
+        "kind": "delivery_limitation",
+        "state": match (withdrawn, &recovery) {
+            (true, AnalysisPendingRecovery::AnalysisFailed { .. }) => "withdrawn_analysis_failure",
+            (true, _) => "withdrawn_configuration_failure",
+            (false, _) => "no_snapshot",
+        },
+        "recovery": recovery.recovery_id(),
+    });
+    if let AnalysisPendingRecovery::AnalysisFailed { kind, .. } = &recovery
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert(
+            "failure_kind".to_string(),
+            serde_json::Value::String(kind.as_str().to_string()),
+        );
+    }
     Diagnostic {
         severity: Some(DiagnosticSeverity::INFORMATION),
         code: Some(NumberOrString::String(
@@ -1189,15 +1293,7 @@ fn analysis_pending_diagnostic_for(
         )),
         source: Some("ripr".to_string()),
         message,
-        data: Some(serde_json::json!({
-            "kind": "delivery_limitation",
-            "state": if withdrawn {
-                "withdrawn_configuration_failure"
-            } else {
-                "no_snapshot"
-            },
-            "recovery": recovery.recovery_id(),
-        })),
+        data: Some(data),
         ..Default::default()
     }
 }
@@ -1486,6 +1582,19 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths(
     .map_err(String::from)
 }
 
+/// Whether a full (non-deferred) refresh builds the repo-wide spot inventory
+/// under `config`: the full diagnostic profile, spot diagnostics enabled and
+/// Rust enabled.
+fn seam_inventory_enabled(config: &LspAnalysisConfig) -> bool {
+    config.diagnostic_profile == LspDiagnosticProfile::Full
+        && config.enable_seam_diagnostics
+        && config
+            .repo_config()
+            .languages()
+            .enabled()
+            .contains(&LanguageId::Rust)
+}
+
 /// The typed outcome for a seam inventory that cannot run because its
 /// configuration switches are off (#6001). The default `actionable` profile
 /// lands here in every default-profile session, so the wire must carry the
@@ -1596,6 +1705,32 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
                 );
             }
         };
+    // #14136: the findings `ripr check` withholds (an owner that carries
+    // `#[mutants::skip]`, or a suppression policy) are not projected into the
+    // editor either. The id set is the shared `withheld_finding_ids` owner, not
+    // an LSP-side matcher; the disclosure count stays on the snapshot.
+    let withheld_ids: std::collections::BTreeSet<String> = output
+        .withheld_finding_ids()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    // The disclosure count is the owner opt-out count, which equals the
+    // withheld set only while the LSP check input carries no suppression policy
+    // (#14610). Withheld findings are removed before the out-of-scope
+    // partition below, so the partition cannot reduce the count.
+    let owner_opt_out_findings = output.owner_opt_outs.len();
+    // A withheld finding that carries a static limit still limits the run: the
+    // analysis was incomplete for that owner, so the status stays `limited`
+    // rather than reading `full` just because the finding is not shown.
+    let mut visible_findings = Vec::new();
+    let mut withheld_static_limits = Vec::new();
+    for finding in output.findings {
+        if !withheld_ids.contains(&finding.id) {
+            visible_findings.push(finding);
+        } else if finding.static_limit_kind.is_some() {
+            withheld_static_limits.push(finding);
+        }
+    }
     let root = output.root;
     let base = output.base;
     let analysis_outcome = output.analysis_outcome;
@@ -1627,7 +1762,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // already excluded. The suppressed count stays on the snapshot as the
     // typed safety net against anchor-model divergence (#2130).
     let (findings, out_of_scope_test_file_findings) =
-        partition_out_of_scope_test_file_findings(&root, config.repo_config(), output.findings);
+        partition_out_of_scope_test_file_findings(&root, config.repo_config(), visible_findings);
 
     // Typed component-outcome authority (#1997, RIPR-SPEC-0141): every
     // optional analysis component records one bounded outcome on the
@@ -1706,13 +1841,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // not gap-record repair packets — the WARNING/INFORMATION mapping
     // is owned by SeverityConfig. When run is not full, seam WARNINGs
     // downgrade to INFORMATION. The exception is documented here.
-    let seam_inventory_enabled = config.diagnostic_profile == LspDiagnosticProfile::Full
-        && config.enable_seam_diagnostics
-        && config
-            .repo_config()
-            .languages()
-            .enabled()
-            .contains(&LanguageId::Rust);
+    let seam_inventory_enabled = seam_inventory_enabled(config);
     let (raw_seams, repair_card_candidate_seams, seam_outcome) = if defer_seam_inventory {
         (
             Vec::new(),
@@ -1732,12 +1861,19 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             // so the card projection fails closed (`None`) instead of binding
             // against an incomplete candidate set.
             Ok((seams, limit_info)) => {
-                let repair_card_candidate_seams = limit_info.is_none().then(|| seams.clone());
-                (
-                    seams,
-                    repair_card_candidate_seams,
-                    ComponentOutcome::complete(AnalysisComponent::SeamInventory),
-                )
+                let truncated = limit_info.filter(|limit| limit.is_truncated());
+                let repair_card_candidate_seams = truncated.is_none().then(|| seams.clone());
+                let outcome = match truncated {
+                    Some(limit) => ComponentOutcome::limited(
+                        AnalysisComponent::SeamInventory,
+                        "seam_inventory_truncated",
+                        format!("analyzed {} of {} spots", limit.analyzed, limit.total),
+                        true,
+                        crate::app::task_first::WIDEN_SEAM_BUDGET,
+                    ),
+                    None => ComponentOutcome::complete(AnalysisComponent::SeamInventory),
+                };
+                (seams, repair_card_candidate_seams, outcome)
             }
             Err(err) => (
                 Vec::new(),
@@ -1758,8 +1894,9 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // state, scope, deferral, and the typed component outcomes (#1939,
     // #1997). A degraded optional component makes the run `limited` — never
     // a silent `full`.
+    let status_findings = run_status_findings(&findings, &withheld_static_limits);
     let run_status = derive_run_status_with_outcome(
-        &findings,
+        &status_findings,
         &gap_artifact_report.rejections,
         &gap_artifact_report.artifacts,
         defer_seam_inventory,
@@ -1833,7 +1970,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // requires visible, bounded advisory evidence rather than a silent zero.
     if should_project_gap_records(
         run_status,
-        &findings,
+        &status_findings,
         &gap_artifact_report.artifacts,
         &component_outcomes,
         gap_ledger.as_ref().map(|(_, records)| records.as_slice()),
@@ -1900,9 +2037,11 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
+        seam_inventory_on_full_refresh: seam_inventory_enabled,
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
+        owner_opt_out_findings,
         unavailable_adapter,
         language_view,
         rust_diagnostic_origins: origins,
@@ -1922,10 +2061,14 @@ pub(super) fn finding_is_withheld_gap(finding: &Finding) -> bool {
 
 /// Every preview-language finding the actionable profile withholds from
 /// diagnostics (#11296), including gap-class, `*_unknown`, and
-/// static-limited preview evidence.
+/// static-limited preview evidence. An `exposed` finding is not withheld
+/// evidence: there is no gap to show, so it never feeds the "not shown in
+/// the editor" marker or count (#13636); the status's `resolved_findings`
+/// names the gaps that became exposed.
 pub(super) fn finding_is_withheld_preview_profile_finding(finding: &Finding) -> bool {
     finding.language_status == Some(LanguageStatus::Preview)
         && finding.is_candidate_actionable()
+        && !matches!(finding.class, ExposureClass::Exposed)
         && !finding_is_visible_in_profile(LspDiagnosticProfile::Actionable, finding)
 }
 
@@ -2043,7 +2186,9 @@ fn append_withheld_preview_diagnostics(
             classes.dedup();
             withheld_static_gap_diagnostic(anchor.range, count, &classes, recovery, &path)
         };
+        let marker_range = marker.range;
         let entry = grouped.entry(uri).or_default();
+        let marker_index = entry.len();
         entry.push(marker);
         // Name WHICH preview changes lack a visible gap (#13442): one passive
         // row per distinct changed line, bounded per snapshot by the same cap.
@@ -2059,9 +2204,6 @@ fn append_withheld_preview_diagnostics(
                 .push(member);
         }
         for line_members in by_line.into_values() {
-            if rows_left == 0 {
-                break;
-            }
             let Some(representative) = line_members.first() else {
                 continue;
             };
@@ -2074,10 +2216,62 @@ fn append_withheld_preview_diagnostics(
                 origins,
             )
             .range;
-            entry.push(withheld_preview_row_diagnostic(range, &line_members, &path));
+            let row = withheld_preview_row_diagnostic(range, &line_members, &path);
+            // One hint per range (#15315): the marker is anchored on the
+            // first withheld finding, so that line's row would stack a second
+            // hint on the same range. Fold the row into the marker instead;
+            // it spends no row slot because it adds no diagnostic.
+            if range == marker_range
+                && let Some(marker) = entry.get_mut(marker_index)
+                && fold_withheld_preview_row_into_marker(marker, &row)
+            {
+                continue;
+            }
+            if rows_left == 0 {
+                break;
+            }
+            entry.push(row);
             rows_left -= 1;
         }
     }
+}
+
+/// Fold the per-line row that shares the file marker's range into the marker
+/// (#15315): the marker keeps its file-level count, recovery and
+/// `preview_findings_withheld` kind, gains the row's line naming in its text,
+/// and records the row's class summary under `data.line`. Still passive: no
+/// finding id, repair, witness or actionability data is added. Only a
+/// preview marker absorbs a row: any other marker (the static-gap
+/// `gap_findings_withheld` disclosure) is left untouched and the call
+/// returns `false`, so the caller keeps the row as its own diagnostic.
+fn fold_withheld_preview_row_into_marker(marker: &mut Diagnostic, row: &Diagnostic) -> bool {
+    let is_preview_marker = marker
+        .data
+        .as_ref()
+        .and_then(|data| data.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        == Some("preview_findings_withheld");
+    if !is_preview_marker {
+        return false;
+    }
+    let row_body = row
+        .message
+        .split_once(": ")
+        .map_or(row.message.as_str(), |(_, body)| body);
+    marker.message = format!("{}. This line: {row_body}", marker.message);
+    if let (Some(serde_json::Value::Object(marker_data)), Some(row_data)) =
+        (marker.data.as_mut(), row.data.as_ref())
+    {
+        marker_data.insert(
+            "line".to_string(),
+            serde_json::json!({
+                "class": row_data.get("class"),
+                "classes": row_data.get("classes"),
+                "count": row_data.get("count"),
+            }),
+        );
+    }
+    true
 }
 
 /// A passive per-line disclosure for one withheld preview finding (#13442).
@@ -2449,6 +2643,21 @@ pub(super) fn language_not_analyzed_diagnostic(
 /// and no other component degraded. This keeps preview diagnostics visible
 /// while preserving the fail-closed suppression policy for stale, rejected,
 /// incomplete, partial, and operationally degraded runs.
+/// Findings the run status is derived from: the projected findings plus any
+/// withheld finding that carries a static limit (#14136). Borrowed when
+/// nothing was withheld.
+fn run_status_findings<'a>(
+    projected: &'a [Finding],
+    withheld_static_limits: &[Finding],
+) -> std::borrow::Cow<'a, [Finding]> {
+    if withheld_static_limits.is_empty() {
+        return std::borrow::Cow::Borrowed(projected);
+    }
+    let mut all = projected.to_vec();
+    all.extend_from_slice(withheld_static_limits);
+    std::borrow::Cow::Owned(all)
+}
+
 fn should_project_gap_records(
     run_status: &str,
     findings: &[Finding],
@@ -2636,9 +2845,11 @@ fn git_timeout_limited_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
+        seam_inventory_on_full_refresh: seam_inventory_enabled(config),
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -2743,9 +2954,11 @@ pub(super) fn oversized_diff_limited_diagnostics(
         diagnostic_uri_index: None,
         delivery_selection: None,
         seams_deferred: defer_seam_inventory,
+        seam_inventory_on_full_refresh: seam_inventory_enabled(config),
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        owner_opt_out_findings: 0,
         unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         language_view: None,
         rust_diagnostic_origins: Default::default(),
@@ -2967,7 +3180,7 @@ fn load_gap_ledger_records(
         repo_config,
     };
     match validate_gap_artifact(&artifact, &context) {
-        Ok(validated) if validated.kind == GapArtifactKind::GapDecisionLedger => {}
+        Ok(validated) if validated.kind() == GapArtifactKind::GapDecisionLedger => {}
         Ok(_) => {
             return failed(
                 "gap_ledger_wrong_kind",
@@ -4718,8 +4931,10 @@ fn lsp_message(finding: &Finding) -> String {
     // The recommended next step is generic ("add boundary tests ..."); the
     // Problems panel row is the only text many editors show, so name the
     // concrete missing input or value the witness already carries.
+    // The check leads (#14465): a Problems row cut to its first words then
+    // still shows what to test rather than the generic step.
     let base = match missing_check_suffix(finding, &base) {
-        Some(suffix) => format!("{base} {suffix}"),
+        Some(check) => format!("{check} {base}"),
         None => base,
     };
     if finding
@@ -4727,12 +4942,26 @@ fn lsp_message(finding: &Finding) -> String {
         .as_ref()
         .is_some_and(|status| status.as_str() == "preview")
     {
+        // The Problems panel row is often the only text shown, so say
+        // "preview" once: the producer's own step usually opens with
+        // "Python preview:" or "TypeScript preview advisory:" already. The
+        // TypeScript producer also serves JavaScript findings, so its prefix
+        // is stripped for those too.
+        // Hover keeps the full preview boundary (syntax-first, advisory).
         let language = finding
             .language
-            .as_ref()
-            .map(|language| language.as_str())
-            .unwrap_or("preview-language");
-        let mut message = format!("{language} preview evidence (syntax-first, advisory): {base}");
+            .map(|language| language.display_name())
+            .unwrap_or("Preview-language");
+        let step = [
+            format!("{language} preview advisory: "),
+            format!("{language} preview: "),
+            "TypeScript preview advisory: ".to_string(),
+            "TypeScript preview: ".to_string(),
+        ]
+        .iter()
+        .find_map(|prefix| base.strip_prefix(prefix.as_str()))
+        .unwrap_or(&base);
+        let mut message = format!("{language} preview (advisory): {step}");
         if let Some(static_limit_kind) = &finding.static_limit_kind {
             message.push_str(&format!(" Static limit: {}.", static_limit_kind.as_str()));
         }
@@ -4919,6 +5148,7 @@ mod seam_diagnostic_tests {
 
     fn related_grip(name: &str, file: &str, line: usize) -> std::sync::Arc<RelatedTestGrip> {
         std::sync::Arc::new(RelatedTestGrip {
+            assertion_targets_non_function: None,
             test_name: name.to_string(),
             file: PathBuf::from(file),
             line,
@@ -6017,6 +6247,7 @@ mod seam_diagnostic_tests {
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
             typescript_package_root: None,
+            verify_cwd: None,
         }
     }
 
@@ -6578,6 +6809,30 @@ mod diagnostic_policy_tests {
     };
     use crate::output::gap_decision_ledger::{GapAnchor, GapRepairRoute, ProjectionEligibility};
 
+    #[test]
+    fn withheld_static_limit_keeps_the_run_limited() -> Result<(), String> {
+        let mut limited = policy_finding();
+        limited.static_limit_kind = Some(StaticLimitKind::MissingImportGraph);
+        let withheld = vec![limited];
+        let projected: Vec<Finding> = Vec::new();
+        let none: Vec<Finding> = Vec::new();
+        let borrowed = run_status_findings(&projected, &none);
+        let widened = run_status_findings(&projected, &withheld);
+        let status = |findings: &[Finding]| {
+            derive_run_status_with_outcome(findings, &[], &[], false, false, &[], None)
+        };
+        if status(&borrowed) != "full" {
+            return Err(format!("control run is not full: {}", status(&borrowed)));
+        }
+        if status(&widened) != "limited" {
+            return Err(format!(
+                "withheld static limit did not limit the run: {}",
+                status(&widened)
+            ));
+        }
+        Ok(())
+    }
+
     fn policy_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
@@ -6585,6 +6840,7 @@ mod diagnostic_policy_tests {
             id: "probe:pricing:42:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:pricing:42:predicate".to_string()),
                 location: SourceLocation {
                     file: std::path::PathBuf::from("src/pricing.rs"),
@@ -6755,6 +7011,7 @@ mod diagnostic_policy_tests {
             safe_gate_predicate: None,
             authority_boundary: "advisory".to_string(),
             typescript_package_root: None,
+            verify_cwd: None,
         }
     }
 
@@ -6837,7 +7094,7 @@ mod diagnostic_policy_tests {
         let message = lsp_message(&finding);
         assert_eq!(
             message,
-            "Add boundary tests for the changed threshold. Missing check: `age == 18`."
+            "Missing check: `age == 18`. Add boundary tests for the changed threshold."
         );
 
         // A step that already quotes the value is not repeated.
@@ -6863,7 +7120,7 @@ mod diagnostic_policy_tests {
         assert_eq!(with_value(&mut finding, "   ".to_string()), "Add a test.");
         assert_eq!(
             with_value(&mut finding, " age == 18 ".to_string()),
-            "Add a test. Missing check: `age == 18`."
+            "Missing check: `age == 18`. Add a test."
         );
         // The 80-character limit counts characters, not bytes.
         assert_eq!(
@@ -6873,11 +7130,11 @@ mod diagnostic_policy_tests {
         );
         assert_eq!(
             with_value(&mut finding, "x".repeat(80)),
-            format!("Add a test. Missing check: `{}`.", "x".repeat(80))
+            format!("Missing check: `{}`. Add a test.", "x".repeat(80))
         );
         assert_eq!(
             with_value(&mut finding, "é".repeat(40)),
-            format!("Add a test. Missing check: `{}`.", "é".repeat(40))
+            format!("Missing check: `{}`. Add a test.", "é".repeat(40))
         );
         // Values that would break the Markdown code span are left out.
         assert_eq!(with_value(&mut finding, "a`b".to_string()), "Add a test.");
@@ -6921,8 +7178,8 @@ mod diagnostic_policy_tests {
         ];
         assert_eq!(
             lsp_message(&finding),
-            "Add boundary tests for below, equal, and above the changed threshold. \
-             Missing check: `n == 0`."
+            "Missing check: `n == 0`. \
+             Add boundary tests for below, equal, and above the changed threshold."
         );
 
         // Without a boundary input the first check is still named.
@@ -6931,7 +7188,7 @@ mod diagnostic_policy_tests {
             crate::domain::DiscriminatorShape::Other,
         )];
         assert!(
-            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            lsp_message(&finding).starts_with("Missing check: `PriceError::Negative`. "),
             "{}",
             lsp_message(&finding)
         );
@@ -6947,7 +7204,7 @@ mod diagnostic_policy_tests {
             fact("n == 0", crate::domain::DiscriminatorShape::Boundary),
         ];
         assert!(
-            lsp_message(&finding).ends_with("Missing check: `PriceError::Negative`."),
+            lsp_message(&finding).starts_with("Missing check: `PriceError::Negative`. "),
             "{}",
             lsp_message(&finding)
         );
@@ -7410,7 +7667,7 @@ mod diagnostic_policy_tests {
                 .values()
                 .flatten()
                 .count(),
-            2,
+            1,
             "*_unknown preview findings must disclose on the pull channel"
         );
 
@@ -7421,7 +7678,7 @@ mod diagnostic_policy_tests {
                 .values()
                 .flatten()
                 .count(),
-            2,
+            1,
             "static-limited preview findings must disclose on the pull channel"
         );
 
@@ -7435,8 +7692,8 @@ mod diagnostic_policy_tests {
             .values()
             .flatten()
             .count(),
-            2,
-            "one file marker plus one passive line row"
+            1,
+            "one file marker with its only line row folded in (#15315)"
         );
 
         let mut stale = preview;
@@ -7528,7 +7785,9 @@ mod diagnostic_policy_tests {
                 .iter()
                 .map(|row| row.range.start.line)
                 .collect::<Vec<_>>();
-            if lines != vec![6, 39] {
+            // The anchor line (6) folds into the file marker (#15315); only
+            // the later line keeps its own row.
+            if lines != vec![39] {
                 return Err(format!("{file}: one row per distinct line: {lines:?}"));
             }
             for row in rows {
@@ -7563,6 +7822,108 @@ mod diagnostic_policy_tests {
                 .ok_or("late row")?;
             if !late_row.message.contains("no_static_path") {
                 return Err(format!("{file}: class must be named: {late_row:?}"));
+            }
+            let markers = grouped
+                .values()
+                .flatten()
+                .filter(|diagnostic| {
+                    diagnostic.data.as_ref().and_then(|data| data.get("kind"))
+                        == Some(&serde_json::json!("preview_findings_withheld"))
+                })
+                .collect::<Vec<_>>();
+            let [marker] = markers.as_slice() else {
+                return Err(format!("{file}: one file marker expected: {markers:?}"));
+            };
+            let line = marker
+                .data
+                .as_ref()
+                .and_then(|data| data.get("line"))
+                .ok_or("the folded marker must carry the anchor line summary")?;
+            if marker.range.start.line != 6
+                || !marker.message.starts_with("preview: 3 preview ")
+                || !marker.message.contains("This line: weakly_exposed for ")
+                || !marker.message.contains("(2 changes on this line)")
+                || !marker.message.ends_with("not an actionable gap")
+                || line["count"] != 2
+            {
+                return Err(format!(
+                    "{file}: anchor row must fold into the marker: {marker:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #15315 negative: only the preview marker absorbs a line row; the
+    /// static-gap marker never gains `This line:` text or `data.line`.
+    #[test]
+    fn withheld_static_gap_marker_never_absorbs_a_line_row() {
+        let finding = preview_policy_finding(LanguageId::Python, "a.py", 3, "probe:p");
+        let row = withheld_preview_row_diagnostic(Range::default(), &[&finding], "a.py");
+        let mut gap_marker = withheld_static_gap_diagnostic(
+            Range::default(),
+            1,
+            &["no_static_path"],
+            "recover",
+            "a.py",
+        );
+        let before = gap_marker.clone();
+        assert!(!fold_withheld_preview_row_into_marker(
+            &mut gap_marker,
+            &row
+        ));
+        assert_eq!(gap_marker, before, "a gap marker must stay untouched");
+        let mut preview_marker =
+            withheld_preview_diagnostic(Range::default(), Some("python"), 1, "recover", "a.py");
+        assert!(fold_withheld_preview_row_into_marker(
+            &mut preview_marker,
+            &row
+        ));
+        assert!(preview_marker.message.contains("This line: "));
+    }
+
+    /// #15315: the file marker is anchored on the first withheld finding, so
+    /// the row for that line used to stack a second Hint on the same range.
+    /// Every withheld-preview hint in a file must own a distinct range.
+    #[test]
+    fn withheld_preview_hints_never_share_a_range() -> Result<(), String> {
+        for (language, file) in [
+            (LanguageId::Python, "src/click/utils.py"),
+            (LanguageId::TypeScript, "src/v4/core/util.ts"),
+        ] {
+            for findings in [
+                vec![preview_policy_finding(language, file, 58, "probe:only")],
+                vec![
+                    preview_policy_finding(language, file, 58, "probe:a"),
+                    preview_policy_finding(language, file, 58, "probe:b"),
+                    preview_policy_finding(language, file, 90, "probe:c"),
+                ],
+            ] {
+                let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &findings);
+                if grouped.is_empty() {
+                    return Err(format!("{file}: fixture must be withheld"));
+                }
+                for diagnostics in grouped.values() {
+                    let mut ranges = diagnostics
+                        .iter()
+                        .map(|diagnostic| {
+                            (
+                                diagnostic.range.start.line,
+                                diagnostic.range.start.character,
+                                diagnostic.range.end.line,
+                                diagnostic.range.end.character,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    let total = ranges.len();
+                    ranges.sort_unstable();
+                    ranges.dedup();
+                    if ranges.len() != total {
+                        return Err(format!(
+                            "{file}: one hint per range expected: {diagnostics:?}"
+                        ));
+                    }
+                }
             }
         }
         Ok(())
@@ -7764,7 +8125,10 @@ mod diagnostic_policy_tests {
         b.probe.location.column = 20;
         a.probe.owner = Some(crate::domain::SymbolId("alpha_fn".to_string()));
         b.probe.owner = Some(crate::domain::SymbolId("beta_fn".to_string()));
-        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[a, b]);
+        // An earlier anchor finding keeps the file marker off line 5, so the
+        // aggregated line keeps its own row rather than folding (#15315).
+        let anchor = preview_policy_finding(LanguageId::Python, "a.py", 2, "probe:anchor");
+        let grouped = withheld_markers(LspDiagnosticProfile::Actionable, &[anchor, a, b]);
         let rows = row_diagnostics(&grouped);
         let [row] = rows.as_slice() else {
             return Err(format!("one aggregated row expected: {rows:?}"));
@@ -8552,6 +8916,25 @@ mod diagnostic_policy_tests {
         Ok(())
     }
 
+    /// #13636: the snapshot's promise that a full refresh brings repair
+    /// spots back holds only where the full refresh builds the inventory.
+    #[test]
+    fn seam_inventory_on_full_refresh_follows_the_inventory_gate() {
+        assert!(!seam_inventory_enabled(&LspAnalysisConfig::default()));
+        let mut full = LspAnalysisConfig {
+            diagnostic_profile: LspDiagnosticProfile::Full,
+            ..LspAnalysisConfig::default()
+        };
+        full.repo_config.languages.enabled = vec![LanguageId::Rust];
+        assert!(seam_inventory_enabled(&full));
+        let mut seams_off = full.clone();
+        seams_off.enable_seam_diagnostics = false;
+        assert!(!seam_inventory_enabled(&seams_off));
+        let mut rust_off = full.clone();
+        rust_off.repo_config.languages.enabled = vec![LanguageId::TypeScript];
+        assert!(!seam_inventory_enabled(&rust_off));
+    }
+
     #[test]
     fn seam_inventory_status_prose_uses_plain_words() -> Result<(), String> {
         let features = crate::lsp::client_features::ClientFeatureProfile::unsupported();
@@ -8755,6 +9138,7 @@ mod lsp_next_step_parity_tests {
             id: "probe:src_discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_discount.ts:typescript_preview:2396aec1".to_string()),
                 location: SourceLocation::new("src/discount.ts", 2, 1),
                 owner: Some(SymbolId(
@@ -8995,6 +9379,7 @@ mod canonical_group_member_tests {
             id: id.to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(id.to_string()),
                 location: SourceLocation {
                     file: std::path::PathBuf::from("src/lib.rs"),
@@ -9276,9 +9661,11 @@ mod delivery_tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),

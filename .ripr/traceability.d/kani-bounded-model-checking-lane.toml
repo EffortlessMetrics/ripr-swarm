@@ -5,7 +5,13 @@ spec = "docs/specs/RIPR-SPEC-0371-kani-bounded-model-checking-lane.md"
 tests = [
   "xtask/src/kani_lane.rs::discovery_finds_named_harnesses_past_attributes_and_docs",
   "xtask/src/kani_lane.rs::classification_requires_an_explicit_success_verdict",
-  "xtask/src/kani_lane.rs::unreachable_cover_makes_the_proof_vacuous",
+  "xtask/src/kani_lane.rs::classification_requires_positive_complete_cover_evidence",
+  "xtask/src/kani_lane.rs::undetermined_properties_never_become_verified",
+  "xtask/src/kani_lane.rs::complete_cover_evidence_allows_unreachable_ordinary_assertions",
+  "xtask/src/kani_lane.rs::complete_cover_evidence_preserves_expected_panic_success",
+  "xtask/src/kani_lane.rs::cover_property_and_summary_must_not_contradict",
+  "xtask/src/kani_lane.rs::pinned_native_cover_captures_keep_distinct_lane_dispositions",
+  "xtask/src/kani_lane.rs::unsatisfied_cover_fails_the_reachability_policy",
   "xtask/src/kani_lane.rs::blocks_join_to_harnesses_and_a_missing_block_is_not_established",
   "xtask/src/kani_lane.rs::duplicate_source_names_never_share_a_native_result",
   "xtask/src/kani_lane.rs::duplicate_native_blocks_are_not_first_match_wins",
@@ -16,10 +22,18 @@ tests = [
   "xtask/src/kani_lane.rs::lane_never_passes_by_absence",
   "xtask/src/kani_lane.rs::arguments_parse_and_reject_unknown_flags",
   "xtask/src/kani_lane.rs::report_names_every_status_word",
+  "crates/ripr/src/bounded_input_kani.rs::production_cap_is_256_mib",
+  "crates/ripr/src/cli/exit_kani.rs::exit_code_constants_match_documented_table",
+  "crates/ripr/src/lsp/refresh_scheduler/kani_proofs.rs::generation_counter_saturates_at_max",
+  "crates/ripr/src/domain/repair_card/kani_proofs.rs::default_budget_is_valid",
 ]
 code = [
   "xtask/src/kani_lane.rs",
   "crates/ripr/src/kani_smoke.rs",
+  "crates/ripr/src/bounded_input_kani.rs",
+  "crates/ripr/src/cli/exit_kani.rs",
+  "crates/ripr/src/lsp/refresh_scheduler/kani_proofs.rs",
+  "crates/ripr/src/domain/repair_card/kani_proofs.rs",
 ]
 outputs = [
   "docs/CI.md",

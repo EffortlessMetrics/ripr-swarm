@@ -1,0 +1,1 @@
+crates/ripr/tests/pre_commit_hook_manifest.rs|Command::new|2|pre-commit-hook-manifest-14348|#14348: integration test spawns git to build an isolated temp repository and the worktree-built ripr binary to run each .pre-commit-hooks.yaml entry as pre-commit would; temp fixtures only, no shell, network, or user-repository mutation.

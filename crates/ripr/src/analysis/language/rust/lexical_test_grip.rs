@@ -124,6 +124,9 @@ fn line_registers_executable_test(line: &str) -> bool {
     name == "test"
         || name == "tokio::test"
         || name == "async_std::test"
+        || name == "actix_rt::test"
+        || name == "actix_web::test"
+        || name == "test_log::test"
         || name == "rstest"
         || name.starts_with("rstest::")
 }
@@ -445,6 +448,8 @@ mod tests {
             source: std::sync::Arc::from(source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         }
     }
 
@@ -456,6 +461,7 @@ mod tests {
             id: "probe:src_lib.rs:predicate:price".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:predicate:price".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 1),
                 owner: Some(SymbolId("src/lib.rs::price".to_string())),

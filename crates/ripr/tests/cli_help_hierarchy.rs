@@ -19,14 +19,97 @@ fn run_ripr_in(
     args: &[&str],
     root: Option<&std::path::Path>,
 ) -> Result<std::process::Output, String> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    run_program_in(env!("CARGO_BIN_EXE_ripr"), args, root)
+}
+
+/// The single process spawn point for this target (process-policy bound).
+fn run_program_in(
+    program: &str,
+    args: &[&str],
+    root: Option<&std::path::Path>,
+) -> Result<std::process::Output, String> {
+    let mut command = Command::new(program);
     command.args(args);
     if let Some(root) = root {
-        command.current_dir(root);
+        // Fixtures inside Cargo's repository-local temp directory must not
+        // discover the source checkout when the fixture has no repository.
+        command
+            .current_dir(root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env("GIT_CEILING_DIRECTORIES", std::env::temp_dir());
     }
     command
         .output()
-        .map_err(|error| format!("failed to run ripr {args:?}: {error}"))
+        .map_err(|error| format!("failed to run {program} {args:?}: {error}"))
+}
+
+/// Run `test` in a fresh Git repository root. Cargo runs this target from the
+/// package directory, which sits below the checkout's Git top level when built
+/// from the repository, and `init --ci` refuses a root below the top level
+/// (#15389); an adopter runs it at the repository root.
+fn in_git_root(
+    label: &str,
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("ripr-help-{label}-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+    let result = run_program_in("git", &["init", "-q"], Some(&root))
+        .and_then(|output| {
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!("git init failed: {output:?}"))
+            }
+        })
+        .and_then(|()| test(&root));
+    let cleanup = std::fs::remove_dir_all(&root).map_err(|error| error.to_string());
+    result.and(cleanup)
+}
+
+#[test]
+fn help_documentation_links_work_outside_the_source_checkout() -> Result<(), String> {
+    let docs = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/";
+    let analysis_modes = "CONFIGURATION.md#analysis-modes";
+    let cases: &[(&[&str], &[&str])] = &[
+        (&["--help"], &["EXIT_CODES.md"]),
+        (
+            &["help", "check", "--all"],
+            &[analysis_modes, "BADGE_ADOPTION.md", "OUTPUT_SCHEMA.md"],
+        ),
+        (&["help", "context"], &[analysis_modes]),
+    ];
+
+    in_help_workspace(|root| {
+        for (args, pages) in cases {
+            let output = run_ripr_in(args, Some(root))?;
+            assert!(output.status.success(), "{args:?}: {output:?}");
+            let help = String::from_utf8_lossy(&output.stdout);
+            for token in help.split_whitespace() {
+                let path = token.trim_matches(['(', ')', '.', ',', '`']);
+                // The overview's quickstart pointer is tracked separately in #16401.
+                assert!(
+                    !path.starts_with("docs/")
+                        || (args == &["--help"] && path == "docs/AGENT_QUICKSTART.md"),
+                    "{args:?} contains a checkout-relative documentation path: {path}"
+                );
+            }
+            for page in *pages {
+                let url = format!("{docs}{page}");
+                assert!(
+                    help.split_whitespace().any(|token| token == url),
+                    "{args:?} is missing {url}"
+                );
+            }
+        }
+        Ok(())
+    })
 }
 
 #[test]
@@ -40,6 +123,44 @@ fn pilot_help_describes_limit_summary_without_inventing_a_quote() -> Result<(), 
     );
     assert!(!help.contains("ranked N of M gaps"), "{help}");
     Ok(())
+}
+
+#[test]
+fn agent_setup_help_is_usable_without_repository_docs() -> Result<(), String> {
+    in_help_workspace(|root| {
+        assert!(!root.join("docs").exists(), "{root:?}");
+        let overview: &[&str] = &["ripr check", "ripr init --agents all"];
+        let init: &[&str] = &[
+            "--agents TARGET",
+            "CLAUDE.md",
+            "AGENTS.md",
+            ".cursor/rules/ripr.mdc",
+            "all -> all three",
+        ];
+        let mut stale = Vec::new();
+        for (args, expected) in [
+            (&["--help"][..], overview),
+            (&["help"][..], overview),
+            (&["init", "--help"][..], init),
+            (&["help", "init"][..], init),
+        ] {
+            let output = run_ripr_in(args, Some(root))?;
+            assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+            assert!(output.stderr.is_empty(), "{args:?}: {output:?}");
+            let help = String::from_utf8(output.stdout).map_err(|error| error.to_string())?;
+            for expected in expected {
+                assert!(help.contains(expected), "{args:?}: missing {expected:?}");
+            }
+            if help.contains("docs/AGENT_QUICKSTART.md") {
+                stale.push(args);
+            }
+        }
+        assert!(
+            stale.is_empty(),
+            "checkout-relative agent guide in {stale:?}"
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -61,11 +182,17 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
             "provider {value:?}"
         );
     }
-    let gitlab = run_ripr(&["init", "--ci", "gitlab", "--dry-run", "--force"])?;
-    assert!(gitlab.status.success(), "{gitlab:?}");
-    let stdout = String::from_utf8_lossy(&gitlab.stdout);
-    assert!(stdout.contains(".gitlab-ci.yml"), "{stdout}");
-    assert!(stdout.contains("allow_failure: true"), "{stdout}");
+    in_git_root("init-gitlab", |root| {
+        let gitlab = run_ripr_in(
+            &["init", "--ci", "gitlab", "--dry-run", "--force"],
+            Some(root),
+        )?;
+        assert!(gitlab.status.success(), "{gitlab:?}");
+        let stdout = String::from_utf8_lossy(&gitlab.stdout);
+        assert!(stdout.contains(".gitlab-ci.yml"), "{stdout}");
+        assert!(stdout.contains("allow_failure: true"), "{stdout}");
+        Ok(())
+    })?;
     let missing = run_ripr(&["init", "--ci"])?;
     assert_eq!(missing.status.code(), Some(2));
     assert!(missing.stdout.is_empty());
@@ -78,16 +205,21 @@ fn init_ci_provider_errors_recover_near_misses() -> Result<(), String> {
 
 #[test]
 fn init_ci_provider_valid_preview_keeps_workflow_contract() -> Result<(), String> {
-    let output = run_ripr(&["init", "--ci", "github", "--dry-run", "--force"])?;
-    assert!(output.status.success(), "{output:?}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains(".github/workflows/ripr.yml"), "{stdout}");
-    assert!(stdout.contains("continue-on-error: true"), "{stdout}");
-    assert!(
-        stdout.contains("Rerun without --dry-run to apply."),
-        "{stdout}"
-    );
-    Ok(())
+    in_git_root("init-github", |root| {
+        let output = run_ripr_in(
+            &["init", "--ci", "github", "--dry-run", "--force"],
+            Some(root),
+        )?;
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains(".github/workflows/ripr.yml"), "{stdout}");
+        assert!(stdout.contains("continue-on-error: true"), "{stdout}");
+        assert!(
+            stdout.contains("Rerun without --dry-run to apply."),
+            "{stdout}"
+        );
+        Ok(())
+    })
 }
 
 #[test]
@@ -187,9 +319,19 @@ fn agent_repair_default_and_later_phase_selectors_match_help() -> Result<(), Str
     })
 }
 
+/// Keep Git metadata in the owned parent. The no-write check on the working
+/// directory continues to permit only the original invalid configuration.
+fn in_help_checkout(
+    test: impl FnOnce(&std::path::Path) -> Result<(), String>,
+) -> Result<(), String> {
+    in_git_root("repair", |repo| {
+        help_workspace::in_help_workspace_under(repo, test)
+    })
+}
+
 #[test]
 fn agent_repair_later_phases_require_existing_attempts_without_writes() -> Result<(), String> {
-    in_help_workspace(|root| {
+    in_help_checkout(|root| {
         let attempt = "repair-attempt-0123456789abcdef01234567";
         for phase in ["after", "verify"] {
             let mut args = vec![
@@ -308,6 +450,8 @@ const BARE_HELP_GROUPS: &[&str] = &[
     "config",
     "pr-ledger",
     "pr-review",
+    // #15985: joined the list when bare `pr-comments` stopped implying `plan`.
+    "pr-comments",
     "coverage-grip",
     "gate",
 ];
@@ -852,6 +996,31 @@ fn group_help_preserves_explicit_errors_and_gate_flag_alias() -> Result<(), Stri
             assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
             assert_contains(args[0], &String::from_utf8_lossy(&output.stderr), error)?;
         }
+        // #14086: a gate flag typo is answered from the subcommand that
+        // parsed it. `gate evaluate` used to offer `gate check`'s `--base`,
+        // which it rejects, and `gate check` offered nothing.
+        for (args, suggestion) in [
+            (["gate", "check", "--bse", "x"], Some("--base")),
+            (["gate", "check", "--timeout", "5"], Some("--timeout-ms")),
+            (["gate", "check", "--out-m", "x"], Some("--out-md")),
+            (["gate", "check", "--pr-guidanc", "x"], None),
+            (["gate", "evaluate", "--mde", "x"], Some("--mode")),
+            (["gate", "evaluate", "--bse", "x"], None),
+            (["gate", "evaluate", "--hed", "x"], None),
+        ] {
+            let output = run_ripr_in(&args, Some(root))?;
+            assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+            assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            match suggestion {
+                Some(flag) => assert_contains(
+                    "gate flag typo",
+                    &stderr,
+                    &format!("Did you mean `{flag}`?"),
+                )?,
+                None => assert!(!stderr.contains("Did you mean"), "{args:?}: {stderr}"),
+            }
+        }
         let alias = run_ripr_in(&["gate", "--pr-guidance"], Some(root))?;
         let explicit = run_ripr_in(&["gate", "evaluate", "--pr-guidance"], Some(root))?;
         assert_eq!(alias.status.code(), Some(2));
@@ -929,6 +1098,61 @@ fn workflow_help_renders_one_workflow_with_bounded_sections() -> Result<(), Stri
     Ok(())
 }
 
+/// A slip on one of `ripr help`'s own options, or a reach for a `workflow`
+/// command, is answered with the route that works. `help --al` used to be
+/// told to move the flag behind `check`, which has no such flag.
+#[test]
+fn help_route_typos_name_the_route_that_works() -> Result<(), String> {
+    for (args, expected) in [
+        (
+            &["help", "--al"][..],
+            "ripr: unknown help argument \"--al\". Did you mean `--all`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "--jsn"][..],
+            "ripr: unknown help argument \"--jsn\". Did you mean `--json`? Run `ripr --help`.",
+        ),
+        (
+            &["help", "workflows"][..],
+            "ripr: unknown command \"workflows\". Did you mean `ripr help workflow`? Run `ripr --help`.",
+        ),
+        (
+            &["workflow"][..],
+            "ripr: unknown command \"workflow\". Did you mean `ripr help workflow`? Run `ripr --help`.",
+        ),
+        // A command typo after `help` is a help-topic refusal that keeps its
+        // suggestion (#16374); a top-level flag slip keeps its own.
+        (
+            &["help", "chekc"][..],
+            "ripr: unknown help topic \"chekc\". Did you mean `ripr help check`? Run `ripr help` to list commands, or `ripr help workflow` to list workflows.",
+        ),
+        (
+            &["help", "--hlep"][..],
+            "ripr: unknown command \"--hlep\". Did you mean `--help`? Run `ripr --help`.",
+        ),
+    ] {
+        let output = run_ripr(args)?;
+        assert_eq!(output.status.code(), Some(2), "{args:?}: {output:?}");
+        assert!(output.stdout.is_empty(), "{args:?}: {output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).trim_end(),
+            expected,
+            "{args:?}"
+        );
+    }
+    // The suggested routes themselves succeed.
+    for args in [
+        &["help", "--all"][..],
+        &["help", "--json"],
+        &["help", "workflow"],
+    ] {
+        let output = run_ripr(args)?;
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+        assert!(!output.stdout.is_empty(), "{args:?} printed nothing");
+    }
+    Ok(())
+}
+
 #[test]
 fn unknown_workflow_fails_with_a_family_distinct_from_unknown_command() -> Result<(), String> {
     let output = run_ripr(&["help", "workflow", "repar-gap"])?;
@@ -997,7 +1221,7 @@ fn default_help_discloses_exit_codes_and_global_verbose() -> Result<(), String> 
             "2 could not complete",
             "3 ripr declined",
             "130 interrupted",
-            "docs/EXIT_CODES.md",
+            "https://github.com/EffortlessMetrics/ripr/blob/main/docs/EXIT_CODES.md",
             "-v, --verbose",
             "Extra pipeline diagnostics on stderr",
         ] {
@@ -1579,7 +1803,7 @@ fn mode_help_names_index_scope_and_points_at_the_mode_table() -> Result<(), Stri
         for needle in [
             "instant (changed files only, cheapest)",
             "deep and ready (whole workspace, slowest)",
-            "See docs/CONFIGURATION.md \"Analysis modes\"",
+            "https://github.com/EffortlessMetrics/ripr/blob/main/docs/CONFIGURATION.md#analysis-modes",
         ] {
             assert_contains(&format!("{command} --help --mode line"), &help, needle)?;
         }

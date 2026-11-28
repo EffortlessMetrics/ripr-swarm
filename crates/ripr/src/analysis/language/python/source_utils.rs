@@ -18,6 +18,7 @@ pub(super) struct SourceText<'a> {
     /// Whether the file's `self.assert*` receivers are visibly stock
     /// `unittest.TestCase` ones, scanned once on first use.
     standard_unittest_receivers: std::cell::OnceCell<bool>,
+    trusted_exception_names: std::cell::OnceCell<std::collections::BTreeSet<String>>,
 }
 
 impl<'a> SourceText<'a> {
@@ -32,6 +33,7 @@ impl<'a> SourceText<'a> {
             newline_offsets,
             cli_receiver_names: std::cell::OnceCell::new(),
             standard_unittest_receivers: std::cell::OnceCell::new(),
+            trusted_exception_names: std::cell::OnceCell::new(),
         }
     }
 
@@ -57,6 +59,15 @@ impl<'a> SourceText<'a> {
 }
 
 impl SourceText<'_> {
+    /// The bounded builtin exception names whose bindings this file preserves.
+    /// Computed only if a handler needs them, then reused across all tests.
+    pub(super) fn trusted_exception_names(
+        &self,
+        scan: impl FnOnce(&str) -> std::collections::BTreeSet<String>,
+    ) -> &std::collections::BTreeSet<String> {
+        self.trusted_exception_names.get_or_init(|| scan(self.text))
+    }
+
     /// Computed by `scan` on the first call and reused after.
     pub(super) fn standard_unittest_receivers(&self, scan: impl FnOnce(&str) -> bool) -> bool {
         *self

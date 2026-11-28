@@ -3,6 +3,7 @@ use super::action_contract::{
     action_data, disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
+use super::component_outcome::{AnalysisComponent, ComponentState};
 use super::fix_instruction_authority;
 use super::gap_artifacts::{
     ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
@@ -85,6 +86,18 @@ pub(super) fn code_action_response(
             diagnostic,
             snapshot,
         ));
+        // #13636: with no spot inventory (deferred by a quick save, or not
+        // built in this configuration) the finding has no seam-bound start.
+        // A disabled-capable client sees the start inert with the blocker
+        // and next step named; other clients keep the legacy omission. A
+        // gap record in the same request carries its own repair-packet
+        // actions, so no inert finding start is added beside them.
+        if client_features.code_action_disabled
+            && !params.context.diagnostics.iter().any(is_gap_diagnostic)
+            && let Some(action) = finding_start_blocked_action(diagnostic, snapshot)
+        {
+            actions.push(action);
+        }
     }
     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
         title: REFRESH_ANALYSIS_TITLE.to_string(),
@@ -313,6 +326,7 @@ pub(super) fn disable_retained_analysis_actions(
                         | "receipt_route_unavailable"
                         | "preview_or_static_limitation"
                         | "repair_route_not_ready"
+                        | "uncommitted_production_change"
                 )
             )
         {
@@ -406,6 +420,9 @@ pub(super) fn resolve_action(
             return Ok(action);
         }
         // Revalidation passed: the action resolves in its enabled form.
+        // An enabled repair start is not re-checked against the dirty
+        // premise here (#13636): resolve is not advertised, the action only
+        // copies the command, and the before phase it names still refuses.
         action.disabled = None;
     }
     // An action that arrives without a command (already inert when emitted)
@@ -527,6 +544,209 @@ fn cross_language_disabled_action(
         disabled.reason = CROSS_LANGUAGE_LIMITATION_REASON.to_string();
     }
     Some(action)
+}
+
+/// What the editor may show for a seam repair start (#13636, #16381).
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SeamStartStep {
+    /// The start runs as printed, or the premise could not be read and the
+    /// start's own before phase stays the final authority.
+    Runnable,
+    /// The start refuses until this commit runs.
+    Commit(String),
+    /// The start refuses until a dirty file whose name breaks a line is
+    /// committed, and no printed commit can name it: offer no start.
+    Withheld,
+}
+
+/// The [`SeamStartStep`] at `snapshot_root`: the shared before-phase
+/// preflight (`app::repair_attempt::seam_start_dirty_premise`) names dirty
+/// production files under `snapshot_root`, and the commit is spelled with the
+/// `root_display` the start command binds. An unreadable premise is
+/// `Runnable`: the start keeps its legacy form and its own before phase stays
+/// the final authority that refuses. The line-break refusal is matched by
+/// containment, so context a caller adds to the error keeps it `Withheld`.
+pub(super) fn seam_start_step(snapshot_root: &Path, root_display: &str) -> SeamStartStep {
+    match seam_start_dirty_files(snapshot_root) {
+        Ok(files) => crate::app::commit_prerequisite_command(root_display, &files)
+            .map_or(SeamStartStep::Runnable, SeamStartStep::Commit),
+        Err(error) if error.contains(crate::app::repair_attempt::LINE_BREAK_PREMISE) => {
+            SeamStartStep::Withheld
+        }
+        Err(_) => SeamStartStep::Runnable,
+    }
+}
+
+fn seam_start_dirty_files(snapshot_root: &Path) -> Result<Vec<String>, String> {
+    #[cfg(test)]
+    if let Some(files) = test_premise::overridden() {
+        return Ok(files);
+    }
+    recent_premise::get_or_probe(snapshot_root)
+}
+
+/// A one-second, one-root memo of the dirty-premise preflight (#13636).
+/// Editors send a code-action and a hover request together on each cursor
+/// move; without it each spawns the preflight's git calls. One second keeps
+/// the check effectively live: a commit or a new edit shows on the next
+/// request after that. An error is never memoized.
+mod recent_premise {
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    const TTL: Duration = Duration::from_secs(1);
+
+    type Entry = (PathBuf, Instant, Vec<String>);
+
+    static RECENT: Mutex<Option<Entry>> = Mutex::new(None);
+
+    pub(super) fn get_or_probe(root: &Path) -> Result<Vec<String>, String> {
+        if let Ok(guard) = RECENT.lock()
+            && let Some((cached_root, at, files)) = guard.as_ref()
+            && cached_root == root
+            && at.elapsed() < TTL
+        {
+            return Ok(files.clone());
+        }
+        let files = crate::app::repair_attempt::seam_start_dirty_premise(root)?;
+        if let Ok(mut guard) = RECENT.lock() {
+            *guard = Some((root.to_path_buf(), Instant::now(), files.clone()));
+        }
+        Ok(files)
+    }
+
+    /// Drops the memo so the next request probes git again (tests that
+    /// change the repository between requests).
+    #[cfg(test)]
+    pub(crate) fn forget() {
+        if let Ok(mut guard) = RECENT.lock() {
+            *guard = None;
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) use recent_premise::forget as forget_recent_premise;
+
+/// Test-only premise pin (#13636). The checked-in LSP goldens render from
+/// fixture roots inside this repository's own checkout, where the live
+/// preflight would report the developer's uncommitted edits (as `../..`
+/// paths) and drift the golden. Those harnesses pin a clean premise for the
+/// current thread; every other test, and production, reads the live
+/// preflight.
+#[cfg(test)]
+pub(super) mod test_premise {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static PINNED: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    }
+
+    pub(super) fn overridden() -> Option<Vec<String>> {
+        PINNED.with(|pinned| pinned.borrow().clone())
+    }
+
+    /// Restores the previous pin on drop, so a panicking body cannot leak
+    /// its pin to a later test on a reused thread.
+    struct Restore(Option<Vec<String>>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            PINNED.with(|pinned| *pinned.borrow_mut() = previous);
+        }
+    }
+
+    /// Runs `body` with the dirty premise pinned to `files` on this thread.
+    pub(crate) fn with_pinned_premise<T>(files: Vec<String>, body: impl FnOnce() -> T) -> T {
+        let _restore = Restore(PINNED.with(|pinned| pinned.replace(Some(files))));
+        body()
+    }
+}
+
+/// The inert "Start repair" action for a gap-class finding that has no
+/// seam-bound start because the snapshot carries no spot inventory (#13636).
+/// The cited finding must be a candidate-current actionable Rust gap with no
+/// static limit: an exposed or base-side finding has no start to explain, and
+/// a preview, non-Rust or static-limited finding gets no spot start in any
+/// configuration. The reason names the real blocker:
+/// - `seam_inventory_not_enabled` when even a full refresh builds no spots
+///   under the snapshot's configuration (the default actionable profile, or
+///   spot diagnostics off), naming the setting;
+/// - `seam_evidence_deferred` when an interactive refresh deferred the
+///   inventory a full refresh would build, naming that refresh.
+///
+/// `None` for a full snapshot whose configuration builds spots: the seam
+/// diagnostics carry their own start.
+fn finding_start_blocked_action(
+    diagnostic: &Diagnostic,
+    snapshot: Option<&AnalysisSnapshot>,
+) -> Option<CodeActionOrCommand> {
+    let snapshot = snapshot?;
+    let reason = if !snapshot.seam_inventory_on_full_refresh {
+        ActionDisabledReason::SeamInventoryNotEnabled
+    } else if snapshot.seams_deferred {
+        ActionDisabledReason::SeamEvidenceDeferred
+    } else {
+        return None;
+    };
+    let finding_id = diagnostic
+        .data
+        .as_ref()
+        .and_then(|data| data.get("finding_id"))
+        .and_then(Value::as_str)?;
+    snapshot.findings.iter().find(|finding| {
+        finding.id == finding_id
+            && super::diagnostics::finding_is_withheld_gap(finding)
+            && finding.language_status != Some(crate::domain::LanguageStatus::Preview)
+            && finding
+                .language
+                .is_none_or(|language| language == crate::domain::LanguageId::Rust)
+            && finding.static_limit_kind.is_none()
+    })?;
+    disabled_action(
+        AGENT_REPAIR_COMMAND_TITLE,
+        "quickfix.ripr.inspect",
+        "copy_agent_repair_command",
+        COPY_AGENT_REPAIR_COMMAND,
+        diagnostic,
+        Some(snapshot),
+        reason,
+    )
+}
+
+/// The inert "Start repair" action for a seam whose start the dirty-premise
+/// preflight refuses (#13636): same title, kind and command identity as the
+/// enabled start, no command, and a human reason naming the commit step.
+fn uncommitted_start_disabled_action(
+    commit: &str,
+    diagnostic: &Diagnostic,
+    snapshot: &AnalysisSnapshot,
+) -> Option<CodeActionOrCommand> {
+    let mut action = disabled_action(
+        AGENT_REPAIR_COMMAND_TITLE,
+        "quickfix.ripr.inspect",
+        "copy_agent_repair_command",
+        COPY_AGENT_REPAIR_COMMAND,
+        diagnostic,
+        Some(snapshot),
+        ActionDisabledReason::UncommittedProductionChange,
+    )?;
+    if let CodeActionOrCommand::CodeAction(code_action) = &mut action
+        && let Some(disabled) = code_action.disabled.as_mut()
+    {
+        disabled.reason = uncommitted_start_reason(commit);
+    }
+    Some(action)
+}
+
+/// Human text for the inert start (#13636), in the `ripr check` route's words.
+pub(super) fn uncommitted_start_reason(commit: &str) -> String {
+    format!(
+        "{} Commit command: {commit}",
+        ActionDisabledReason::UncommittedProductionChange.human_reason()
+    )
 }
 
 /// A gap diagnostic the current snapshot no longer carries (#1892): any
@@ -662,7 +882,7 @@ fn artifact_matches_gap_diagnostic(artifact: &ValidatedGapArtifact, data: &Value
     let canonical_gap_id = string_at(data, &["canonical_gap_id"]);
     let seam_id = string_at(data, &["seam_id"]);
     let finding_id = string_at(data, &["finding_id"]);
-    artifact.identities.iter().any(|identity| {
+    artifact.identities().iter().any(|identity| {
         canonical_gap_id.is_some_and(|value| identity.canonical_gap_id.as_deref() == Some(value))
             || seam_id.is_some_and(|value| identity.seam_id.as_deref() == Some(value))
             || finding_id.is_some_and(|value| identity.finding_id.as_deref() == Some(value))
@@ -678,6 +898,36 @@ fn gap_identities_overlap(left: &Value, right: &Value) -> bool {
         }
     }
     false
+}
+
+/// A saved-workspace finding may withhold a start the classified seam could
+/// otherwise format. This ceiling leaves the packet and card readable and
+/// lets code actions, hover, and the standard context packet agree.
+pub(super) fn seam_repair_start_command(
+    entry: &ClassifiedSeam,
+    snapshot: &AnalysisSnapshot,
+    root: &str,
+) -> Option<String> {
+    // Retained diagnostics still support inspection after truncation, but
+    // a partial inventory cannot promise a Start. An absent card witness
+    // without a recorded inventory limit keeps the ordinary seam route.
+    if snapshot.component_outcomes.iter().any(|outcome| {
+        outcome.component == AnalysisComponent::SeamInventory
+            && outcome.state == ComponentState::Limited
+    }) {
+        return None;
+    }
+    if let Some(candidate_seams) = snapshot.repair_card_candidate_seams.as_deref()
+        && crate::app::repair_card_handoff::bound_no_path_start_refusal(
+            &snapshot.findings,
+            entry,
+            candidate_seams,
+        )
+        .is_some()
+    {
+        return None;
+    }
+    repair_start_command_for(entry, root)
 }
 
 fn push_seam_actions(
@@ -722,8 +972,9 @@ fn push_seam_actions(
     // flip routes through the single producer-owned authority
     // (`repair_packet_eligibility`, RIPR-SPEC-0087 §8) instead of hand-conjoining
     // readiness and cross-language predicates. The remaining guard is content
-    // availability (a concrete assertion template or related test), not a
-    // readiness predicate.
+    // availability (a concrete assertion template or any related test), not a
+    // readiness predicate. It reads every related test, proximity-only ones
+    // included: #5354 narrows only which test the editor opens.
     if instruction_blocks_repair {
         if client_features.code_action_disabled
             && let Some(reason) = fix_instruction_authority::disabled_reason_for_instruction_state(
@@ -742,7 +993,7 @@ fn push_seam_actions(
             actions.push(action);
         }
     } else if repair_packet_eligibility(context.seam).eligible()
-        && (suggested_assertion.is_some() || related_test.is_some())
+        && (suggested_assertion.is_some() || !context.seam.evidence.related_tests.is_empty())
     {
         actions.push(copy_targeted_test_brief_action(
             context.seam,
@@ -761,23 +1012,40 @@ fn push_seam_actions(
     // payload's `root` field stays the portable role (`COMMAND_ROOT`).
     let root = loop_commands::bound_root(&context.snapshot.root.to_string_lossy());
     if !instruction_blocks_repair
-        && let Some(command) = repair_start_command_for(context.seam, &root)
+        && let Some(command) = seam_repair_start_command(context.seam, context.snapshot, &root)
     {
-        actions.push(copy_agent_loop_command_action(
-            AGENT_REPAIR_COMMAND_TITLE,
-            COPY_AGENT_REPAIR_COMMAND,
-            "copy_agent_repair_command",
-            agent_loop_command_target(
-                context.snapshot,
+        // #13636: `ripr agent repair` refuses a dirty production premise
+        // ("commit first ... Nothing was started"). Ask its own preflight so
+        // the editor names the commit step on an inert start instead of
+        // offering one that refuses. Checked live on each request, not from
+        // the snapshot, so committing re-enables the start without a
+        // refresh. A client without disabled support keeps the legacy
+        // omission.
+        let step = seam_start_step(&context.snapshot.root, &root);
+        if let SeamStartStep::Commit(commit) = &step {
+            if client_features.code_action_disabled
+                && let Some(action) =
+                    uncommitted_start_disabled_action(commit, context.diagnostic, context.snapshot)
+            {
+                actions.push(action);
+            }
+        } else if step == SeamStartStep::Runnable {
+            actions.push(copy_agent_loop_command_action(
+                AGENT_REPAIR_COMMAND_TITLE,
+                COPY_AGENT_REPAIR_COMMAND,
+                "copy_agent_repair_command",
+                agent_loop_command_target(
+                    context.snapshot,
+                    context.diagnostic,
+                    context.seam,
+                    "agent_repair",
+                    REPAIR_ATTEMPT_DIRECTORY,
+                    command,
+                ),
                 context.diagnostic,
-                context.seam,
-                "agent_repair",
-                REPAIR_ATTEMPT_DIRECTORY,
-                command,
-            ),
-            context.diagnostic,
-            Some(context.snapshot),
-        ));
+                Some(context.snapshot),
+            ));
+        }
     }
     actions.push(copy_agent_loop_command_action(
         AGENT_PACKET_COMMAND_TITLE,
@@ -2517,6 +2785,7 @@ fn is_delivery_limitation(diagnostic: &Diagnostic) -> bool {
         diagnostic.code.as_ref(),
         Some(tower_lsp_server::ls_types::NumberOrString::String(code))
             if code == super::diagnostic_catalog::DIAGNOSTIC_BUDGET_OMITTED_CODE
+                || code == super::diagnostic_catalog::DIAGNOSTIC_ANALYSIS_PENDING_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_QUARANTINE_WITHDRAWN_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_LANGUAGE_NOT_ANALYZED_CODE
                 || code == super::diagnostic_catalog::DIAGNOSTIC_PREVIEW_WITHHELD_CODE
@@ -2628,18 +2897,31 @@ fn copy_seam_packet_target(
     target
 }
 
+/// The related test the editor opens for a seam. A test linked only by
+/// proximity (same file, same module, a token substring) never runs the
+/// seam, so its oracle belongs to other code, and it is never offered: with
+/// no other related test there is no navigation, matching the witness fix
+/// site (#5354). Tests whose relation runs the owner
+/// (`RelationReason::establishes_reach`) are tried before name, import or
+/// fixture affinities, so a strong name-matched test never wins over a test
+/// that calls the change; within each group a strong oracle comes first, then
+/// the lowest relation-confidence rank.
 fn best_related_test_for_editor(seam: &ClassifiedSeam) -> Option<&RelatedTestGrip> {
-    seam.evidence
-        .related_tests
-        .iter()
-        .find(|test| test.oracle_strength == OracleStrength::Strong)
-        .or_else(|| {
-            seam.evidence
-                .related_tests
-                .iter()
-                .min_by_key(|test| relation_confidence_rank(test.relation_confidence))
-        })
-        .map(Arc::as_ref)
+    let tests = &seam.evidence.related_tests;
+    let pick = |reaches: bool| {
+        let group = || {
+            tests.iter().filter(move |test| {
+                !test.relation_reason.is_proximity_only()
+                    && test.relation_reason.establishes_reach(true) == reaches
+            })
+        };
+        group()
+            .find(|test| test.oracle_strength == OracleStrength::Strong)
+            .or_else(|| {
+                group().min_by_key(|test| relation_confidence_rank(test.relation_confidence))
+            })
+    };
+    pick(true).or_else(|| pick(false)).map(Arc::as_ref)
 }
 
 fn relation_confidence_rank(confidence: RelationConfidence) -> u8 {
@@ -2678,7 +2960,7 @@ mod tests {
     use crate::agent::command_specs::{agent_receipt_command_spec, agent_verify_command_spec};
     use crate::app::Mode;
     use crate::domain::{LanguageId, LanguageStatus};
-    use crate::lsp::gap_artifacts::{GapArtifactIdentity, GapArtifactKind};
+    use crate::lsp::gap_artifacts::GapArtifactIdentity;
     use crate::lsp::state::RefreshMetadata;
     use std::collections::BTreeMap;
     use tower_lsp_server::ls_types::{
@@ -2835,6 +3117,26 @@ mod tests {
             vec![INSPECT_FINDING_CONTEXT_TITLE, REFRESH_ANALYSIS_TITLE],
             "the client can execute the copy command for an ordinary finding"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn analysis_pending_marker_has_no_finding_context_action() -> Result<(), String> {
+        // #14447: the pre-snapshot marker is not a finding, so an "Inspect
+        // finding" action on it would copy a context packet for nothing.
+        let marker = super::super::diagnostics::analysis_pending_diagnostic(
+            super::super::diagnostics::AnalysisPendingRecovery::AnalysisRunning,
+        );
+        let mut features = ClientFeatureProfile::unsupported();
+        features.ripr_editor = Some(
+            super::super::client_features::RiprEditorClientCapabilities {
+                version: "test".to_string(),
+                commands: vec![COPY_CONTEXT_COMMAND.to_string()],
+                guarded_test_edit: false,
+            },
+        );
+        let actions = code_action_response(&code_action_params(vec![marker])?, None, &features);
+        assert_eq!(action_titles(&actions), vec![REFRESH_ANALYSIS_TITLE]);
         Ok(())
     }
 
@@ -3163,17 +3465,23 @@ mod tests {
 
         let mut multiple = artifact.clone();
         let verify_spec = multiple
-            .verify_command_specs
+            .verify_command_specs()
             .first()
             .cloned()
             .ok_or_else(|| "artifact omitted verify command spec".to_string())?;
         let receipt_spec = multiple
-            .receipt_command_specs
+            .receipt_command_specs()
             .first()
             .cloned()
             .ok_or_else(|| "artifact omitted receipt command spec".to_string())?;
-        multiple.verify_command_specs.push(verify_spec);
-        multiple.receipt_command_specs.push(receipt_spec);
+        multiple
+            .verify_command_specs_mut()
+            .ok_or_else(|| "artifact omitted verify command specs".to_string())?
+            .push(verify_spec);
+        multiple
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "artifact omitted receipt command specs".to_string())?
+            .push(receipt_spec);
         let multiple_target = gap_repair_packet_target(&params, &snapshot, &diagnostic, &multiple)
             .ok_or_else(|| "multi-route gap repair target was omitted".to_string())?;
         if !multiple_target
@@ -3186,13 +3494,20 @@ mod tests {
         }
 
         let mut empty = artifact.clone();
-        empty.verify_command_specs.clear();
-        empty.receipt_command_specs.clear();
+        empty
+            .verify_command_specs_mut()
+            .ok_or_else(|| "artifact omitted verify command specs".to_string())?
+            .clear();
+        empty
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "artifact omitted receipt command specs".to_string())?
+            .clear();
         assert_command_specs_omitted(&params, &snapshot, &diagnostic, &empty)?;
 
         let mut invalid = artifact.clone();
         invalid
-            .verify_command_specs
+            .verify_command_specs_mut()
+            .ok_or_else(|| "artifact omitted verify command specs".to_string())?
             .first_mut()
             .ok_or_else(|| "artifact omitted verify command spec".to_string())?
             .program
@@ -3201,7 +3516,8 @@ mod tests {
 
         let mut mismatched = artifact;
         mismatched
-            .receipt_command_specs
+            .receipt_command_specs_mut()
+            .ok_or_else(|| "artifact omitted receipt command specs".to_string())?
             .first_mut()
             .ok_or_else(|| "artifact omitted receipt command spec".to_string())?
             .role = crate::domain::CommandRole::Verify;
@@ -3300,19 +3616,26 @@ mod tests {
     }
 
     fn action_artifact() -> ValidatedGapArtifact {
-        ValidatedGapArtifact {
-            kind: GapArtifactKind::GapDecisionLedger,
-            corpus_currentness: None,
-            root: Some(".".to_string()),
+        use super::super::gap_artifacts::{
+            GapArtifactCorpusCurrentness, ValidatedGapArtifactCommon,
+            ValidatedGapDecisionLedgerArtifact,
+        };
+        ValidatedGapArtifact::GapDecisionLedger(ValidatedGapDecisionLedgerArtifact {
+            common: ValidatedGapArtifactCommon {
+                root: Some(".".to_string()),
+                language: Some(LanguageId::Python),
+                language_status: Some(LanguageStatus::Preview),
+                gap_state: Some("actionable".to_string()),
+                related_paths: vec!["tests/test_pricing.py".to_string()],
+                static_limit_kinds: Vec::new(),
+                has_text_static_limit: false,
+            },
+            corpus_currentness: GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some("gap:py:pricing".to_string()),
                 seam_id: Some("seam-a".to_string()),
                 finding_id: None,
             }],
-            language: Some(LanguageId::Python),
-            language_status: Some(LanguageStatus::Preview),
-            gap_state: Some("actionable".to_string()),
-            related_paths: vec!["tests/test_pricing.py".to_string()],
             verify_commands: vec!["ripr agent verify --root . --json".to_string()],
             receipt_commands: vec![
                 "ripr agent receipt --root . --verify-json verify.json --seam-id seam-a --json"
@@ -3330,9 +3653,7 @@ mod tests {
                 "seam-a",
                 Some("receipt.json"),
             )],
-            static_limit_kinds: Vec::new(),
-            has_text_static_limit: false,
-        }
+        })
     }
 
     fn assert_command_specs_omitted(
@@ -3398,9 +3719,11 @@ mod tests {
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),

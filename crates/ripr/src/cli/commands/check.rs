@@ -12,7 +12,8 @@ use crate::cli::commands_context::{
 };
 use crate::cli::help;
 use crate::cli::parse::{
-    disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode, reconcile_root,
+    disclose_attached_terminal_stdin_read, expect_path_value, expect_value, parse_format,
+    parse_mode, reconcile_root,
 };
 use crate::cli::suggest::unknown_argument;
 use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
@@ -517,7 +518,16 @@ fn help_request(args: &[String]) -> Option<bool> {
 }
 
 fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
-    parse_git_timeout_from("--git-timeout", value)
+    parse_seconds_flag("--git-timeout", value)
+}
+
+/// An argv seconds flag (`--git-timeout`, `--timeout`). Only the argv path
+/// notes the typed refusal (#11979): the environment-variable spellings go
+/// through the check refusal envelope instead.
+fn parse_seconds_flag(flag: &str, value: &str) -> Result<Option<std::time::Duration>, String> {
+    parse_git_timeout_from(flag, value).inspect_err(|message| {
+        crate::cli::usage_refusal::note_invalid_value(value, message);
+    })
 }
 
 /// Parse a git timeout in seconds from `source` (the flag or the env var),
@@ -527,16 +537,7 @@ fn parse_git_timeout_from(
     source: &str,
     value: &str,
 ) -> Result<Option<std::time::Duration>, String> {
-    let secs: u64 = value.parse().map_err(|_parse_err| {
-        format!("{source} requires a non-negative integer (seconds); got {value:?}")
-    })?;
-    let timeout = std::time::Duration::from_secs(secs);
-    if std::time::Instant::now().checked_add(timeout).is_none() {
-        return Err(format!(
-            "{source} is too large for the platform deadline; got {secs} seconds; pass a smaller number of seconds"
-        ));
-    }
-    Ok((secs > 0).then_some(timeout))
+    crate::app::parse_git_timeout_seconds(source, value)
 }
 
 /// `--timeout` / `RIPR_CHECK_TIMEOUT`: the whole-run analysis wall-clock
@@ -572,14 +573,7 @@ pub(super) fn git_timeout_from_env(
     if explicit {
         return Ok(None);
     }
-    match env_value {
-        Ok(value) => parse_git_timeout_from("RIPR_GIT_TIMEOUT", &value).map(Some),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        // Present but unreadable is still a misconfiguration (#4374).
-        Err(std::env::VarError::NotUnicode(_)) => {
-            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
-        }
-    }
+    crate::app::git_timeout_from_env_value(env_value)
 }
 
 /// Record one argv output selection, refusing a second one that disagrees
@@ -602,6 +596,18 @@ fn select_output_format(
     Ok(())
 }
 
+/// The usage refusal for `--suppression-policy` on a format that cannot
+/// apply it (#1441, #15377). It names the requested format: `agent`,
+/// `json-terse` and the SARIF formats refuse too, which the old "SARIF,
+/// badge, or repo formats" wording left out.
+fn suppression_policy_format_refusal(format: OutputFormat) -> String {
+    format!(
+        "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt) and to sarif and sarif-compact; \
+         --format {} does not apply it. Drop the flag, or pick one of those formats",
+        format.primary_cli_name()
+    )
+}
+
 /// Refusal exit for a post-argv-parse `check` failure (#6834, widened #7332).
 ///
 /// Machine-readable formats write a refusal document to stdout first — the
@@ -620,6 +626,9 @@ pub(super) fn refuse_check(
     error: impl Into<CoreError>,
 ) -> String {
     let error = error.into();
+    if format == OutputFormat::Agent {
+        return refuse_agent(&error);
+    }
     let rendered = match machine_refusal_document(envelope_input, format, &error) {
         Some(rendered) => rendered,
         // Human formats (and machine formats without an honest refusal shape)
@@ -636,6 +645,30 @@ pub(super) fn refuse_check(
         Err(render) => return render,
     }
     error.to_string()
+}
+
+/// The agent refusal (#14452): the stdout record, then the stderr prose. A
+/// timed run consumes the stashed projection once, so its bounded retry rides
+/// `next=` and stderr keeps the same requested echo and facts the human
+/// format gets.
+fn refuse_agent(error: &CoreError) -> String {
+    let notice = error.refusal_notice(&crate::config::config_error_summary);
+    let projection = if notice.identity == "analysis_timeout" {
+        app::timeout_refusal::take_stashed()
+    } else {
+        None
+    };
+    let retry = projection
+        .as_ref()
+        .and_then(app::timeout_refusal::TimeoutRefusalProjection::replayable_recovery_command);
+    let document = output::human::render_agent_refusal(&notice, retry.as_deref());
+    if let Err(write) = write_stdout_chunked(&document) {
+        return write;
+    }
+    match projection {
+        Some(projection) => format!("{error}\n{}", projection.human_recovery_text()),
+        None => error.to_string(),
+    }
 }
 
 /// The stderr refusal for a format with no machine refusal document. A timed
@@ -670,18 +703,10 @@ pub(super) fn machine_refusal_document(
 ) -> Option<Result<String, String>> {
     let notice = error.refusal_notice(&crate::config::config_error_summary);
     match format {
-        OutputFormat::Json | OutputFormat::JsonCompact => {
-            let display = error.to_string();
-            let rendered = match output::limited_check::render_diff_scope_limited_check_json(
-                envelope_input,
-                &display,
-            ) {
-                Ok(Some(rendered)) => Ok(rendered),
-                Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
-                Err(render) => Err(render),
-            };
-            Some(rendered.map(|document| output::compact_json::finish(document, &format)))
-        }
+        OutputFormat::Json | OutputFormat::JsonCompact => Some(
+            check_json_refusal(envelope_input, error)
+                .map(|document| output::compact_json::finish(document, &format)),
+        ),
         // SARIF: a schema-valid run whose only signal is a
         // tool-configuration notification — uploadable to code scanning,
         // which an empty stream is not.
@@ -714,7 +739,90 @@ pub(super) fn machine_refusal_document(
         OutputFormat::AgentSeamPacketsJson => {
             Some(Ok(output::agent_seam_packets::render_refusal_json(&notice)))
         }
+        // json-terse and check-findings-json (#14499): the same check JSON
+        // refusal envelope. check-findings-json carries no artifact identity,
+        // so a verify that requires a snapshot still rejects it.
+        OutputFormat::JsonTerse => Some(
+            check_json_refusal(envelope_input, error)
+                .and_then(|document| output::json::render_terse(&document)),
+        ),
+        OutputFormat::CheckFindingsJson => Some(check_json_refusal(envelope_input, error)),
+        // Every other badge family: the same degraded badge under its own
+        // kind and scope, in its own native or Shields projection.
+        OutputFormat::BadgeShields
+        | OutputFormat::BadgePlusJson
+        | OutputFormat::BadgePlusShields
+        | OutputFormat::RepoBadgeJson
+        | OutputFormat::RepoBadgeShields
+        | OutputFormat::RepoBadgePlusJson
+        | OutputFormat::RepoBadgePlusShields => {
+            use output::badge::{BadgeKind, BadgeScope};
+            let kind = match format {
+                OutputFormat::BadgePlusJson
+                | OutputFormat::BadgePlusShields
+                | OutputFormat::RepoBadgePlusJson
+                | OutputFormat::RepoBadgePlusShields => BadgeKind::RiprPlus,
+                _ => BadgeKind::Ripr,
+            };
+            let scope = if format.is_repo_scope() {
+                BadgeScope::Repo
+            } else {
+                BadgeScope::Diff
+            };
+            let summary = output::badge::refusal_badge_summary_for(&notice, kind, scope);
+            let shields = matches!(
+                format,
+                OutputFormat::BadgeShields
+                    | OutputFormat::BadgePlusShields
+                    | OutputFormat::RepoBadgeShields
+                    | OutputFormat::RepoBadgePlusShields
+            );
+            Some(Ok(if shields {
+                output::badge::render_shields_json(&summary)
+            } else {
+                output::badge::render_native_json(&summary)
+            }))
+        }
+        OutputFormat::RepoSarif => Some(Ok(output::sarif::render_repo_refusal_sarif(
+            &notice,
+            &envelope_input.root,
+            envelope_input.base.as_deref(),
+        ))),
+        OutputFormat::RepoSarifCompact => {
+            Some(Ok(output::sarif::render_repo_refusal_sarif_compact(
+                &notice,
+                &envelope_input.root,
+                envelope_input.base.as_deref(),
+            )))
+        }
+        OutputFormat::RepoSeamsJson => Some(Ok(output::repo_seams::render_refusal_json(&notice))),
+        OutputFormat::RepoExposureSummaryJson => {
+            Some(Ok(output::repo_exposure::render_summary_refusal_json(
+                &notice,
+                &envelope_input.root,
+                envelope_input.base.as_deref(),
+                envelope_input.mode.as_str(),
+            )))
+        }
+        // Agent: the format's own refused stop/verify record, never zero
+        // bytes an agent could read as an empty result (#14452).
+        OutputFormat::Agent => Some(Ok(output::human::render_agent_refusal(&notice, None))),
         _ => None,
+    }
+}
+
+/// The check JSON refusal envelope every JSON-family `check` format shares:
+/// a scope-guard refusal keeps its frozen `diff_scope_oversized` /
+/// `repo_scope_oversized` document, and every other failure gets the typed
+/// refusal (#14499 review: the guard runs first for every JSON format).
+fn check_json_refusal(envelope_input: &CheckInput, error: &CoreError) -> Result<String, String> {
+    match output::limited_check::render_diff_scope_limited_check_json(
+        envelope_input,
+        &error.to_string(),
+    ) {
+        Ok(Some(rendered)) => Ok(rendered),
+        Ok(None) => output::limited_check::render_check_failure_json(envelope_input, error),
+        Err(render) => Err(render),
     }
 }
 
@@ -769,7 +877,8 @@ fn stash_timeout_refusal(site: &TimeoutRefusalSite<'_>) {
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
-    check_inner(args, None)
+    // #14700: one run, so each index-level analysis-limit family prints once.
+    crate::analysis::IndexDisclosureRun::default().scope(|| check_inner(args, None))
 }
 
 #[cfg(unix)]
@@ -777,7 +886,7 @@ pub(in crate::cli) fn check_with_interrupt_flags(
     args: &[String],
     flags: crate::cli::interrupt::InterruptFlags,
 ) -> Result<(), String> {
-    check_inner(args, Some(flags))
+    crate::analysis::IndexDisclosureRun::default().scope(|| check_inner(args, Some(flags)))
 }
 
 fn check_inner(
@@ -857,7 +966,7 @@ fn check_inner(
             }
             "--diff" => {
                 i += 1;
-                input.diff_file = Some(PathBuf::from(expect_value(args, i, "--diff")?));
+                input.diff_file = Some(PathBuf::from(expect_path_value(args, i, "--diff")?));
                 scope_explicitly_provided = true;
             }
             // #3237/#3278: immutable Git candidate input. The subject
@@ -941,7 +1050,7 @@ fn check_inner(
             }
             "--suppression-policy" => {
                 i += 1;
-                input.suppression_policy = Some(PathBuf::from(expect_value(
+                input.suppression_policy = Some(PathBuf::from(expect_path_value(
                     args,
                     i,
                     "--suppression-policy",
@@ -956,7 +1065,11 @@ fn check_inner(
             }
             "--write-artifact" => {
                 i += 1;
-                write_artifact = Some(PathBuf::from(expect_value(args, i, "--write-artifact")?));
+                write_artifact = Some(PathBuf::from(expect_path_value(
+                    args,
+                    i,
+                    "--write-artifact",
+                )?));
             }
             "--git-timeout" => {
                 i += 1;
@@ -967,7 +1080,7 @@ fn check_inner(
             "--timeout" => {
                 i += 1;
                 let value = expect_value(args, i, "--timeout")?;
-                check_timeout = parse_check_timeout_from("--timeout", value)?;
+                check_timeout = parse_seconds_flag("--timeout", value)?;
                 check_timeout_explicitly_provided = true;
             }
             "--quiet" => {
@@ -976,6 +1089,11 @@ fn check_inner(
             // `help_request` already consumed `--all` alongside `--help`; here
             // it has no `--help` to widen, so it is still an unknown argument.
             "--all" => return Err(unknown_argument("check", "--all")),
+            // #14307: a bare argument is a `--path` scope, like `git diff
+            // PATH`; it shares --path's matching and fail-closed refusal.
+            path if !path.is_empty() && !path.starts_with('-') => {
+                scope_include.push(path.to_string());
+            }
             other => return Err(unknown_argument("check", other)),
         }
         i += 1;
@@ -995,6 +1113,29 @@ fn check_inner(
             || input.suppression_policy.is_some())
     {
         return Err("--output-dir requires a named --diff file and cannot be combined with --format/--json, --worktree/--committed, --candidate-tree/--candidate-base, --gap-ledger, --write-artifact or --suppression-policy; pass a named `--diff <file>` and drop the other flags".into());
+    }
+    // #1441: --suppression-policy applies to the findings-based check
+    // surfaces and, since #15377, to SARIF, where the explicit file replaces
+    // the implicit `[suppressions] path` manifest. Badge/repo formats have
+    // their own suppression projections — silently ignoring the flag there would misreport policy
+    // application, so fail closed. #15377: this is a usage error decided by
+    // argv alone, so it is refused here, before the refusal-envelope
+    // snapshot: an agent or json-terse record would label it
+    // `analysis_failed`, which reads as an analyzer failure.
+    if input.suppression_policy.is_some()
+        && !matches!(
+            input.format,
+            OutputFormat::Human
+                | OutputFormat::HumanFull
+                | OutputFormat::Json
+                | OutputFormat::JsonCompact
+                | OutputFormat::Github
+                | OutputFormat::MissedTxt
+                | OutputFormat::Sarif
+                | OutputFormat::SarifCompact
+        )
+    {
+        return Err(suppression_policy_format_refusal(input.format));
     }
     // #6834: refusal-envelope context for every failure below. Argv usage
     // errors above return before this snapshot exists and stay prose-only.
@@ -1183,31 +1324,6 @@ fn check_inner(
                 message,
             ));
         }
-    }
-    // #1441: --suppression-policy applies to the findings-based check
-    // surfaces only. SARIF keeps its existing `.ripr/suppressions.toml`
-    // finding_id channel, and badge/repo formats have their own suppression
-    // projections — silently ignoring the flag there would misreport policy
-    // application, so fail closed with a named limitation instead.
-    if input.suppression_policy.is_some()
-        && !matches!(
-            input.format,
-            OutputFormat::Human
-                | OutputFormat::HumanFull
-                | OutputFormat::Json
-                | OutputFormat::JsonCompact
-                | OutputFormat::Github
-                | OutputFormat::MissedTxt
-        )
-    {
-        return Err(super::check_fanout::refuse(
-            super::check_fanout::refusal_destination(fanout_custody.as_ref(), output_dir.as_deref()),
-            &envelope_input,
-            effective_format,
-            "--suppression-policy applies to the findings-based check formats (human, human-full, json, json-compact, github, missed-txt); \
-             it is not yet supported for SARIF, badge, or repo formats"
-                .to_string(),
-        ));
     }
     // #3237/#3278: bind the immutable subject before the analysis
     // call. Construction runs #3276's typed validation (malformed OIDs,
@@ -1665,6 +1781,11 @@ fn check_inner(
     // ripr's artifact root says so once, with the exact entry; `doctor` gives
     // the same verdict. stderr only, so stdout and machine formats are
     // unchanged, and silent when `--quiet` or when git cannot establish it.
+    // The output guard gives an existing `target/ripr` its self-ignore file
+    // before the verdict, so a tree an older ripr left unignored is judged as
+    // this run leaves it; it creates nothing. A refusal here is reported by
+    // the guard on the write path.
+    let _ = crate::atomic_file::ensure_report_output_contained(&input.root);
     if !quiet && let Some(note) = super::doctor::first_check_artifact_ignore_note(&input.root) {
         eprintln!("{}", terminal_safe(note));
     }
@@ -1708,7 +1829,11 @@ fn check_inner(
         app::repo_inventory_with_progress(
             progress_sink,
             || analysis::inventory_classified_seams_report_at_with_config(&input.root, &config),
-            |report| {
+            |mut report| {
+                // #14139: the same withholding `render.rs` applies to every
+                // classified `repo-*` format.
+                let owner_opt_outs =
+                    output::render::withhold_repo_classified_owner_opt_outs(&mut report.classified);
                 let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(
                     &input.root,
                     &report.classified,
@@ -1753,6 +1878,7 @@ fn check_inner(
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
                     &report.evidence_limitations,
+                    owner_opt_outs,
                     &artifact_context,
                     &mut handle,
                 )?;
@@ -1924,14 +2050,14 @@ fn check_inner(
         && candidate_tree.is_none()
         && output_dir.is_none()
         && write_artifact.is_none()
-        && last_commit_fallback_applies(
+        && app::diff_source::last_commit_fallback_applies(
             &output,
             &limited_check_input.root,
             limited_check_input.git_timeout,
         )
     {
         let mut retry = limited_check_input.clone();
-        retry.base = Some("HEAD~1".to_string());
+        retry.base = Some(app::diff_source::LAST_COMMIT_BASE.to_string());
         let retry_config = config.clone();
         // Below this, a retry worker would only time out after its cancel
         // grace; keep the original empty result instead.
@@ -1951,23 +2077,38 @@ fn check_inner(
                     None,
                     || {},
                     move || {
-                        app::check_with_progress_core(retry, &retry_config, progress_scope, None)
+                        // Buffer the run's stderr disclosures (for example the
+                        // deletion-only note): they describe the retry's diff,
+                        // so they print only if the retry replaces the output
+                        // (#15330).
+                        let (result, disclosures) = crate::analysis::capture_disclosures(|| {
+                            app::check_with_progress_core(
+                                retry,
+                                &retry_config,
+                                progress_scope,
+                                None,
+                            )
+                        });
+                        result.map(|retried| (retried, disclosures))
                     },
                 )
             });
-        if let Some(Ok(retried)) = retried
+        if let Some(Ok((retried, disclosures))) = retried
             && retried
                 .analysis_outcome
                 .as_ref()
                 .is_some_and(|outcome| outcome.counts.changed_file_count > 0)
         {
+            for message in disclosures {
+                eprintln!("{message}");
+            }
             eprintln!(
                 "ripr: analyzed the last commit (--base HEAD~1). Pass --base to choose another range."
             );
             output = retried;
             // Drill-in, stub and repair routes rebuild their commands from
             // this input; keep them on the range that was actually shown.
-            limited_check_input.base = Some("HEAD~1".to_string());
+            limited_check_input.base = Some(app::diff_source::LAST_COMMIT_BASE.to_string());
         }
     }
     // The findings formats apply suppression only through the explicit flag.
@@ -2006,6 +2147,7 @@ fn check_inner(
             &limited_check_input,
             &config,
             &output.findings,
+            &output.owner_opt_outs,
             worktree_run,
         )
         .map_err(|err| {
@@ -2343,73 +2485,6 @@ fn record_human_legend_seen(root: &Path, marker: &Path) {
     let _ = crate::atomic_file::write(marker, b"1\n", "legend marker");
 }
 
-/// #13644: true when an unscoped check produced an empty range because HEAD
-/// is the checked-out comparison-base branch itself, the tree is clean and
-/// HEAD has a parent, so `--base HEAD~1` names the last commit.
-fn last_commit_fallback_applies(
-    output: &crate::CheckOutput,
-    root: &Path,
-    git_timeout: Option<std::time::Duration>,
-) -> bool {
-    if !output.findings.is_empty()
-        || output.unanalyzed_working_tree
-        || !output.untracked_working_tree_source_paths.is_empty()
-        || !output.ignored_working_tree_source_paths.is_empty()
-        || output
-            .analysis_outcome
-            .as_ref()
-            .is_none_or(|outcome| outcome.counts.changed_file_count != 0)
-    {
-        return false;
-    }
-    let Some(base) = output.base.as_deref() else {
-        return false;
-    };
-    let git = |args: &[&str]| {
-        crate::git::run_git_output_with_deadline(
-            root,
-            args,
-            // `--git-timeout` bounds these probes like any other git call.
-            Some(git_timeout.unwrap_or(std::time::Duration::from_secs(5))),
-        )
-        .ok()
-        .filter(|out| out.status.success())
-    };
-    // Both spellings below require the base to name HEAD's own commit: an
-    // empty range by construction, not a branch that is merely behind.
-    let Some(branch) = git(&["symbolic-ref", "--quiet", "--short", "HEAD"])
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-    else {
-        return false;
-    };
-    let commit = |rev: &str| {
-        git(&[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            &format!("{rev}^{{commit}}"),
-        ])
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
-    };
-    let same_commit = commit(base).is_some_and(|base_commit| commit("HEAD") == Some(base_commit));
-    if !same_commit || commit("HEAD~1").is_none() {
-        return false;
-    }
-    if base == branch {
-        return true;
-    }
-    // A clone resolves the default base to `origin/<branch>` while HEAD is
-    // `<branch>`. That is also the shape of a feature-branch clone whose
-    // `origin/HEAD` tracks the feature branch, where the real base is
-    // elsewhere and the existing hedge names it (#7644); only narrow to the
-    // last commit when the branch is a conventional default or no other base
-    // candidate exists (a full clone of `main` usually carries other remote
-    // branches, which must not disable the fallback).
-    base.strip_prefix("origin/") == Some(branch.as_str())
-        && (matches!(branch.as_str(), "main" | "master")
-            || crate::analysis::another_base_candidate(root, git_timeout).is_none())
-}
-
 /// The stderr warning for an empty default-base result when the default base
 /// and HEAD each resolve to the same commit after analysis. It states those
 /// two later observations only; it does not attribute the analyzed range.
@@ -2468,10 +2543,11 @@ fn zero_findings_diff_hedge(
     // A well-formed binary- or mode-only diff already got its own stderr note
     // from the pipeline; the generic "may not be a valid diff" hedge would
     // contradict it.
-    if outcome.limitations.iter().any(|limitation| {
-        limitation.kind == AnalysisLimitationKind::MalformedDiff
-            && limitation.bounded_detail.as_deref() == Some(crate::analysis::NON_TEXT_ONLY_DETAIL)
-    }) {
+    if outcome
+        .limitations
+        .iter()
+        .any(crate::analysis_outcome::AnalysisLimitation::is_non_text_only)
+    {
         return None;
     }
     let causes = outcome
@@ -2492,7 +2568,12 @@ fn zero_findings_diff_hedge(
             causes.join("; ")
         ));
     }
-    if outcome.counts.changed_file_count > 0 {
+    if outcome.counts.changed_file_count > 0
+        || outcome
+            .limitations
+            .iter()
+            .any(crate::analysis::names_parsed_file_limitation)
+    {
         return None;
     }
     Some(generic.to_string())
@@ -2514,7 +2595,7 @@ fn render_check_gap_ledger_badge(
             );
         }
     };
-    let text = crate::bounded_input::read_to_string(gap_ledger)
+    let text = crate::bounded_input::read_artifact_text(gap_ledger)
         .map_err(|err| format!("failed to read gap ledger {}: {err}; check the path passed to `--gap-ledger` exists and you can read it", gap_ledger.display()))?;
     let policy = output::badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
@@ -3016,6 +3097,46 @@ mod tests {
             .analysis_outcome
             .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
         assert_eq!(zero_findings_diff_hedge(Some(&outcome), false), None);
+        Ok(())
+    }
+
+    #[test]
+    fn zero_findings_hedge_is_silent_when_a_located_parse_limitation_explains() -> Result<(), String>
+    {
+        // #15268: a series that edits one file in two sections parses as a
+        // diff and names the refused file; "not a valid unified diff" would
+        // contradict that. Garbage input keeps the generic hint.
+        let series = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3 +3 @@\n-old\n+new\ncommit 0123456789abcdef0123456789abcdef01234567\n\ndiff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -0,0 +1 @@\n+pub const A: u8 = 1;\n";
+        for (name, text, expect_hedge) in [
+            ("hedge-repeated-section", series, false),
+            ("hedge-garbage", "not a diff at all\n", true),
+        ] {
+            let root = copy_sample_workspace_to_temp(name)?;
+            std::fs::write(root.join("example.diff"), text).map_err(|err| err.to_string())?;
+            let input = CheckInput {
+                root: root.clone(),
+                diff_file: Some(root.join("example.diff")),
+                ..CheckInput::default()
+            };
+            let result = app::check_workspace_with_config(input, &RiprConfig::default());
+            if let Ok(()) = std::fs::remove_dir_all(&root) {}
+            let outcome = result?
+                .analysis_outcome
+                .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
+            assert_eq!(
+                outcome
+                    .limitations
+                    .iter()
+                    .any(crate::analysis::names_parsed_file_limitation),
+                !expect_hedge,
+                "{name}: {outcome:?}"
+            );
+            assert_eq!(
+                zero_findings_diff_hedge(Some(&outcome), false).is_some(),
+                expect_hedge,
+                "{name}"
+            );
+        }
         Ok(())
     }
 
@@ -3531,7 +3652,7 @@ mod tests {
                     .filter(|flag| flag.starts_with("--"));
             }
             if let Some(flag) = current
-                && line.contains("expect_value(")
+                && (line.contains("expect_value(") || line.contains("expect_path_value("))
             {
                 parsed.insert(flag.to_string());
             }
@@ -3606,7 +3727,7 @@ mod tests {
                     "x"
                 )))
             ),
-            Err("RIPR_GIT_TIMEOUT must be valid UTF-8".to_string())
+            Err("RIPR_GIT_TIMEOUT must be valid UTF-8; set it to a whole number of seconds (0 disables the deadline), or unset it to use the default".to_string())
         );
         Ok(())
     }

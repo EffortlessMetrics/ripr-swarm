@@ -6,8 +6,8 @@
 //! variants. Unmigrated failures travel as [`CoreError::Message`] until
 //! those migrations; they are not a semantic family.
 //!
-//! Public CLI, JSON, and LSP text is rendered at [`Display`] boundaries.
-//! Semantic consumers match variants (including through
+//! Public CLI, JSON, and LSP text is rendered at [`Display`](fmt::Display)
+//! boundaries. Semantic consumers match variants (including through
 //! [`CoreError::with_context`]), not rendered prefixes. #2811 remains the
 //! public/LSP projection owner: a typed timeout maps to the existing
 //! `git_invocation_timeout` kind string.
@@ -28,8 +28,12 @@ pub const ANALYSIS_FAILED_REPAIR_ROUTE: &str = "analysis/failure";
 /// Repair route for a typed git timeout inside a `check --json` refusal.
 pub const GIT_TIMEOUT_REPAIR_ROUTE: &str = "analysis/git-timeout";
 
+/// Repair sentence appended to the display text of a git invocation that
+/// exceeded its deadline. It starts with a space so it follows the cause
+/// sentence directly.
 pub const GIT_TIMEOUT_REPAIR_GUIDANCE: &str = " Repair route: raise or disable the git deadline (0 disables it) — \
-     --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the \
+     --git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, \
+     RIPR_GIT_TIMEOUT in the server environment for MCP sessions, the \
      gitTimeoutMs initialization option for editor sessions — then re-run.";
 
 /// Crate-internal error used for semantic control flow.
@@ -38,8 +42,13 @@ pub enum CoreError {
     /// A git invocation that was given a zero deadline, or that exceeded its
     /// cooperative deadline and was terminated.
     GitInvocationTimeout {
+        /// Description of the git operation that timed out, such as a rendered
+        /// command line or a label like `git root probe in <dir>`.
         operation: String,
+        /// The deadline in milliseconds.
         timeout_ms: u128,
+        /// Whether git was started. `false` means the deadline was zero and
+        /// the process was never spawned.
         spawned: bool,
     },
     /// Cooperative analysis cancellation observed at a checkpoint (#4860).
@@ -51,14 +60,18 @@ pub enum CoreError {
     /// message text. `detail` is the exact human diagnostic also printed on
     /// stderr, kept verbatim so typed construction never rewords prose.
     CheckFailure {
+        /// The named failure family.
         kind: CheckFailureKind,
+        /// The exact human diagnostic, also printed on stderr.
         detail: String,
     },
     /// Unmigrated remainder. Display-only until a later family is typed.
     Message(String),
     /// Structured wrap that preserves the source kind.
     Context {
+        /// Human context, rendered before the source as `context: source`.
         context: String,
+        /// The wrapped error, whose kind stays matchable.
         source: Box<CoreError>,
     },
 }
@@ -167,10 +180,13 @@ impl CheckFailureKind {
 /// repair route, and redaction duty the renderer needs, decided here so no
 /// renderer matches error text or invents taxonomy.
 pub struct CheckRefusal {
+    /// The refusal identity, such as a [`CheckFailureKind`] wire word or
+    /// [`ANALYSIS_FAILED_IDENTITY`].
     pub identity: &'static str,
+    /// The repair route, such as [`GIT_TIMEOUT_REPAIR_ROUTE`].
     pub repair_route: &'static str,
     /// Whether the envelope message must be the redacted config summary
-    /// ([`crate::config::config_error_summary`]) instead of the full
+    /// (`ripr::config::config_error_summary`) instead of the full
     /// diagnostic: config file contents never enter machine output
     /// (RIPR-SPEC-0007). Every other family echoes the stderr diagnostic
     /// verbatim, exactly what the caller already sees.
@@ -184,8 +200,11 @@ pub struct CheckRefusal {
 /// repo-exposure / agent-seam-packets JSON documents — so each format's
 /// refusal document carries the same branchable identity.
 pub struct RefusalNotice {
+    /// The refusal identity, as in [`CheckRefusal::identity`].
     pub identity: &'static str,
+    /// The repair route, as in [`CheckRefusal::repair_route`].
     pub repair_route: &'static str,
+    /// The machine-safe message, redacted when the family requires it.
     pub message: String,
     /// The structured next step the `message` prose states (#11790), derived
     /// once here from the same redacted message every renderer prints.
@@ -193,6 +212,7 @@ pub struct RefusalNotice {
 }
 
 impl CoreError {
+    /// Builds a [`Self::GitInvocationTimeout`].
     pub fn git_invocation_timeout(
         operation: impl Into<String>,
         timeout_ms: u128,
@@ -205,6 +225,7 @@ impl CoreError {
         }
     }
 
+    /// Builds an unmigrated [`Self::Message`] error.
     pub fn message(message: impl Into<String>) -> Self {
         Self::Message(message.into())
     }
@@ -344,6 +365,8 @@ impl CoreError {
         }
     }
 
+    /// Whether this error, or the error any [`Self::Context`] wraps, is a git
+    /// invocation timeout.
     pub fn is_git_invocation_timeout(&self) -> bool {
         match self {
             Self::GitInvocationTimeout { .. } => true,
@@ -516,7 +539,8 @@ mod tests {
             concat!(
                 "git_invocation_timeout: git -C /workspace [\"diff\"] exceeded the 30000ms deadline (process terminated).",
                 " Repair route: raise or disable the git deadline (0 disables it) — ",
-                "--git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, the ",
+                "--git-timeout SECS or RIPR_GIT_TIMEOUT=<seconds> for CLI runs, ",
+                "RIPR_GIT_TIMEOUT in the server environment for MCP sessions, the ",
                 "gitTimeoutMs initialization option for editor sessions — then re-run."
             )
         );

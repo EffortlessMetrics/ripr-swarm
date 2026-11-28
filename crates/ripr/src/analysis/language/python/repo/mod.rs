@@ -19,11 +19,6 @@
 //! working-set limit with its cap source, the retained operator recovery
 //! routes, and the test framework detected by the shared producer.
 
-#![allow(
-    dead_code,
-    reason = "PythonRepoRunStatus::Disabled and the config-disabled wrappers stay typed ahead of a config producer; remaining unconsumed items are exercised by unit tests (#3554)"
-)]
-
 mod discovery;
 mod evidence;
 mod roles;
@@ -63,6 +58,8 @@ pub(in crate::analysis::language::python) struct PythonRepoInput {
     /// never `Unknown`, and if that changes it must be visible here rather
     /// than silently analyzed as production.
     pub(in crate::analysis::language::python) ambiguous_files: Vec<PathBuf>,
+    /// Omitted non-test source paths used only for module identity.
+    pub(in crate::analysis::language::python) capped_source_paths: Vec<PathBuf>,
     /// Typed working-set counts (#2109).
     pub(in crate::analysis::language::python) counts: DiscoveryCounts,
     /// The effective working-set limit and its cap source.
@@ -85,8 +82,11 @@ pub(in crate::analysis::language::python) fn select_repo_input_with_limit(
     root: &Path,
     working_set_limit: RepoWorkingSetLimit,
 ) -> PythonRepoInput {
-    let discovery::RepoDiscovery { selected, counts } =
-        discover_repo_working_set(root, working_set_limit.limit);
+    let discovery::RepoDiscovery {
+        selected,
+        capped_source_paths,
+        counts,
+    } = discover_repo_working_set(root, working_set_limit.limit);
 
     let mut production_files = Vec::new();
     let mut test_files = Vec::new();
@@ -141,6 +141,7 @@ pub(in crate::analysis::language::python) fn select_repo_input_with_limit(
         test_files,
         helper_files,
         ambiguous_files,
+        capped_source_paths,
         counts,
         working_set_limit,
         recovery_routes: discovery::CAP_RECOVERY_ROUTES,

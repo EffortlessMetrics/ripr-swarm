@@ -142,3 +142,60 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — inherent_receiver_async_function (13)
+
+Reason:
+RIPR-SPEC-0001: head-only match-arm rows and their propagation sink name the arm's same-line result (#14420)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_function --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — inherent_receiver_async_function (14)
+
+Reason:
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_function --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — inherent_receiver_async_function (15)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_function --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — inherent_receiver_async_function (16)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_function --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — inherent_receiver_async_function (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless inherent_receiver_async_function --reason "..."`
+
+Updated:
+- `expected/human.txt`

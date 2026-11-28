@@ -13,8 +13,9 @@
 //!   failure and the packet continues;
 //! - the diff capture and the gate evaluation had no `continue-on-error`,
 //!   and the PR guidance and SARIF renders had it only in an advisory
-//!   `RIPR_GATE_MODE`, so their failure makes the command exit nonzero once
-//!   the rest of the packet is written;
+//!   `RIPR_GATE_MODE`, so their failure makes the command exit `2` once
+//!   the rest of the packet is written, or `3` when the only such failure is
+//!   a gate that blocked (#14841);
 //! - a stage whose step had no `always()` is skipped after such a failure,
 //!   as GitHub skipped the step.
 //!
@@ -34,10 +35,12 @@ use crate::agent::loop_commands::{
     WORKFLOW_AGENT_STATUS_MARKDOWN_ARTIFACT, WORKFLOW_AGENT_VERIFY_ARTIFACT,
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, shell_arg,
 };
+use crate::cli::CommandError;
 use crate::cli::parse::reconcile_root;
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::annotations::render_workflow_annotations;
 use crate::output::ci_summary::effective_comment_mode;
+use crate::output::ci_summary::gate_verdict::GateVerdict;
 use crate::output::first_pr::base_fetch_refspec;
 use crate::process_owner::OwnedProcess;
 use serde::Serialize;
@@ -73,10 +76,28 @@ pub(super) struct CiPacketOptions {
     /// `--step NAME`: run only these steps, each still under its condition,
     /// to reproduce one step's failure without the rest of the packet.
     pub(super) steps: Vec<String>,
+    /// `--quiet`: the flag twin of `RIPR_QUIET`. Each child step runs with
+    /// `RIPR_QUIET=1`, so their `ripr progress:` and `wrote <path>` lines
+    /// drop; step log groups, failures and the exit code are unchanged.
+    pub(super) quiet: bool,
 }
 
+/// String-error form for the family parsers and tests; the binary dispatches
+/// through [`ci_packet_command`] so a blocked gate keeps exit `3`.
 pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
+    ci_packet_command(args).map_err(|error| error.message().to_string())
+}
+
+/// `ripr reports ci-packet` with its exit contract: `0` when every required
+/// step passed, `3` when the only failed required step is a gate evaluation
+/// that blocked (its child exited `3` after writing its report), and `2` for
+/// anything else, so a blocking gate is not reported as a could-not-complete
+/// failure and an operational failure is never softened into a decision.
+pub(super) fn ci_packet_command(args: &[String]) -> Result<(), CommandError> {
     let options = parse_ci_packet_options(args)?;
+    // #14222: a mistyped `--root` is refused by the shared validator instead of
+    // being created as a new directory tree.
+    crate::cli::commands_context::ensure_command_root(&options.root, COMMAND)?;
     crate::atomic_file::ensure_report_output_contained(&options.root)?;
     let exe = std::env::current_exe()
         .map_err(|err| format!("{COMMAND} cannot locate the running ripr binary: {err}; install ripr again, or run it by its full path"))?;
@@ -89,6 +110,8 @@ pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
         seen: Vec::new(),
         top_seam: None,
         failed: Vec::new(),
+        gate_blocked: false,
+        quiet: options.quiet,
         recorded: None,
     };
     run.all_stages();
@@ -99,7 +122,7 @@ pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
         .cloned()
         .collect::<Vec<_>>();
     if !unknown.is_empty() {
-        return Err(format!(
+        return Err(CommandError::Failure(format!(
             "{COMMAND}: unknown --step {}; the steps are: {}; pass one of those names to --step",
             unknown.join(", "),
             run.seen
@@ -107,22 +130,16 @@ pub(super) fn ci_packet(args: &[String]) -> Result<(), String> {
                 .map(|(name, _, _)| name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
-        ));
+        )));
     }
-    if run.failed.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{COMMAND}: required step(s) failed: {}. The rest of the packet was written; see each step's log group above.",
-            run.failed.join(", ")
-        ))
-    }
+    run.outcome()
 }
 
 pub(super) fn parse_ci_packet_options(args: &[String]) -> Result<CiPacketOptions, String> {
     let mut options = CiPacketOptions {
         root: PathBuf::from("."),
         steps: Vec::new(),
+        quiet: false,
     };
     let mut root_explicit = false;
     let mut i = 0usize;
@@ -139,6 +156,10 @@ pub(super) fn parse_ci_packet_options(args: &[String]) -> Result<CiPacketOptions
             "--step" => options
                 .steps
                 .push(non_empty_string_arg(args, i, flag, COMMAND)?),
+            "--quiet" => {
+                options.quiet = true;
+                continue;
+            }
             other => return Err(unknown_argument(COMMAND, other)),
         }
         i += 1;
@@ -268,7 +289,7 @@ impl CiSettings {
         }
     }
 
-    fn pull_request(&self) -> bool {
+    pub(super) fn pull_request(&self) -> bool {
         self.event_name == "pull_request"
     }
 
@@ -349,6 +370,11 @@ struct PacketRun {
     top_seam: Option<String>,
     /// Names of failed steps whose failure fails the job.
     failed: Vec<String>,
+    /// The gate evaluation ran and blocked (its child exited `3`). A blocked
+    /// gate is a decision, not a could-not-complete failure (EXIT_CODES.md).
+    gate_blocked: bool,
+    /// `--quiet`: run every child with `RIPR_QUIET=1`.
+    quiet: bool,
     /// Test seam: when set, child commands and the diff capture are recorded
     /// as command lines instead of run, so tests can hold each step's argv.
     recorded: Option<std::cell::RefCell<Vec<String>>>,
@@ -356,7 +382,26 @@ struct PacketRun {
 
 type StageResult = Result<(), String>;
 
+/// The log-group name of the gate evaluation stage.
+const GATE_STAGE: &str = "Evaluate RIPR gate decision";
+
 impl PacketRun {
+    /// The packet's exit once every stage ran: `3` only when the gate blocked
+    /// and no other required step failed; any other required failure is `2`.
+    fn outcome(&self) -> Result<(), CommandError> {
+        if self.failed.is_empty() {
+            return Ok(());
+        }
+        let failed = self.failed.join(", ");
+        if self.gate_blocked && self.failed.iter().all(|step| step == GATE_STAGE) {
+            return Err(CommandError::Decision(format!(
+                "{COMMAND}: the RIPR gate blocked this pull request (gate exit 3). The rest of the packet was written; read target/ripr/reports/gate-decision.md for the blocking reasons and how to clear them."
+            )));
+        }
+        Err(CommandError::Failure(format!(
+            "{COMMAND}: required step(s) failed: {failed}. The rest of the packet was written; see each step's log group above."
+        )))
+    }
     /// A regular file, as `[ -f ]` and `hashFiles()` tested: a directory at
     /// an input path does not count.
     fn exists(&self, relative: &str) -> bool {
@@ -436,7 +481,7 @@ impl PacketRun {
 
     /// `ripr ARGS` from the workspace root, its output in the job log.
     fn ripr(&self, args: &[String]) -> StageResult {
-        self.spawn(args, Stdio::inherit())
+        self.spawn(args, None)
     }
 
     /// `ripr ARGS > OUT`: the file is truncated before the command runs, as
@@ -483,14 +528,19 @@ impl PacketRun {
                 .push(format!("{prefix}ripr {} > {out}", args.join(" ")));
             return Ok(());
         }
-        self.spawn_env(args, Stdio::from(file), env)
+        self.spawn_env(args, Some(file), env)
     }
 
-    fn spawn(&self, args: &[String], stdout: Stdio) -> StageResult {
+    fn spawn(&self, args: &[String], stdout: Option<fs::File>) -> StageResult {
         self.spawn_env(args, stdout, &[])
     }
 
-    fn spawn_env(&self, args: &[String], stdout: Stdio, env: &[(&str, &str)]) -> StageResult {
+    fn spawn_env(
+        &self,
+        args: &[String],
+        stdout: Option<fs::File>,
+        env: &[(&str, &str)],
+    ) -> StageResult {
         match self.spawn_code(args, stdout, env)? {
             Some(0) => Ok(()),
             Some(code) => Err(format!("`ripr {}` exited {code}", args.join(" "))),
@@ -502,11 +552,21 @@ impl PacketRun {
     }
 
     /// Runs one child and returns its exit code (`None` when a signal ended
-    /// it). A recorded run reports `Some(0)`.
+    /// it). A recorded run reports `Some(0)`. `stdout` is the file the child's
+    /// report goes to; `None` sends it to the job log.
+    ///
+    /// Everything the child sends to the job log sits inside a
+    /// `::stop-commands::` window. A child's report and notices quote
+    /// repository text (a path, an assertion, a test name), and a pull request
+    /// can name a file `x<newline>::error::...`, which the runner would
+    /// otherwise read as a workflow command. The child's stderr joins this
+    /// process's stdout so both reach the runner as one ordered stream: the
+    /// runner reads the two pipes independently, so a last stderr line could
+    /// otherwise land after the resume marker.
     fn spawn_code(
         &self,
         args: &[String],
-        stdout: Stdio,
+        stdout: Option<fs::File>,
         env: &[(&str, &str)],
     ) -> Result<Option<i32>, String> {
         if let Some(recorded) = &self.recorded {
@@ -515,25 +575,31 @@ impl PacketRun {
                 .push(format!("ripr {}", args.join(" ")));
             return Ok(Some(0));
         }
+        let token = workflow_command_pause_token();
+        println!("::stop-commands::{token}");
         let _ = std::io::stdout().flush();
         let mut command = Command::new(&self.exe);
         command
             .args(args)
             .current_dir(&self.root)
             .stdin(Stdio::null())
-            .stdout(stdout)
-            .stderr(Stdio::inherit());
+            .stdout(stdout.map_or_else(Stdio::inherit, Stdio::from))
+            .stderr(Stdio::from(std::io::stdout()));
+        if self.quiet {
+            command.env(crate::cli::progress::QUIET_ENV, "1");
+        }
         for (name, value) in env {
             command.env(name, value);
         }
         let shown = format!("ripr {}", args.join(" "));
-        let status = OwnedProcess::spawn(command)
-            .and_then(|mut child| child.wait())
-            .map_err(|err| {
-                format!(
-                    "`{shown}` could not run: {err}; check that command is installed and on PATH"
-                )
-            })?;
+        let status = OwnedProcess::spawn(command).and_then(|mut child| child.wait());
+        // The marker starts its own line even when the child's last line had
+        // no newline; a marker glued to that line would leave every later
+        // command of the step unread.
+        println!("\n::{token}::");
+        let status = status.map_err(|err| {
+            format!("`{shown}` could not run: {err}; check that command is installed and on PATH")
+        })?;
         Ok(status.code())
     }
 
@@ -655,11 +721,15 @@ impl PacketRun {
             },
         );
 
+        // The repo seam SARIF covers every seam in the repository. On a pull
+        // request its alerts on changed lines repeat the diff SARIF's, so a
+        // reviewer saw two or three code-scanning alerts on one line; it is
+        // rendered (and uploaded) only on a manual run of the workflow.
         self.stage(
             "Render RIPR repo seam SARIF",
             When::Success,
             Role::GateCritical,
-            sarif,
+            sarif && !pr,
             |run| {
                 run.mkdir(REPORTS)?;
                 run.ripr_to(
@@ -715,7 +785,7 @@ impl PacketRun {
         );
 
         self.stage(
-            "Evaluate RIPR gate decision",
+            GATE_STAGE,
             When::Always,
             Role::Required,
             !self.settings.gate_mode.is_empty() && self.exists(COMMENTS_JSON),
@@ -1128,7 +1198,7 @@ impl PacketRun {
                     GATE_DECISION,
                     "--receipts-dir",
                     "target/ripr/receipts",
-                    "--out-dir",
+                    "--output-dir",
                     REPORTS,
                 ]))
             },
@@ -1253,7 +1323,7 @@ impl PacketRun {
             "--out",
             "target/ripr/workflow",
         ]);
-        match self.spawn_code(&start, Stdio::inherit(), &[])? {
+        match self.spawn_code(&start, None, &[])? {
             Some(0) => {}
             // Exit 3 is "ripr declined" (docs/EXIT_CODES.md): ripr ran and
             // chose not to start a repair for this seam. That is an expected
@@ -1321,26 +1391,10 @@ impl PacketRun {
         let head_sha = crate::git::run_git(&self.root, &["rev-parse", "--verify", "HEAD^{commit}"])
             .map_err(|err| format!("ripr: cannot resolve HEAD: {err}; run inside a git checkout that has at least one commit"))?;
         let range = format!("{base_sha}...{head_sha}");
-        let diff = git_bytes(
-            &self.root,
-            &[
-                "-c",
-                "core.quotePath=true",
-                "diff",
-                "--binary",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                // Ambient `diff.ignoreSubmodules=all` (or `.gitmodules`
-                // `ignore = all`) would silently empty a gitlink bump (#8209).
-                "--ignore-submodules=none",
-                "--src-prefix=a/",
-                "--dst-prefix=b/",
-                "--unified=3",
-                "--inter-hunk-context=0",
-                &range,
-            ],
-        )
+        // The shared assembly owns the pinned argv (#9365): no restated
+        // flags here, so an ambient rename limit, diff algorithm or
+        // abbreviation cannot change the recorded bytes.
+        let diff = crate::analysis::load_ci_packet_diff_bytes(&self.root, &range)
         .map_err(|err| format!("ripr: git diff failed for {range}: {err}; fetch the base ref (in CI, check out with full history), then rerun"))?;
         crate::output::file_write::write(&self.path("target/ripr/reports/pr.diff"), &diff)
             .map_err(|err| format!("cannot write target/ripr/reports/pr.diff: {err}; check you can write under target/ripr, then rerun"))?;
@@ -1369,7 +1423,7 @@ impl PacketRun {
                     "core.quotePath=true",
                     "diff",
                     "--name-only",
-                    "--ignore-submodules=none",
+                    crate::git::SUBMODULE_POINTERS_ONLY,
                     "-z",
                     &range,
                 ],
@@ -1482,6 +1536,11 @@ impl PacketRun {
     }
 
     fn evaluate_gate(&mut self) -> StageResult {
+        // #14081: the gate's own refusal of an unknown mode, as the step's
+        // error, instead of a child command line and an exit code.
+        if let Some(verdict) = GateVerdict::from_mode(&self.settings.gate_mode) {
+            return Err(verdict.annotation());
+        }
         self.mkdir(REPORTS)?;
         let mut argv = args(&[
             "gate",
@@ -1512,7 +1571,15 @@ impl PacketRun {
         if !self.settings.gate_baseline.is_empty() {
             argv.extend(args(&["--baseline", &self.settings.gate_baseline]));
         }
-        self.ripr(&argv)
+        let code = self.spawn_code(&argv, None, &[])?;
+        // #14841: a blocked gate keeps exit 3 for the packet.
+        self.gate_blocked = code == Some(3);
+        gate_stage_result(
+            code,
+            &argv,
+            &self.settings.gate_mode,
+            fs::read(self.path(GATE_DECISION)).ok().as_deref(),
+        )
     }
 
     fn pr_evidence_ledger(&mut self) -> StageResult {
@@ -1806,6 +1873,44 @@ struct DiffReceipt<'a> {
     sha256: &'a str,
 }
 
+/// The gate step's result for the child's exit `code` (#14081). A failing
+/// exit is worded from the decision the child just wrote, so the step's
+/// `::error` annotation states the verdict. The decision is used only when
+/// it belongs to this run: it must be readable, name this run's mode, and
+/// state the status that exit code means (3 blocked, 2 config_error per
+/// docs/EXIT_CODES.md). Anything else keeps the command line and exit code.
+fn gate_stage_result(
+    code: Option<i32>,
+    argv: &[String],
+    gate_mode: &str,
+    decision: Option<&[u8]>,
+) -> StageResult {
+    let shown = format!("`ripr {}`", argv.join(" "));
+    let code = match code {
+        Some(0) => return Ok(()),
+        Some(code) => code,
+        None => return Err(format!("{shown} was terminated by a signal")),
+    };
+    let verdict = decision
+        .and_then(|bytes| serde_json::from_slice::<Value>(bytes).ok())
+        .filter(|decision| decision["mode"].as_str() == Some(gate_mode))
+        .and_then(|decision| GateVerdict::from_decision(&decision))
+        .filter(|verdict| {
+            matches!(
+                (code, verdict),
+                (3, GateVerdict::Blocked { .. }) | (2, GateVerdict::ConfigError { .. })
+            )
+        });
+    Err(match verdict {
+        Some(verdict) => verdict.annotation(),
+        // #14841's wording when the decision cannot state the block itself.
+        None if code == 3 => {
+            format!("{shown} exited 3: the gate blocked; see target/ripr/reports/gate-decision.md")
+        }
+        None => format!("{shown} exited {code}"),
+    })
+}
+
 fn args(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_string()).collect()
 }
@@ -1897,6 +2002,19 @@ fn recorded_labels(path: &Path) -> Vec<String> {
         .collect()
 }
 
+/// A fresh resume token for one `::stop-commands::` window. The pull request's
+/// content is fixed before the run, so a token it cannot predict is one it
+/// cannot print; `RandomState` draws its keys from the operating system.
+fn workflow_command_pause_token() -> String {
+    use std::hash::{BuildHasher, Hasher};
+    let draw = || {
+        std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish()
+    };
+    format!("ripr-{:016x}{:016x}", draw(), draw())
+}
+
 /// Workflow-command data encoding for an `::error` message.
 fn workflow_data(text: &str) -> String {
     text.replace('%', "%25")
@@ -1918,6 +2036,8 @@ pub(super) fn recorded_commands(root: &Path, settings: CiSettings) -> (Vec<Strin
         seen: Vec::new(),
         top_seam: None,
         failed: Vec::new(),
+        gate_blocked: false,
+        quiet: false,
         recorded: Some(std::cell::RefCell::new(Vec::new())),
     };
     run.all_stages();
@@ -1941,6 +2061,8 @@ pub(super) fn stage_table() -> Vec<(String, When, Role)> {
         seen: Vec::new(),
         top_seam: None,
         failed: Vec::new(),
+        gate_blocked: false,
+        quiet: false,
         recorded: Some(std::cell::RefCell::new(Vec::new())),
     };
     run.all_stages();
@@ -2052,6 +2174,7 @@ mod tests {
             Ok(CiPacketOptions {
                 root: PathBuf::from("."),
                 steps: Vec::new(),
+                quiet: false,
             })
         );
         assert_eq!(
@@ -2070,6 +2193,14 @@ mod tests {
                 "Capture pull request diff",
                 "Run RIPR PR guidance report"
             ]))
+        );
+        assert_eq!(
+            parse_ci_packet_options(&args(&["--quiet", "--root", "repo"])).map(|options| (
+                options.quiet,
+                options.root,
+                options.steps
+            )),
+            Ok((true, PathBuf::from("repo"), Vec::new()))
         );
         assert!(matches!(
             parse_ci_packet_options(&args(&["--base", "main"])),
@@ -2172,7 +2303,6 @@ mod tests {
             "ripr review-comments --root . --base origin/main --head HEAD --check-output target/ripr/pr/check.json --out target/ripr/review/comments.json",
             "ripr pr-comments plan --root . --pr-guidance target/ripr/review/comments.json --mode inline --event-name pull_request --pull-request 7 --head-repo owner/repo --base-repo owner/repo --out target/ripr/review/comment-publish-plan.json --out-md target/ripr/review/comment-publish-plan.md --existing-comments target/ripr/review/existing-comments.json --token-available --write-permission",
             "ripr check --root . --diff target/ripr/reports/pr.diff --format sarif > target/ripr/reports/ripr-findings.sarif",
-            "ripr check --root . --mode ready --format repo-sarif > target/ripr/reports/ripr-seams.sarif",
             "ripr check --root . --mode ready --format repo-badge-json > target/ripr/reports/repo-ripr-badge.json",
             "ripr check --root . --mode ready --format repo-badge-shields > target/ripr/reports/repo-ripr-badge-shields.json",
             "ripr gate evaluate --root . --pr-guidance target/ripr/review/comments.json --mode acknowledgeable --out target/ripr/reports/gate-decision.json --out-md target/ripr/reports/gate-decision.md --repo-exposure target/ripr/reports/repo-exposure.json --labels-json target/ci/labels.json --sarif-policy target/ripr/reports/sarif-policy.json --agent-verify target/ripr/workflow/agent-verify.json --agent-receipt target/ripr/reports/agent-receipt.json --recommendation-calibration target/ripr/reports/recommendation-calibration.json --mutation-calibration target/ripr/reports/mutation-calibration.json --baseline .ripr/gate-baseline.json",
@@ -2192,7 +2322,7 @@ mod tests {
             "ripr assistant-loop health --root . --proof target/ripr/reports/test-oracle-assistant-proof.json --out target/ripr/reports/assistant-loop-health.json --out-md target/ripr/reports/assistant-loop-health.md",
             "ripr first-action --root . --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md --pr-guidance target/ripr/review/comments.json --assistant-proof target/ripr/reports/test-oracle-assistant-proof.json --ledger target/ripr/reports/pr-evidence-ledger.json --baseline-delta target/ripr/reports/baseline-debt-delta.json --receipt target/ripr/reports/agent-receipt.json --gate-decision target/ripr/reports/gate-decision.json --coverage-frontier target/ripr/reports/coverage-grip-frontier.json --editor-context target/ripr/workflow/evidence-context.json",
             "ripr pr-review front-panel --root . --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md --pr-guidance target/ripr/review/comments.json --first-action target/ripr/reports/first-useful-action.json --assistant-proof target/ripr/reports/test-oracle-assistant-proof.json --assistant-health target/ripr/reports/assistant-loop-health.json --ledger target/ripr/reports/pr-evidence-ledger.json --baseline-delta target/ripr/reports/baseline-debt-delta.json --zero-status target/ripr/reports/ripr-zero-status.json --gate-decision target/ripr/reports/gate-decision.json --recommendation-calibration target/ripr/reports/recommendation-calibration.json --mutation-calibration target/ripr/reports/mutation-calibration.json --coverage-frontier target/ripr/reports/coverage-grip-frontier.json --receipt target/ripr/reports/agent-receipt.json",
-            "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
+            "ripr first-pr --root . --base origin/main --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports",
             "ripr reports index --root . --reports-dir target/ripr/reports --review-dir target/ripr/review --receipts-dir target/ripr/receipts --workflow-dir target/ripr/workflow --agent-dir target/ripr/agent --pilot-dir target/ripr/pilot --ci-dir target/ci --out target/ripr/reports/index.json --out-md target/ripr/reports/index.md",
             "ripr agent status --root . --json > target/ripr/workflow/agent-status.json",
             "ripr agent status --root . > target/ripr/workflow/agent-status.md",
@@ -2200,6 +2330,77 @@ mod tests {
             "ripr agent review-summary --root . > target/ripr/workflow/agent-review-summary.md",
         ];
         assert_eq!(packet.lines().collect::<Vec<_>>(), expected);
+        Ok(())
+    }
+
+    /// #14081: a failing gate exit is worded from the decision the child
+    /// wrote, so the step's `::error` annotation states the verdict.
+    #[test]
+    fn a_failing_gate_step_states_the_decision_it_wrote() {
+        let argv = args(&["gate", "evaluate", "--mode", "acknowledgeable"]);
+        let fallback = |code: i32| {
+            let pointer = if code == 3 {
+                ": the gate blocked; see target/ripr/reports/gate-decision.md"
+            } else {
+                ""
+            };
+            Err(format!(
+                "`ripr gate evaluate --mode acknowledgeable` exited {code}{pointer}"
+            ))
+        };
+        let blocked = br#"{"status":"blocked","mode":"acknowledgeable","summary":{"blocking":1},"decisions":[{"decision":"blocking","gate_reason":"no label","placement":{"path":"src/a.rs","line":4}}]}"#;
+        let config = br#"{"status":"config_error","mode":"acknowledgeable","config_errors":["labels are unreadable"]}"#;
+        let result = |code, decision: Option<&[u8]>| {
+            gate_stage_result(code, &argv, "acknowledgeable", decision)
+        };
+
+        assert_eq!(result(Some(0), Some(blocked)), Ok(()));
+        assert_eq!(
+            result(Some(3), Some(blocked)),
+            Err("RIPR gate blocked this pull request under acknowledgeable mode: 1 blocking gap; first: no label [src/a.rs:4]. See the gate verdict at the top of the job summary, or gate-decision.md in the ripr-reports artifact.".to_string())
+        );
+        assert_eq!(
+            result(Some(2), Some(config)),
+            Err("RIPR gate could not evaluate this pull request under acknowledgeable mode (configuration error, not a finding about the code): labels are unreadable".to_string())
+        );
+
+        // A decision that is not this run's keeps the command line and exit
+        // code: the status the exit code means must be the one written, the
+        // mode must be this run's, and the document must be readable.
+        assert_eq!(result(Some(2), Some(blocked)), fallback(2));
+        assert_eq!(result(Some(3), Some(config)), fallback(3));
+        assert_eq!(result(Some(1), Some(blocked)), fallback(1));
+        assert_eq!(result(Some(3), None), fallback(3));
+        assert_eq!(result(Some(3), Some(b"{not json")), fallback(3));
+        assert_eq!(
+            gate_stage_result(Some(3), &argv, "calibrated-gate", Some(blocked)),
+            fallback(3)
+        );
+        assert_eq!(
+            result(None, Some(blocked)),
+            Err(
+                "`ripr gate evaluate --mode acknowledgeable` was terminated by a signal"
+                    .to_string()
+            )
+        );
+    }
+
+    /// #14081: an unknown `RIPR_GATE_MODE` fails the gate step with the
+    /// gate's own refusal and runs no gate command; the rest of the packet
+    /// still runs.
+    #[test]
+    fn an_unknown_gate_mode_fails_the_gate_step_without_running_it() -> Result<(), String> {
+        let (packet, failed) = recorded_packet_with(CiSettings {
+            gate_mode: "visible_only".to_string(),
+            ..full_packet_settings()
+        })?;
+        assert_eq!(failed, ["Evaluate RIPR gate decision"]);
+        assert!(!packet.contains("ripr gate evaluate"), "{packet}");
+        assert!(packet.contains("ripr pr-ledger record "), "{packet}");
+
+        let (packet, failed) = recorded_full_packet()?;
+        assert!(failed.is_empty(), "{failed:?}");
+        assert!(packet.contains("ripr gate evaluate "), "{packet}");
         Ok(())
     }
 
@@ -2263,6 +2464,40 @@ mod tests {
         assert!(line(&manual, "ripr first-pr ").contains(" --base origin/trunk "));
         assert!(!manual.contains("ripr review-comments "), "{manual}");
         assert!(!line(&manual, "ripr policy history ").contains("--pr-number"));
+        Ok(())
+    }
+
+    /// On a pull request the repo seam SARIF repeated the diff SARIF's alerts
+    /// on every changed line (a second code-scanning category over the same
+    /// lines), so it renders only on a manual run. The diff SARIF stays on
+    /// pull requests, and `RIPR_UPLOAD_SARIF=false` still turns both off.
+    #[test]
+    fn repo_seam_sarif_renders_on_manual_runs_only() -> Result<(), String> {
+        const SEAMS: &str = "--format repo-sarif > target/ripr/reports/ripr-seams.sarif";
+        const FINDINGS: &str = "--format sarif > target/ripr/reports/ripr-findings.sarif";
+        let (pr, failed) = recorded_full_packet()?;
+        assert!(failed.is_empty(), "{failed:?}");
+        assert!(pr.contains(FINDINGS), "{pr}");
+        assert!(!pr.contains(SEAMS), "{pr}");
+
+        let manual_settings = || CiSettings {
+            event_name: "workflow_dispatch".to_string(),
+            base_ref: String::new(),
+            pr_number: String::new(),
+            event_number: String::new(),
+            ..full_packet_settings()
+        };
+        let (manual, failed) = recorded_packet_with(manual_settings())?;
+        assert!(failed.is_empty(), "{failed:?}");
+        assert!(manual.contains(SEAMS), "{manual}");
+        assert!(!manual.contains(FINDINGS), "{manual}");
+
+        let (off, failed) = recorded_packet_with(CiSettings {
+            upload_sarif: "false".to_string(),
+            ..manual_settings()
+        })?;
+        assert!(failed.is_empty(), "{failed:?}");
+        assert!(!off.contains(SEAMS), "{off}");
         Ok(())
     }
 
@@ -2442,6 +2677,8 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         run.all_stages();
@@ -2491,6 +2728,8 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
+            quiet: false,
             recorded: None,
         };
         let result = run.agent_loop("seam-1");
@@ -2546,6 +2785,8 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         empty_run.all_stages();
@@ -2580,6 +2821,8 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         based_run.all_stages();
@@ -2595,6 +2838,118 @@ mod tests {
                 .any(|line| line.contains("first-pr") && line.contains("--base origin/trunk")),
             "a derivable base must keep producing the origin/<base> command: {based_commands:?}"
         );
+        Ok(())
+    }
+
+    /// Runs the real gate stage against a child that exits `code`, optionally
+    /// after another required step failed, and returns the packet outcome.
+    /// A freshly written script can hit `ETXTBSY` ("Text file busy", os error
+    /// 26) when another test thread forks while the write handle is still
+    /// inherited; that spawn error is retried a few times, never an exit code.
+    #[cfg(unix)]
+    fn gate_stage_outcome(
+        code: i32,
+        earlier_required_failure: bool,
+        tag: &str,
+    ) -> Result<(Vec<String>, Result<(), CommandError>), String> {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!(
+            "ripr-ci-packet-gate-exit-{tag}-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        let exe = root.join("fake-ripr.sh");
+        fs::write(&exe, format!("#!/bin/sh\nexit {code}\n")).map_err(|err| err.to_string())?;
+        fs::set_permissions(&exe, fs::Permissions::from_mode(0o755))
+            .map_err(|err| err.to_string())?;
+        let mut attempt = 0;
+        let result = loop {
+            attempt += 1;
+            let mut run = PacketRun {
+                root: root.clone(),
+                exe: exe.clone(),
+                settings: CiSettings {
+                    gate_mode: "baseline-check".to_string(),
+                    ..CiSettings::default()
+                },
+                only: Vec::new(),
+                seen: Vec::new(),
+                top_seam: None,
+                failed: Vec::new(),
+                gate_blocked: false,
+                quiet: false,
+                recorded: None,
+            };
+            if earlier_required_failure {
+                run.stage(
+                    "Capture pull request diff",
+                    When::Always,
+                    Role::Required,
+                    true,
+                    |_| Err("diff capture failed".to_string()),
+                );
+            }
+            let mut text_file_busy = false;
+            run.stage(GATE_STAGE, When::Always, Role::Required, true, |run| {
+                let result = run.evaluate_gate();
+                text_file_busy = matches!(&result, Err(err) if err.contains("(os error 26)"));
+                result
+            });
+            if text_file_busy && attempt < 5 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+            break Ok((run.failed.clone(), run.outcome()));
+        };
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
+
+    /// A blocked gate (child exit 3) is the packet's decision exit 3, not the
+    /// could-not-complete exit 2 an operational failure gets.
+    #[cfg(unix)]
+    #[test]
+    fn blocked_gate_makes_the_packet_exit_3() -> Result<(), String> {
+        let (failed, outcome) = gate_stage_outcome(3, false, "blocked")?;
+        assert_eq!(failed, vec![GATE_STAGE.to_string()]);
+        let error = outcome.err().ok_or("a blocked gate must fail the packet")?;
+        assert_eq!(error.exit_code(), 3, "{}", error.message());
+        assert!(
+            error.message().contains("gate-decision.md"),
+            "{}",
+            error.message()
+        );
+        Ok(())
+    }
+
+    /// Discriminating negative: a gate that could not complete (exit 2) stays
+    /// a could-not-complete packet failure.
+    #[cfg(unix)]
+    #[test]
+    fn gate_config_error_keeps_the_packet_at_exit_2() -> Result<(), String> {
+        let (failed, outcome) = gate_stage_outcome(2, false, "config-error")?;
+        assert_eq!(failed, vec![GATE_STAGE.to_string()]);
+        let error = outcome.err().ok_or("a failed gate must fail the packet")?;
+        assert_eq!(error.exit_code(), 2, "{}", error.message());
+        assert!(error.message().contains(GATE_STAGE), "{}", error.message());
+        Ok(())
+    }
+
+    /// A blocked gate never hides an operational failure: when another
+    /// required step failed too, the packet could not complete (exit 2).
+    #[cfg(unix)]
+    #[test]
+    fn blocked_gate_after_a_failed_required_step_exits_2() -> Result<(), String> {
+        let (failed, outcome) = gate_stage_outcome(3, true, "blocked-and-failed")?;
+        assert_eq!(
+            failed,
+            vec![
+                "Capture pull request diff".to_string(),
+                GATE_STAGE.to_string()
+            ]
+        );
+        let error = outcome.err().ok_or("the packet must fail")?;
+        assert_eq!(error.exit_code(), 2, "{}", error.message());
         Ok(())
     }
 
@@ -2619,6 +2974,8 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         run.stage("Required", When::Always, Role::Required, true, |_| {
@@ -2673,6 +3030,8 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
+            quiet: false,
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         }
     }
@@ -2896,6 +3255,8 @@ mod tests {
             seen: Vec::new(),
             top_seam: None,
             failed: Vec::new(),
+            gate_blocked: false,
+            quiet: false,
             recorded: None,
         };
         let result = run.capture_pull_request_diff();

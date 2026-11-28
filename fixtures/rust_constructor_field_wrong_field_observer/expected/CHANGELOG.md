@@ -500,3 +500,51 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_constructor_field_wrong_field_observer (40)
+
+Reason:
+RIPR-SPEC-0162: the check digest states the analyzer limit once; a Why hint that the Analyzer limit line repeats word for word is dropped (#14308)
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_wrong_field_observer (41)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_constructor_field_wrong_field_observer (42)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_constructor_field_wrong_field_observer (43)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_constructor_field_wrong_field_observer --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

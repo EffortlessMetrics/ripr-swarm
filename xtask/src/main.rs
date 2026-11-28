@@ -29,6 +29,7 @@ mod blind_journey_execute;
 mod branch_inventory;
 mod cache;
 mod cache_payload_tamper_recovery;
+mod cargo_job_cap;
 mod check_fast_cli;
 mod check_fast_selector;
 mod cli_exit_contract;
@@ -47,9 +48,15 @@ mod generation_pins;
 mod kani_lane;
 mod public_proof;
 mod publish_rehearsal;
+mod publish_stage;
+mod release_authority;
+mod release_crates_io_transaction;
+mod release_github_transaction;
+mod source_package_contents;
 // #4544: one definition of the gap `source_subject` contract, shared with the
 // ripr crate's LSP validator without widening ripr's public API.
 mod current_state;
+mod dx_trend;
 mod exact_candidate_harness;
 #[path = "../../crates/ripr/src/output/gap_source_subject/shared.rs"]
 mod gap_source_subject_shared;
@@ -70,8 +77,24 @@ mod output_properties;
 mod package_qualification;
 mod packaged_repair_receipt;
 mod policy;
+mod policy_root;
+pub(crate) use policy::parse_clippy_lints_ledger;
+#[cfg(test)]
+pub(crate) use policy::parse_workspace_lints_section;
+pub(crate) use policy_root::{
+    CiLedgerDocument, CiLedgerTable, check_lint_policy, ci_expect_top_string,
+    ci_lane_whitelist_violations, ci_required_non_empty_table_string, ci_required_table_array,
+    ci_required_table_id, ci_string_value, ci_tables, parse_ci_ledger_document,
+    read_ci_ledger_document, unquote_toml_basic_string,
+};
+#[cfg(test)]
+pub(crate) use policy_root::{
+    collect_clippy_debt_violations, collect_lint_policy_violations, parse_msrv_triple,
+    planned_blocker_text_is_msrv_only,
+};
 #[cfg(test)]
 mod portable_consumer;
+mod pr_admission_preflight;
 mod precommit_formatting;
 mod product_gate_plan;
 mod product_route_parity;
@@ -103,6 +126,7 @@ mod work_result_identity;
 mod work_selection_identity;
 mod work_synthesis_identity;
 mod work_wave_identity;
+mod workspace_format;
 pub(crate) use types::*;
 mod exact_schema_json;
 mod reports;
@@ -142,27 +166,27 @@ pub(crate) use dogfood::{
     DogfoodReportPacketIndexRun, DogfoodRun, DogfoodSurfaceProjectionAlignmentRun,
     DogfoodTypescriptPreviewRepairLoopRun, DogfoodTypescriptPreviewRepairLoopScenario,
     DogfoodUserSurfaceProjectionRun, GENERATED_CI_COCKPIT_COMMAND,
-    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FIRST_PR_REPAIR,
-    GENERATED_CI_FRONT_PANEL_REPAIR, GENERATED_CI_PACKET_INDEX_REPAIR,
-    TypeScriptBunUbCalibrationCase, artifact_router_path_violation,
-    bun_ub_calibration_report_markdown, bun_ub_calibration_report_value,
-    bun_ub_preview_summary_markdown, bun_ub_preview_summary_report_value,
-    configured_bridge_inventory_markdown, configured_bridge_inventory_report_value,
-    cross_language_oracle_graph_cases, cross_language_oracle_graph_corpus_path,
-    dogfood_bun_ub_cross_language_scenarios, dogfood_class_counts,
-    dogfood_editor_first_pr_bridge_run, dogfood_editor_first_pr_bridge_scenarios,
-    dogfood_editor_gap_cockpit_run, dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families,
-    dogfood_first_action_run, dogfood_first_action_scenarios, dogfood_first_pr_metrics,
-    dogfood_first_pr_run, dogfood_first_pr_scenarios, dogfood_gate_adoption_run,
-    dogfood_gate_adoption_scenarios, dogfood_gate_result,
-    dogfood_generated_ci_cockpit_run_from_surfaces, dogfood_language_preview_run,
-    dogfood_language_preview_scenarios, dogfood_pr_inline_comment_run,
-    dogfood_pr_inline_comment_scenarios, dogfood_pr_review_front_panel_run,
-    dogfood_pr_review_front_panel_scenarios, dogfood_push_python_quality_ratio_json,
-    dogfood_push_python_ranked_findings_json, dogfood_python_no_action_eval_scenarios,
-    dogfood_python_ranked_findings, dogfood_python_real_repo_eval_scenarios,
-    dogfood_python_static_limit_eval_scenarios, dogfood_report_json, dogfood_report_markdown,
-    dogfood_report_packet_index_run, dogfood_report_packet_index_scenarios, dogfood_report_status,
+    GENERATED_CI_FIRST_ACTION_REPAIR, GENERATED_CI_FRONT_PANEL_REPAIR,
+    GENERATED_CI_PACKET_INDEX_REPAIR, TypeScriptBunUbCalibrationCase,
+    artifact_router_path_violation, bun_ub_calibration_report_markdown,
+    bun_ub_calibration_report_value, bun_ub_preview_summary_markdown,
+    bun_ub_preview_summary_report_value, configured_bridge_inventory_markdown,
+    configured_bridge_inventory_report_value, cross_language_oracle_graph_cases,
+    cross_language_oracle_graph_corpus_path, dogfood_bun_ub_cross_language_scenarios,
+    dogfood_class_counts, dogfood_editor_first_pr_bridge_run,
+    dogfood_editor_first_pr_bridge_scenarios, dogfood_editor_gap_cockpit_run,
+    dogfood_editor_gap_cockpit_scenarios, dogfood_failed_families, dogfood_first_action_run,
+    dogfood_first_action_scenarios, dogfood_first_pr_metrics, dogfood_first_pr_run,
+    dogfood_first_pr_scenarios, dogfood_gate_adoption_run, dogfood_gate_adoption_scenarios,
+    dogfood_gate_result, dogfood_generated_ci_cockpit_run_from_surfaces,
+    dogfood_language_preview_run, dogfood_language_preview_scenarios,
+    dogfood_pr_inline_comment_run, dogfood_pr_inline_comment_scenarios,
+    dogfood_pr_review_front_panel_run, dogfood_pr_review_front_panel_scenarios,
+    dogfood_push_python_quality_ratio_json, dogfood_push_python_ranked_findings_json,
+    dogfood_python_no_action_eval_scenarios, dogfood_python_ranked_findings,
+    dogfood_python_real_repo_eval_scenarios, dogfood_python_static_limit_eval_scenarios,
+    dogfood_report_json, dogfood_report_markdown, dogfood_report_packet_index_run,
+    dogfood_report_packet_index_scenarios, dogfood_report_status,
     dogfood_typescript_false_actionable_audit_summary,
     dogfood_typescript_preview_repair_loop_scenarios, finding_alignment_verify_command_is_missing,
     front_panel_case_inputs, json_number_after, parse_bun_ub_preview_summary_args,
@@ -312,18 +336,15 @@ pub(crate) use fixture_contracts::{
     validate_swarm_plan_packet_fixture_corpus,
     validate_typescript_bun_ub_calibration_fixture_corpus_at,
 };
-use no_panic::{
-    contains_word, parse_string_value, parse_toml_key_value, parse_usize_value,
-    strip_toml_value_comment,
-};
+use no_panic::{contains_word, parse_string_value, parse_toml_key_value};
 use policy::{
     check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist,
     check_cli_exit_contract, check_covered_by, check_doc_roles, check_droid_review_config,
     check_executable_files, check_file_policy, check_local_context, check_network_policy,
-    check_no_panic_family, check_packaged_readme, check_positioning_language, check_process_policy,
-    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_user_text, check_workflows, parse_workspace_lints_section,
-    qualify_python_wheelhouse,
+    check_no_panic_family, check_package_content, check_packaged_readme,
+    check_positioning_language, check_process_policy, check_product_copy, check_proof_packs,
+    check_release_targets, check_static_language, check_text_encoding, check_user_text,
+    check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -593,7 +614,11 @@ fn ci_fast() -> Result<(), String> {
 }
 
 fn ci_fast_with_envs(envs: &[(&str, &str)]) -> Result<(), String> {
-    run_with_envs("cargo", &["fmt", "--check"], envs)?;
+    workspace_format::run(workspace_format::FormatStep {
+        check: true,
+        envs,
+        diagnostics: None,
+    })?;
     run_with_envs("cargo", &["check", "--workspace", "--all-targets"], envs)?;
     run_with_envs("cargo", &["test", "--workspace"], envs)?;
     run_policy_checks()
@@ -647,6 +672,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-ripr-agent-disposition",
     "check-proof-packs",
     "check-release-targets",
+    "check-package-content",
     "check-dependencies",
     "check-process-policy",
     "check-network-policy",
@@ -662,11 +688,17 @@ fn check_identity_registry() -> Result<(), String> {
     identity_registry::check_identity_registry()
 }
 
-fn precommit() -> Result<(), String> {
-    precommit_policy(false)
+/// Local `precommit` policy leg. `coverage` comes from the precommit change
+/// set: a diff that cannot change any test-valued `covered_by` listing skips
+/// the test-binary builds that enumeration needs (#13705).
+fn precommit(coverage: policy::CoverageEnumeration) -> Result<(), String> {
+    precommit_policy(false, coverage)
 }
 
-fn precommit_policy(collect_all: bool) -> Result<(), String> {
+fn precommit_policy(
+    collect_all: bool,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
     ensure_reports_dir()?;
     let preflight_receipt = std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT");
     // CI rejects stale/partial proof before compilation-bearing file policy.
@@ -675,7 +707,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
         repo_policy::verify_preflight(Path::new(path))?;
     }
     precommit_formatting::run(collect_all, || {
-        run("cargo", &["fmt", "--check"]).map(|_| ())
+        workspace_format::run(workspace_format::FormatStep::new(true))
     })?;
     if collect_all {
         policy::check_policy_all()?;
@@ -690,7 +722,7 @@ fn precommit_policy(collect_all: bool) -> Result<(), String> {
     // the remaining checks run and the instrument failure is returned before
     // any passing report is published.
     let mut deferred = None;
-    check_file_policy_deferring(&mut deferred)?;
+    check_file_policy_deferring(&mut deferred, coverage)?;
     let remaining = precommit_policy_remaining(collect_all, preflight_receipt);
     finish_precommit_policy(deferred, remaining, collect_all)
 }
@@ -703,8 +735,11 @@ const PRECOMMIT_INSTRUMENT_PREFIX: &str =
 
 /// `check_file_policy`, except that an instrument failure (cargo lock wait or
 /// timeout) is stored in `deferred` instead of returned.
-fn check_file_policy_deferring(deferred: &mut Option<String>) -> Result<(), String> {
-    match check_file_policy() {
+fn check_file_policy_deferring(
+    deferred: &mut Option<String>,
+    coverage: policy::CoverageEnumeration,
+) -> Result<(), String> {
+    match policy::check_file_policy_with(coverage) {
         Err(error) if policy::is_covered_by_instrument_failure(&error) => {
             *deferred = Some(error);
             Ok(())
@@ -782,6 +817,7 @@ fn precommit_policy_remaining(
     check_ripr_agent_disposition()?;
     check_proof_packs()?;
     check_release_targets()?;
+    check_package_content()?;
     check_dependencies()?;
     if !collect_all {
         check_process_policy()?;
@@ -877,23 +913,26 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     let mut skipped = Vec::new();
 
     let mut child_diagnostics = Vec::new();
+    let mut impact_disclosure = String::new();
     if let Err(error) = check_fast_gates(
+        repository_root,
         changed,
         &categories,
         &mut ran,
         &mut skipped,
         &mut child_diagnostics,
+        &mut impact_disclosure,
     ) {
         return check_fast_failure_report(&error, &child_diagnostics, |body| {
             write_report(
                 "check-fast.md",
-                &format!("{body}\n{}", selection.diagnostic()),
+                &check_fast_failure_body(body, &selection.diagnostic(), &impact_disclosure),
             )
         });
     }
 
     let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n{}\nRan:\n{}\n\nSkipped:\n{}\n",
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n{}\nRan:\n{}\n\nSkipped:\n{}\n\n{}\nTests: not run by check-fast (neither workspace nor impacted-package tests); an impacted Clippy pass is local feedback only, not full workspace or test readiness.\n",
         selection.diagnostic(),
         ran.iter()
             .map(|g| format!("- {g}"))
@@ -907,7 +946,8 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
                 .map(|g| format!("- {g}"))
                 .collect::<Vec<_>>()
                 .join("\n")
-        }
+        },
+        impact_disclosure
     );
     write_report(
         "check-fast.md",
@@ -916,14 +956,20 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
 }
 
 fn check_fast_gates(
+    repository_root: &Path,
     changed: &[String],
     categories: &ChangedFileCategories,
     ran: &mut Vec<&'static str>,
     skipped: &mut Vec<&'static str>,
     child_diagnostics: &mut Vec<run::CommandDiagnostic>,
+    impact_disclosure: &mut String,
 ) -> Result<(), String> {
     // Always run: these are cheap and catch cross-cutting drift.
-    run::run_diagnostic("cargo", &["fmt", "--check"], child_diagnostics)?;
+    workspace_format::run(workspace_format::FormatStep {
+        check: true,
+        envs: &[],
+        diagnostics: Some(&mut *child_diagnostics),
+    })?;
     ran.push("fmt --check");
     check_static_language()?;
     ran.push("check-static-language");
@@ -956,20 +1002,32 @@ fn check_fast_gates(
         ran.push("check-allow-attributes");
         check_file_policy()?;
         ran.push("check-file-policy");
-        run::run_diagnostic(
-            "cargo",
-            &[
-                "clippy",
-                "--workspace",
-                "--all-targets",
-                "--",
-                "-D",
-                "warnings",
-            ],
-            child_diagnostics,
-        )?;
-        ran.push("clippy");
+        // #14644 D: scope Clippy to the impacted packages (reverse
+        // dependents included) through the shared precommit planner.
+        // Shared surfaces, unknown owners and any planner failure widen
+        // or fail closed; a metadata failure is an error, never a
+        // silently narrower or skipped pass.
+        let plan = dispatch::precommit_v2::check_fast_impact_plan(repository_root, changed)?;
+        *impact_disclosure = dispatch::precommit_v2::impact_plan_disclosure(&plan);
+        let invocations = dispatch::precommit_v2::clippy_invocations(repository_root, &plan);
+        if invocations.is_empty() {
+            // Fail closed: `rust_src` with an empty plan (for example an
+            // empty package graph, #8233) cannot establish coverage, so
+            // refuse instead of reporting a pass with Clippy skipped.
+            return Err(format!(
+                "check-fast impacted Clippy plan is empty for a Rust change: {impact_disclosure}"
+            ));
+        } else {
+            for args in &invocations {
+                let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+                run::run_diagnostic("cargo", &arg_refs, child_diagnostics)?;
+            }
+            ran.push("clippy");
+        }
     } else {
+        *impact_disclosure =
+            "Impact plan: no Rust surface changed; Clippy skipped (no impacted package)."
+                .to_string();
         skipped.extend_from_slice(&[
             "check-no-panic-family",
             "check-allow-attributes",
@@ -1033,6 +1091,14 @@ fn check_fast_diagnostics(diagnostics: &[run::CommandDiagnostic]) -> String {
     )
 }
 
+fn check_fast_failure_body(body: &str, diagnostic: &str, impact_disclosure: &str) -> String {
+    if impact_disclosure.is_empty() {
+        format!("{body}\n{diagnostic}")
+    } else {
+        format!("{body}\n{diagnostic}\n{impact_disclosure}")
+    }
+}
+
 fn check_fast_failure_report(
     error: &str,
     diagnostics: &[run::CommandDiagnostic],
@@ -1091,20 +1157,30 @@ fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
         // The retained Rust gates include workspace/all-target Clippy and
         // test-source policy. Include package tests, examples and build scripts,
         // with anchored roots so fixture lookalikes keep their own category.
-        rust_src: files.iter().any(|f| {
-            f == "Cargo.lock"
-                || f == "Cargo.toml"
-                || f.ends_with("/Cargo.toml")
-                || (f.ends_with(".rs")
-                    && ["crates/ripr/", "xtask/", "tools/repo-policy/"]
+        rust_src: dispatch::precommit_v2::workspace_widening_reason(files).is_some()
+            || files.iter().any(|f| {
+                f == "Cargo.lock"
+                    || f == "Cargo.toml"
+                    || f.ends_with("/Cargo.toml")
+                    || (f.ends_with(".rs")
+                        && [
+                            "crates/ripr/",
+                            "crates/ripr-contract/",
+                            "xtask/",
+                            "tools/repo-policy/",
+                        ]
                         .iter()
                         .any(|root| f.starts_with(root)))
-        }),
+            }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files
             .iter()
             .any(|f| f.starts_with("policy/") || f.starts_with(".ripr/")),
-        fixture: files.iter().any(|f| f.starts_with("fixtures/")),
+        // The floor is the fixture gates' denominator: an edit that removes a
+        // line from it must meet the gate that reads it (#15925).
+        fixture: files.iter().any(|f| {
+            f.starts_with("fixtures/") || f == fixture_contracts::FIXTURE_DENOMINATOR_FLOOR_PATH
+        }),
     }
 }
 
@@ -1209,6 +1285,14 @@ mod check_fast_selector_tests {
     }
 
     #[test]
+    fn check_fast_failure_body_carries_impact_disclosure() {
+        let with = check_fast_failure_body("body", "diag", "Impact plan: widened");
+        assert!(with.contains("Impact plan: widened"), "{with}");
+        let without = check_fast_failure_body("body", "diag", "");
+        assert_eq!(without, "body\ndiag");
+    }
+
+    #[test]
     fn workspace_rust_targets_select_existing_rust_gates() {
         for path in [
             "crates/ripr/src/lib.rs",
@@ -1216,6 +1300,8 @@ mod check_fast_selector_tests {
             "crates/ripr/tests/cli_smoke/workflow_directory.rs",
             "crates/ripr/build.rs",
             "crates/ripr/examples/check_diff.rs",
+            "crates/ripr-contract/src/lib.rs",
+            "crates/ripr-contract/tests/contract.rs",
             "xtask/src/main.rs",
             "xtask/tests/spec_format_determinism.rs",
             "xtask/examples/mandatory_partitions.rs",
@@ -1226,6 +1312,14 @@ mod check_fast_selector_tests {
             "Cargo.toml",
             "Cargo.lock",
             "crates/ripr/Cargo.toml",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+            "clippy.toml",
+            ".clippy.toml",
+            "rustfmt.toml",
+            ".cargo/config.toml",
+            "policy/clippy.toml",
+            "policy/lint-policy.toml",
         ] {
             assert!(
                 categorize_changed_files(&[path.to_string()]).rust_src,
@@ -1251,6 +1345,10 @@ mod check_fast_selector_tests {
             assert!(!categories.rust_src, "{path}");
             assert_eq!(categories.fixture, path.starts_with("fixtures/"), "{path}");
         }
+        // #15925: a floor-only edit selects the gate that reads the floor.
+        let floor = categorize_changed_files(&["policy/fixture-denominator-floor.txt".to_string()]);
+        assert!(floor.fixture && floor.policy);
+        assert!(!categorize_changed_files(&["policy/other.txt".to_string()]).fixture);
     }
 
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
@@ -1798,6 +1896,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_generated_clean()?;
     check_proof_packs()?;
     check_release_targets()?;
+    check_package_content()?;
     check_dependencies()?;
     check_process_policy()?;
     check_network_policy()?;
@@ -2056,6 +2155,19 @@ fn check_vsix_inventory(
             shown.join(", ")
         ));
     }
+    let test_input: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry.name.as_str())
+        .filter(|name| is_extension_test_input(name))
+        .collect();
+    if !test_input.is_empty() {
+        let shown: Vec<&str> = test_input.iter().take(5).copied().collect();
+        return Err(format!(
+            "carries {} extension test entries (first: {}); compiled tests, test fixtures and test build configs stay out of the shipped extension (#15216)",
+            test_input.len(),
+            shown.join(", ")
+        ));
+    }
     if entries.len() > max_entries {
         return Err(format!(
             "carries {} entries, above the {max_entries}-entry bound",
@@ -2082,6 +2194,41 @@ fn is_workspace_build_output(name: &str) -> bool {
         return true;
     }
     name.ends_with(".rlib") || name.ends_with(".rmeta")
+}
+
+/// Rejects the extension's own development tests in the packaged extension
+/// (#15216). `tsc -p editors/vscode` compiles `test/**` beside `src/**` into
+/// `out/`, so only `.vscodeignore` keeps `out/test/**` out; this reads the
+/// real archive members instead. Production dependencies under
+/// `extension/node_modules/` are their authors' layout and are not judged.
+fn is_extension_test_input(name: &str) -> bool {
+    let Some(own) = name.strip_prefix("extension/") else {
+        return false;
+    };
+    if own.starts_with("node_modules/") {
+        return false;
+    }
+    match own.rsplit_once('/') {
+        Some((dir, file)) => {
+            if dir.split('/').any(|segment| {
+                matches!(
+                    segment,
+                    "test" | "tests" | "__tests__" | "test-fixtures" | "fixtures"
+                )
+            }) {
+                return true;
+            }
+            [".test.", ".spec."]
+                .iter()
+                .any(|marker| file.contains(marker))
+        }
+        None => {
+            (own.starts_with("tsconfig") && own.ends_with(".json"))
+                || [".test.", ".spec."]
+                    .iter()
+                    .any(|marker| own.contains(marker))
+        }
+    }
 }
 
 /// `vsce package` ships `editors/vscode/LICENSE` as this archive member.
@@ -2633,7 +2780,7 @@ fn make_hook_executable(path: &Path) -> Result<(), String> {
 
 fn shape() -> Result<(), String> {
     ensure_reports_dir()?;
-    run("cargo", &["fmt"])?;
+    workspace_format::run(workspace_format::FormatStep::new(false))?;
     let sorted = sort_allowlist_files()?;
     // Surface the tracked-file rewrites before the contributor commits: a
     // silent `policy/*.txt` / `.ripr/*.txt` rewrite is a surprising diff in
@@ -2674,8 +2821,9 @@ fn commands_report() -> Result<(), String> {
     write_report("commands.json", &commands_report_json(&entries))
 }
 
-fn pr_ready() -> Result<(), String> {
-    let steps = vec![
+fn pr_ready(args: &[String]) -> Result<(), String> {
+    let pr_number = pr_admission_preflight::parse_pr_arg(args)?;
+    let mut steps = vec![
         run_readiness_step(
             "worktree_doctor",
             "cargo xtask worktree doctor",
@@ -2734,6 +2882,15 @@ fn pr_ready() -> Result<(), String> {
             || check_badge_diff_policy().map(|()| ReadinessOutcome::Completed),
         ),
     ];
+    if let Some(number) = pr_number {
+        steps.push(run_readiness_step(
+            "pr_candidate_admission",
+            "cargo xtask pr-ready --pr <number>",
+            "target/ripr/reports/pr-ready.md",
+            true,
+            || pr_admission_preflight::run(number).map(|()| ReadinessOutcome::Completed),
+        ));
+    }
     let status = pr_ready_status(&steps);
     write_report("pr-ready.md", &pr_ready_markdown(&steps))?;
     write_report("pr-ready.json", &pr_ready_json(&steps))?;
@@ -5829,7 +5986,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-generation-pins`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-ripr-agent-disposition`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n- `cargo xtask check-user-text`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-generation-pins`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-doc-roles`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-ripr-agent-disposition`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-package-content`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n- `cargo xtask check-user-text`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -6007,6 +6164,7 @@ fn check_allow_attributes_impl() -> Result<(), String> {
     let guarded = guarded_allow_attribute_lints();
     let mut counts = BTreeMap::<(String, String), Vec<usize>>::new();
 
+    let mut violations = Vec::new();
     for path in tracked_files()? {
         if !path.ends_with(".rs") {
             continue;
@@ -6016,6 +6174,17 @@ fn check_allow_attributes_impl() -> Result<(), String> {
             continue;
         }
         let text = read_text_lossy(file_path)?;
+        // Fixture inputs model other crates and do not inherit the workspace lints.
+        if !is_fixture_path(&path)
+            && !path.starts_with("crates/ripr/tests/fixtures/")
+            && !path.starts_with("tools/repo-policy/tests/fixtures/")
+        {
+            for (line, lint) in unguarded_allows_without_reason(&text, &guarded) {
+                violations.push(format!(
+                    "{path}:{line} allow({lint}) needs a written reason"
+                ));
+            }
+        }
         for (line, attribute) in guarded_allow_attributes_in_text(&text, &guarded) {
             counts
                 .entry((path.clone(), attribute))
@@ -6024,7 +6193,9 @@ fn check_allow_attributes_impl() -> Result<(), String> {
         }
     }
 
-    let violations = allow_attribute_budget_violations(&allowlist, &counts, &guarded);
+    violations.extend(allow_attribute_budget_violations(
+        &allowlist, &counts, &guarded,
+    ));
 
     finish_policy_report(
         PolicyReportSpec {
@@ -14543,7 +14714,7 @@ fn check_architecture() -> Result<(), String> {
             ],
             rerun_command: "cargo xtask check-architecture",
             exception_template: Some(
-                "glob|forbidden_pattern|reason\n!path|forbidden_pattern|reason (scoped exception: a literal tracked-file path, never a glob; suppresses only the exact pattern in exactly that path; an exception that matches no current violation fails the gate as stale)",
+                "glob|forbidden_pattern|reason\n!path|forbidden_pattern|reason (scoped exception: a literal tracked-file path, never a glob; suppresses only the exact pattern in exactly that path; an exception that matches no current violation fails the gate as stale)\n!cfg(test):path|forbidden_pattern|reason (only inside top-level #[cfg(test)] items)",
             ),
         },
         &violations,
@@ -14560,7 +14731,8 @@ fn check_architecture() -> Result<(), String> {
 /// (#4146). An exception that suppresses nothing is itself a violation,
 /// mirroring the count-policy stale/orphan convention (#2413): exception
 /// budget that matches nothing is invisible slack, so the entry must be
-/// removed or the denied usage restored.
+/// removed or the denied usage restored. The `!cfg(test):path` form counts
+/// only occurrences inside parser-identified top-level test items.
 fn architecture_rule_violations(
     records: &[Vec<String>],
     file_texts: &[(String, String)],
@@ -14581,18 +14753,26 @@ fn architecture_rule_violations(
             if !glob_matches(glob, path) || !text.contains(forbidden) {
                 continue;
             }
-            let exception_index =
-                exceptions
-                    .iter()
-                    .position(|(exception_path, exception_pattern, _)| {
-                        exception_pattern == forbidden && exception_path == path
-                    });
-            match exception_index {
-                Some(index) => suppressed[index] = true,
-                None => violations.push(format!(
-                    "{path} contains forbidden architecture pattern `{forbidden}`\n  reason: {reason}"
-                )),
+            if let Some(index) = exceptions.iter().position(|(selector, pattern, _)| {
+                pattern == forbidden
+                    && selector.strip_prefix("cfg(test):").unwrap_or(selector) == path
+            }) {
+                if !exceptions[index].0.starts_with("cfg(test):") {
+                    suppressed[index] = true;
+                    continue;
+                }
+                // The parser scans malformed source verbatim. A production match
+                // still fails even when another match uses the test exception.
+                let production = rust_region_scan::production_text_regions(text);
+                let production_count = production.text.matches(forbidden).count();
+                suppressed[index] = production_count < text.matches(forbidden).count();
+                if production_count == 0 {
+                    continue;
+                }
             }
+            violations.push(format!(
+                "{path} contains forbidden architecture pattern `{forbidden}`\n  reason: {reason}"
+            ));
         }
     }
 
@@ -14768,47 +14948,95 @@ mod architecture_rule_tests {
     }
 
     #[test]
-    fn output_cli_back_edge_rule_rejects_a_production_import_and_allows_only_the_scoped_test_path()
+    fn cli_exceptions_allow_test_fixtures_and_imports_but_reject_production_imports()
     -> Result<(), String> {
         let policy_path =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../policy/architecture.txt");
         let records =
             super::read_pipe_records(super::path_to_utf8(&policy_path, "architecture policy")?, 3)?;
-        let required_paths = [
-            "crates/ripr/src/output/**",
-            "!crates/ripr/src/output/first_pr.rs",
+        let paths = [
+            "crates/ripr/src/app/impacted_evidence.rs",
+            "crates/ripr/src/app/pr_evidence.rs",
+            "crates/ripr/src/app/pr_summary/mod.rs",
+            "crates/ripr/src/app/ripr_plus.rs",
+            "crates/ripr/src/output/first_pr.rs",
         ];
         let records = records
             .into_iter()
             .filter(|record| {
-                required_paths.contains(&record[0].as_str()) && record[1] == "crate::cli"
+                let selector = record[0].as_str();
+                record[1] == "crate::cli"
+                    && (matches!(
+                        selector,
+                        "crates/ripr/src/app/**" | "crates/ripr/src/output/**"
+                    ) || selector
+                        .strip_prefix("!cfg(test):")
+                        .or_else(|| selector.strip_prefix('!'))
+                        .is_some_and(|path| paths.contains(&path)))
             })
             .collect::<Vec<_>>();
-        for path in required_paths {
+        let fixture = r#"#[cfg(test)] mod tests {
+            const FIXTURE: &str = "use crate::cli::parse_options;";
+            use crate::cli::parse_options;
+        }"#;
+        let files = paths.map(|path| (path.to_owned(), fixture.to_owned()));
+        assert_eq!(
+            architecture_rule_violations(&records, &files),
+            Vec::<String>::new()
+        );
+
+        // Same bytes on the same line after the item's closing brace.
+        for (index, path) in paths.iter().enumerate() {
+            let mut mixed = files.clone();
+            mixed[index].1.push_str(" use crate::cli::parse_options;");
+            let violations = architecture_rule_violations(&records, &mixed);
+            assert_eq!(violations.len(), 1, "{path}: {violations:?}");
             assert!(
-                records.iter().any(|record| record[0] == path),
-                "policy/architecture.txt must retain {path}|crate::cli"
+                violations[0].starts_with(&format!(
+                    "{path} contains forbidden architecture pattern `crate::cli`"
+                )),
+                "{violations:?}"
             );
         }
-        let violations = architecture_rule_violations(
-            &records,
-            &[
-                (
-                    "crates/ripr/src/output/first_pr/options.rs".to_string(),
-                    "use crate::cli::unknown_argument;".to_string(),
-                ),
-                (
-                    "crates/ripr/src/output/first_pr.rs".to_string(),
-                    "crate::cli::commands::first_pr::first_pr(args)".to_string(),
-                ),
-            ],
-        );
+
+        let mut with_sibling = files.to_vec();
+        let sibling = "crates/ripr/src/output/first_pr/options.rs";
+        with_sibling.push((sibling.to_owned(), fixture.to_owned()));
+        let violations = architecture_rule_violations(&records, &with_sibling);
         assert_eq!(violations.len(), 1, "{violations:?}");
-        assert!(
-            violations[0].contains("first_pr/options.rs"),
-            "{violations:?}"
-        );
+        assert!(violations[0].contains(sibling), "{violations:?}");
         Ok(())
+    }
+
+    #[test]
+    fn test_exception_requires_a_match_in_a_parsed_test_item() {
+        let records = [
+            record(BROAD_RULE),
+            record(&format!(
+                "!cfg(test):{RUNNER_TESTS_PATH}|crate::output|test fixture"
+            )),
+        ];
+        for source in [
+            "// #[cfg(test)]\nuse crate::output;",
+            "#[cfg(any(test, unix))] use crate::output;",
+            "#[cfg(test)] mod broken { use crate::output;",
+        ] {
+            let violations = architecture_rule_violations(
+                &records,
+                &[(RUNNER_TESTS_PATH.to_owned(), source.to_owned())],
+            );
+            assert_eq!(violations.len(), 2, "{source}: {violations:?}");
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("forbidden architecture pattern")),
+                "{violations:?}"
+            );
+            assert!(
+                violations.iter().any(|v| v.contains("is stale")),
+                "{violations:?}"
+            );
+        }
     }
 }
 
@@ -17337,77 +17565,9 @@ fn missing_anchor_violation(
     ))
 }
 
-/// The anchor GitHub gives a heading whose text is `text`.
-///
-/// GitHub lowercases the text, turns each space into `-`, and drops every other
-/// character that is not a letter, digit, `_` or `-`. Dropping rather than
-/// collapsing is load-bearing: an em-dash or a slash surrounded by spaces
-/// leaves both of those spaces behind and so produces a doubled dash, which
-/// links into this repository's own headings depend on.
-fn heading_slug(text: &str) -> String {
-    let mut slug = String::new();
-    for ch in text.chars() {
-        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
-            slug.extend(ch.to_lowercase());
-        } else if ch == ' ' {
-            slug.push('-');
-        }
-    }
-    slug
-}
-
-/// Every anchor the headings of `text` offer.
-///
-/// Headings that slugify the same way are numbered the way GitHub numbers them:
-/// the first keeps the bare slug and later ones gain `-1`, `-2`, and so on.
-fn heading_slugs(text: &str) -> BTreeSet<String> {
-    let mut slugs = BTreeSet::new();
-    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
-    let mut in_fence = false;
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        let Some(title) = atx_heading_title(trimmed) else {
-            continue;
-        };
-        let base = heading_slug(title);
-        let count = seen.entry(base.clone()).or_insert(0);
-        let slug = if *count == 0 {
-            base
-        } else {
-            format!("{base}-{count}")
-        };
-        *count += 1;
-        slugs.insert(slug);
-    }
-    slugs
-}
-
-/// The heading text of an ATX heading line, or `None` when `trimmed` is not one.
-fn atx_heading_title(trimmed: &str) -> Option<&str> {
-    let rest = trimmed.trim_start_matches('#');
-    let level = trimmed.len() - rest.len();
-    if level == 0 || level > 6 {
-        return None;
-    }
-    if !rest.is_empty() && !rest.starts_with(' ') {
-        // `#hashtag` is body text, not a heading.
-        return None;
-    }
-    let title = rest.trim();
-    // A closing sequence of hashes is decoration when a space precedes it.
-    let without_closing = title.trim_end_matches('#');
-    if without_closing.len() < title.len() && without_closing.ends_with(' ') {
-        return Some(without_closing.trim_end());
-    }
-    Some(title)
-}
+#[cfg(test)]
+use repo_policy::markdown_headings::heading_slug;
+use repo_policy::markdown_headings::heading_slugs;
 
 fn next_checkpoints_from_capabilities(text: &str) -> Result<Vec<String>, String> {
     let mut checkpoints = Vec::new();
@@ -18138,123 +18298,6 @@ fn is_deletion_only(change: &ChangedPath) -> bool {
             .all(|status| status.chars().all(|character| character == 'D'))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LedgerLintEntry {
-    name: String,
-    level: String,
-    activate_when_msrv: Option<String>,
-    reason: Option<String>,
-    blocked_by: Option<String>,
-    block_line: usize,
-    is_planned: bool,
-}
-
-/// Parse `[[active.<group>]]` and `[[planned]]` blocks out of
-/// `policy/clippy-lints.toml`. Returns the entries in source order.
-fn parse_clippy_lints_ledger(text: &str) -> (Vec<LedgerLintEntry>, Vec<String>) {
-    let mut entries = Vec::new();
-    let mut violations = Vec::new();
-    let mut current: Option<LedgerLintEntry> = None;
-
-    fn flush(
-        current: &mut Option<LedgerLintEntry>,
-        entries: &mut Vec<LedgerLintEntry>,
-        violations: &mut Vec<String>,
-    ) {
-        if let Some(entry) = current.take() {
-            if entry.name.is_empty() {
-                violations.push(format!(
-                    "policy/clippy-lints.toml:{} entry missing required `name`",
-                    entry.block_line
-                ));
-                return;
-            }
-            if entry.level.is_empty() {
-                violations.push(format!(
-                    "policy/clippy-lints.toml:{} entry `{}` missing required `level`",
-                    entry.block_line, entry.name
-                ));
-                return;
-            }
-            entries.push(entry);
-        }
-    }
-
-    for (index, raw) in text.lines().enumerate() {
-        let line_number = index + 1;
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("[[") {
-            let header = rest.trim_end_matches(']').trim_end_matches('[').trim();
-            // Only reset when we cross into a new array-of-tables that
-            // matters to the lint policy. Other top-level tables (like
-            // `[policy]`) are flushed too so the next array-of-tables starts
-            // clean.
-            flush(&mut current, &mut entries, &mut violations);
-            let is_active = header.starts_with("active.");
-            let is_planned = header == "planned";
-            if is_active || is_planned {
-                current = Some(LedgerLintEntry {
-                    name: String::new(),
-                    level: String::new(),
-                    activate_when_msrv: None,
-                    reason: None,
-                    blocked_by: None,
-                    block_line: line_number,
-                    is_planned,
-                });
-            }
-            continue;
-        }
-        if line.starts_with('[') && line.ends_with(']') {
-            // Plain table header (e.g. `[policy]`); not a lint entry.
-            flush(&mut current, &mut entries, &mut violations);
-            continue;
-        }
-        let Some(entry) = current.as_mut() else {
-            continue;
-        };
-        let Some((key, raw_value)) = line.split_once('=') else {
-            continue;
-        };
-        let key = key.trim();
-        let value = raw_value.trim();
-        let unquoted = unquote_toml_basic_string(value);
-        match key {
-            "name" => {
-                if let Some(name) = unquoted {
-                    entry.name = name;
-                }
-            }
-            "level" => {
-                if let Some(level) = unquoted {
-                    entry.level = level;
-                }
-            }
-            "activate_when_msrv" => {
-                if let Some(msrv) = unquoted {
-                    entry.activate_when_msrv = Some(msrv);
-                }
-            }
-            "reason" => {
-                if let Some(reason) = unquoted {
-                    entry.reason = Some(reason);
-                }
-            }
-            "blocked_by" => {
-                if let Some(blocked_by) = unquoted {
-                    entry.blocked_by = Some(blocked_by);
-                }
-            }
-            _ => {}
-        }
-    }
-    flush(&mut current, &mut entries, &mut violations);
-    (entries, violations)
-}
-
 /// Strip the `clippy::` prefix from a ledger-style lint name so it can be
 /// looked up in the `[workspace.lints.clippy]` map. Rust lints have no
 /// prefix and remain unchanged.
@@ -18416,414 +18459,6 @@ fn parse_clippy_debt_ledger(text: &str) -> (Vec<ClippyDebtEntry>, Vec<String>) {
     (entries, violations)
 }
 
-fn collect_clippy_debt_violations(
-    debt_text: &str,
-    cargo_text: &str,
-    lints_text: &str,
-    today: &str,
-) -> Vec<String> {
-    let (entries, mut violations) = parse_clippy_debt_ledger(debt_text);
-    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
-        Ok(lints) => lints,
-        Err(err) => {
-            violations.push(err);
-            return violations;
-        }
-    };
-    let (lints, _) = parse_clippy_lints_ledger(lints_text);
-
-    let mut seen_ids = BTreeSet::new();
-    let mut seen_lints = BTreeSet::new();
-    let active: BTreeSet<String> = lints
-        .iter()
-        .filter(|entry| !entry.is_planned)
-        .map(|entry| entry.name.clone())
-        .collect();
-    let planned: BTreeSet<String> = lints
-        .iter()
-        .filter(|entry| entry.is_planned)
-        .map(|entry| entry.name.clone())
-        .collect();
-
-    for entry in &entries {
-        if !seen_ids.insert(entry.id.clone()) {
-            violations.push(format!(
-                "policy/clippy-debt.toml:{} duplicate debt id `{}`.",
-                entry.block_line, entry.id
-            ));
-        }
-        if !seen_lints.insert(entry.lint.clone()) {
-            violations.push(format!(
-                "policy/clippy-debt.toml:{} `{}` duplicates lint `{}`.",
-                entry.block_line, entry.id, entry.lint
-            ));
-        }
-        if !no_panic::is_valid_iso_date(&entry.target) {
-            violations.push(format!(
-                "policy/clippy-debt.toml:{} `{}` has malformed target `{}`; expected YYYY-MM-DD.",
-                entry.block_line, entry.id, entry.target
-            ));
-        } else if entry.target.as_str() < today {
-            violations.push(format!(
-                "policy/clippy-debt.toml:{} `{}` has target `{}` before today `{today}`. Renew, remove, or pay the debt.",
-                entry.block_line, entry.id, entry.target
-            ));
-        }
-        let Some(bare) = entry
-            .lint
-            .strip_prefix("clippy::")
-            .filter(|bare| !bare.is_empty())
-        else {
-            violations.push(format!(
-                "policy/clippy-debt.toml:{} `{}` has lint `{}`; expected a `clippy::` lint name.",
-                entry.block_line, entry.id, entry.lint
-            ));
-            continue;
-        };
-        if active.contains(&entry.lint) {
-            violations.push(format!(
-                "policy/clippy-debt.toml:{} `{}` records `{}` which is already `[[active]]` in policy/clippy-lints.toml. Remove the debt row or demote the active entry.",
-                entry.block_line, entry.id, entry.lint
-            ));
-        }
-        if planned.contains(&entry.lint) {
-            violations.push(format!(
-                "policy/clippy-debt.toml:{} `{}` records `{}` which is already `[[planned]]` in policy/clippy-lints.toml. Planned lints stay there; do not duplicate them into debt.",
-                entry.block_line, entry.id, entry.lint
-            ));
-        }
-        if let Some(level) = cargo_clippy.get(bare) {
-            violations.push(format!(
-                "policy/clippy-debt.toml:{} `{}` records `{}` which Cargo.toml `[workspace.lints.clippy]` already activates at level `{level}`. Pay the debt or remove the Cargo.toml line.",
-                entry.block_line, entry.id, entry.lint
-            ));
-        }
-    }
-
-    violations
-}
-
-/// First basic TOML string on a value (`"..."` or `'...'`). Table-form and
-/// multiline strings are intentionally out of scope for these ledgers.
-/// Double-quoted strings decode basic escapes so `\n` is whitespace, not the
-/// token `n`. Single-quoted strings stay literal, matching TOML.
-fn unquote_toml_basic_string(value: &str) -> Option<String> {
-    let value = value.trim();
-    if let Some(rest) = value.strip_prefix('"') {
-        return rest
-            .split_once('"')
-            .map(|(token, _)| decode_toml_basic_escapes(token));
-    }
-    if let Some(rest) = value.strip_prefix('\'') {
-        return rest.split_once('\'').map(|(token, _)| token.to_string());
-    }
-    None
-}
-
-/// Decode TOML basic-string escapes. Invalid sequences are left intact so
-/// they still count as leftover tokens in the MSRV filter.
-fn decode_toml_basic_escapes(token: &str) -> String {
-    let mut out = String::with_capacity(token.len());
-    let bytes = token.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'\\' {
-            let Some(ch) = token[index..].chars().next() else {
-                break;
-            };
-            out.push(ch);
-            index += ch.len_utf8();
-            continue;
-        }
-        let Some(esc) = bytes.get(index + 1).copied() else {
-            out.push('\\');
-            break;
-        };
-        let simple = match esc {
-            b'b' => Some('\u{0008}'),
-            b't' => Some('\t'),
-            b'n' => Some('\n'),
-            b'f' => Some('\u{000c}'),
-            b'r' => Some('\r'),
-            b'"' => Some('"'),
-            b'\\' => Some('\\'),
-            _ => None,
-        };
-        if let Some(ch) = simple {
-            out.push(ch);
-            index += 2;
-            continue;
-        }
-        let width = match esc {
-            b'u' => Some(4),
-            b'U' => Some(8),
-            _ => None,
-        };
-        if let Some(width) = width {
-            let start = index + 2;
-            let end = start + width;
-            if end <= bytes.len()
-                && let Ok(hex) = std::str::from_utf8(&bytes[start..end])
-                && let Ok(code) = u32::from_str_radix(hex, 16)
-                && let Some(ch) = char::from_u32(code)
-            {
-                out.push(ch);
-                index = end;
-                continue;
-            }
-        }
-        out.push('\\');
-        index += 1;
-    }
-    out
-}
-
-/// Parse `1.95` / `1.95.0` into a comparable triple. Rejects empty or extra parts.
-fn parse_msrv_triple(value: &str) -> Option<(u32, u32, u32)> {
-    let mut parts = value.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = match parts.next() {
-        Some(part) => part.parse().ok()?,
-        None => 0,
-    };
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((major, minor, patch))
-}
-
-/// True when `text` is empty or only restates an MSRV/Rust-version delay.
-///
-/// This is a closed token filter, not NLP: version triples and a small
-/// MSRV-vocabulary list are stripped, then any leftover token counts as a
-/// remaining (non-MSRV) blocker. `check-lint-policy` applies it to
-/// `[[planned]]` `blocked_by` once `activate_when_msrv` is already met.
-/// `reason` is narrative and is not this gate.
-fn planned_blocker_text_is_msrv_only(text: &str) -> bool {
-    const MSRV_VOCABULARY: &[&str] = &[
-        "a",
-        "activate",
-        "activation",
-        "after",
-        "already",
-        "an",
-        "and",
-        "at",
-        "available",
-        "be",
-        "before",
-        "blocked",
-        "blocker",
-        "bump",
-        "by",
-        "exceeded",
-        "exceeds",
-        "for",
-        "hit",
-        "hits",
-        "is",
-        "met",
-        "msrv",
-        "need",
-        "needs",
-        "of",
-        "on",
-        "once",
-        "or",
-        "planned",
-        "reached",
-        "reaches",
-        "required",
-        "requires",
-        "rust",
-        "rustc",
-        "rustversion",
-        "since",
-        "still",
-        "the",
-        "to",
-        "toolchain",
-        "until",
-        "upgrade",
-        "upgraded",
-        "version",
-        "wait",
-        "waiting",
-        "when",
-    ];
-    let leftover = text
-        .to_ascii_lowercase()
-        .split(|c: char| !c.is_ascii_alphanumeric() && c != '.')
-        .filter_map(|raw| {
-            let token = raw.trim_matches('.');
-            if token.is_empty() {
-                None
-            } else {
-                Some(token.to_string())
-            }
-        })
-        .filter(|token| parse_msrv_triple(token).is_none())
-        .filter(|token| !MSRV_VOCABULARY.contains(&token.as_str()))
-        .count();
-    leftover == 0
-}
-
-fn collect_lint_policy_violations(cargo_text: &str, ledger_text: &str) -> Vec<String> {
-    let cargo_clippy = match parse_workspace_lints_section(cargo_text, "clippy") {
-        Ok(lints) => lints,
-        Err(err) => return vec![err],
-    };
-    let cargo_rust = match parse_workspace_lints_section(cargo_text, "rust") {
-        Ok(lints) => lints,
-        Err(err) => return vec![err],
-    };
-    let (entries, mut violations) = parse_clippy_lints_ledger(ledger_text);
-    let workspace_msrv = parse_workspace_package_rust_version(cargo_text);
-    let workspace_triple = workspace_msrv.as_deref().and_then(parse_msrv_triple);
-
-    for entry in &entries {
-        let (bare, group) = ledger_name_to_lookup(&entry.name);
-        let cargo_map = match group {
-            "clippy" => &cargo_clippy,
-            _ => &cargo_rust,
-        };
-        let actual = cargo_map.get(bare).cloned();
-        if entry.is_planned {
-            if let Some(level) = actual {
-                violations.push(format!(
-                    "policy/clippy-lints.toml:{} declares `{}` as `[[planned]]` but Cargo.toml `[workspace.lints.{}]` already activates it at level `{}`. Promote the ledger entry to `[[active.<group>]]` or remove the Cargo.toml line.",
-                    entry.block_line, entry.name, group, level
-                ));
-            }
-            if let Some(msrv) = entry.activate_when_msrv.as_deref() {
-                match (parse_msrv_triple(msrv), workspace_triple, workspace_msrv.as_deref()) {
-                    (None, _, _) => violations.push(format!(
-                        "policy/clippy-lints.toml:{} `{}` has unparsable `activate_when_msrv = {msrv:?}`; expected `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`.",
-                        entry.block_line, entry.name
-                    )),
-                    (_, None, ws) => violations.push(format!(
-                        "policy/clippy-lints.toml:{} `{}` records `activate_when_msrv = {msrv:?}` but Cargo.toml `[workspace.package]` has no parsable `rust-version` (found {ws:?}). The gate compares those two values.",
-                        entry.block_line, entry.name
-                    )),
-                    (Some(activate), Some(workspace), Some(ws)) if activate <= workspace => {
-                        // #3990: blocked_by is the remaining-blocker field.
-                        // reason stays narrative and does not satisfy the gate.
-                        let blocked_by = entry.blocked_by.as_deref().map(str::trim).unwrap_or("");
-                        if blocked_by.is_empty() {
-                            violations.push(format!(
-                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. Record a non-MSRV `blocked_by` explaining why it is still `[[planned]]`, or promote it.",
-                                entry.block_line, entry.name
-                            ));
-                        } else if planned_blocker_text_is_msrv_only(blocked_by) {
-                            violations.push(format!(
-                                "policy/clippy-lints.toml:{} `{}` has `activate_when_msrv = {msrv:?}` already met by workspace rust-version `{ws}`. `blocked_by` {blocked_by:?} is MSRV-only. Record a remaining non-MSRV blocker, or promote it.",
-                                entry.block_line, entry.name
-                            ));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            continue;
-        }
-        match actual {
-            None => violations.push(format!(
-                "policy/clippy-lints.toml:{} declares `{}` as active at level `{}` but Cargo.toml `[workspace.lints.{}]` does not configure it. Add the lint to Cargo.toml or move the ledger entry to `[[planned]]`.",
-                entry.block_line, entry.name, entry.level, group
-            )),
-            Some(level) if level != entry.level => violations.push(format!(
-                "policy/clippy-lints.toml:{} declares `{}` at level `{}` but Cargo.toml `[workspace.lints.{}]` configures it at level `{}`. Reconcile the two.",
-                entry.block_line, entry.name, entry.level, group, level
-            )),
-            Some(_) => {}
-        }
-    }
-
-    let active_lookup: BTreeSet<(String, String)> = entries
-        .iter()
-        .filter(|entry| !entry.is_planned)
-        .map(|entry| {
-            let (bare, group) = ledger_name_to_lookup(&entry.name);
-            (group.to_string(), bare.to_string())
-        })
-        .collect();
-
-    for (name, level) in cargo_clippy.iter().chain(cargo_rust.iter()) {
-        let group = if cargo_clippy.contains_key(name) {
-            "clippy"
-        } else {
-            "rust"
-        };
-        if !active_lookup.contains(&(group.to_string(), name.clone())) {
-            violations.push(format!(
-                "Cargo.toml `[workspace.lints.{group}]` configures `{name}` at level `{level}` but policy/clippy-lints.toml has no matching `[[active.<group>]]` entry. Add the lint to the ledger or remove it from Cargo.toml."
-            ));
-        }
-    }
-
-    violations
-}
-
-fn check_lint_policy() -> Result<(), String> {
-    let cargo_text = fs::read_to_string("Cargo.toml")
-        .map_err(|err| format!("failed to read Cargo.toml: {err}"))?;
-    let ledger_text = fs::read_to_string("policy/clippy-lints.toml")
-        .map_err(|err| format!("failed to read policy/clippy-lints.toml: {err}"))?;
-    let debt_text = fs::read_to_string("policy/clippy-debt.toml")
-        .map_err(|err| format!("failed to read policy/clippy-debt.toml: {err}"))?;
-    let mut violations = collect_lint_policy_violations(&cargo_text, &ledger_text);
-    violations.extend(collect_clippy_debt_violations(
-        &debt_text,
-        &cargo_text,
-        &ledger_text,
-        &no_panic::today_date_string(),
-    ));
-    match policy::workspace_lint_inheritance_violations() {
-        Ok(member_violations) => violations.extend(member_violations),
-        Err(error) => violations.push(error),
-    }
-
-    finish_policy_report(
-        PolicyReportSpec {
-            report_file: "lint-policy.md",
-            check: "check-lint-policy",
-            why_it_matters: "`policy/clippy-lints.toml` is the reviewable ledger of the workspace lint stance, including planned 1.94 / 1.95 flips. If Cargo.toml drifts from the ledger, reviewers lose the trajectory and the dual-rail design (clippy + semantic checker) loses its receipt. `activate_when_msrv` is compared to `[workspace.package] rust-version`; an already-met MSRV without a remaining non-MSRV `blocked_by` is overdue. `reason` is narrative and does not satisfy that gate. `policy/clippy-debt.toml` is parsed as TOML: required nonblank fields, unknown fields, duplicate keys, trailing garbage, `target` dates, and dual-rail collisions fail here rather than being trusted as comments.",
-            fix_kind: FixKind::PolicyExceptionRequired,
-            recommended_fixes: &[
-                "Make `Cargo.toml` and `policy/clippy-lints.toml` agree: every `[[active.<group>]]` entry must appear in `[workspace.lints.*]` at the same level, and `[[planned]]` entries must not yet appear there.",
-                "When a planned lint's `activate_when_msrv` is already met by workspace `rust-version`, record a remaining non-MSRV `blocked_by` (not an MSRV-only delay) or promote the entry. `reason` does not satisfy that gate.",
-                "When promoting a planned lint, move the ledger entry from `[[planned]]` to `[[active.<group>]]` and add the matching `Cargo.toml` line in the same PR.",
-                "Keep `policy/clippy-debt.toml` rows unique, complete, and not already active, planned, or present in Cargo.toml. A past `target` must be renewed or the debt paid.",
-                "Document `[[active.<group>]]` family blocks in `docs/CLIPPY_POLICY.md` so the public surface stays in sync.",
-                "Every Cargo workspace member must opt in with `[lints] workspace = true`; remove member-local lint tables that replace or override the shared policy.",
-            ],
-            rerun_command: "cargo xtask check-lint-policy",
-            exception_template: None,
-        },
-        &violations,
-    )
-}
-
-#[derive(Clone, Debug)]
-struct CiLedgerValue {
-    line: usize,
-    raw: String,
-}
-
-#[derive(Clone, Debug)]
-struct CiLedgerTable {
-    header: String,
-    line: usize,
-    values: BTreeMap<String, CiLedgerValue>,
-}
-
-#[derive(Clone, Debug, Default)]
-struct CiLedgerDocument {
-    top_level: BTreeMap<String, CiLedgerValue>,
-    tables: Vec<CiLedgerTable>,
-}
-
 fn check_ci_lane_whitelist_impl() -> Result<(), String> {
     let mut violations = Vec::new();
 
@@ -18857,739 +18492,6 @@ fn check_ci_lane_whitelist_impl() -> Result<(), String> {
         },
         &violations,
     )
-}
-
-fn read_ci_ledger_document(path: &str, violations: &mut Vec<String>) -> Option<CiLedgerDocument> {
-    let path_ref = Path::new(path);
-    if !path_ref.exists() {
-        violations.push(format!("{path} is missing"));
-        return None;
-    }
-    let text = match fs::read_to_string(path_ref) {
-        Ok(text) => text,
-        Err(err) => {
-            violations.push(format!("failed to read {path}: {err}"));
-            return None;
-        }
-    };
-    let (document, mut parse_violations) = parse_ci_ledger_document(path, &text);
-    violations.append(&mut parse_violations);
-    Some(document)
-}
-
-fn parse_ci_ledger_document(path: &str, text: &str) -> (CiLedgerDocument, Vec<String>) {
-    let mut document = CiLedgerDocument::default();
-    let mut violations = Vec::new();
-    let mut current: Option<CiLedgerTable> = None;
-
-    for (index, raw) in text.lines().enumerate() {
-        let line_number = index + 1;
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        if line.starts_with("[[") && line.ends_with("]]") {
-            if let Some(table) = current.take() {
-                document.tables.push(table);
-            }
-            let header = line
-                .trim_start_matches("[[")
-                .trim_end_matches("]]")
-                .trim()
-                .to_string();
-            if header.is_empty() {
-                violations.push(format!("{path}:{line_number} empty table header"));
-                continue;
-            }
-            current = Some(CiLedgerTable {
-                header,
-                line: line_number,
-                values: BTreeMap::new(),
-            });
-            continue;
-        }
-
-        if line.starts_with('[') && line.ends_with(']') {
-            if let Some(table) = current.take() {
-                document.tables.push(table);
-            }
-            let header = line
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .trim()
-                .to_string();
-            if header.is_empty() {
-                violations.push(format!("{path}:{line_number} empty table header"));
-                continue;
-            }
-            current = Some(CiLedgerTable {
-                header,
-                line: line_number,
-                values: BTreeMap::new(),
-            });
-            continue;
-        }
-
-        let Some((key, value)) = parse_toml_key_value(line) else {
-            violations.push(format!(
-                "{path}:{line_number} invalid TOML line (expected key = value)"
-            ));
-            continue;
-        };
-        let value = strip_toml_value_comment(value).trim().to_string();
-        if let Some(table) = current.as_mut() {
-            insert_ci_ledger_value(
-                path,
-                &mut table.values,
-                key,
-                value,
-                line_number,
-                &mut violations,
-            );
-        } else {
-            insert_ci_ledger_value(
-                path,
-                &mut document.top_level,
-                key,
-                value,
-                line_number,
-                &mut violations,
-            );
-        }
-    }
-
-    if let Some(table) = current {
-        document.tables.push(table);
-    }
-
-    (document, violations)
-}
-
-fn insert_ci_ledger_value(
-    path: &str,
-    values: &mut BTreeMap<String, CiLedgerValue>,
-    key: &str,
-    raw: String,
-    line: usize,
-    violations: &mut Vec<String>,
-) {
-    if values
-        .insert(key.to_string(), CiLedgerValue { line, raw })
-        .is_some()
-    {
-        violations.push(format!("{path}:{line} duplicate key `{key}`"));
-    }
-}
-
-fn ci_lane_whitelist_violations(
-    budget: &CiLedgerDocument,
-    lanes: &CiLedgerDocument,
-    risk_packs: &CiLedgerDocument,
-    exceptions: &CiLedgerDocument,
-) -> Vec<String> {
-    let mut violations = Vec::new();
-
-    validate_ci_common_metadata("policy/ci-budget.toml", budget, &mut violations);
-    validate_ci_common_metadata("policy/ci-lane-whitelist.toml", lanes, &mut violations);
-    validate_ci_common_metadata("policy/ci-risk-packs.toml", risk_packs, &mut violations);
-    validate_ci_common_metadata(
-        "policy/ci-whitelist-exceptions.toml",
-        exceptions,
-        &mut violations,
-    );
-
-    let budget_bands = validate_ci_budget("policy/ci-budget.toml", budget, &mut violations);
-    let (lane_ids, _lane_postures, artifact_ids) =
-        validate_ci_lanes("policy/ci-lane-whitelist.toml", lanes, &mut violations);
-    validate_ci_risk_packs(
-        "policy/ci-risk-packs.toml",
-        risk_packs,
-        &lane_ids,
-        &artifact_ids,
-        &mut violations,
-    );
-    validate_ci_exceptions(
-        "policy/ci-whitelist-exceptions.toml",
-        exceptions,
-        &lane_ids,
-        &artifact_ids,
-        &mut violations,
-    );
-    validate_ci_budget_references(
-        "policy/ci-budget.toml",
-        budget,
-        &budget_bands,
-        &mut violations,
-    );
-
-    violations
-}
-
-fn validate_ci_common_metadata(
-    path: &str,
-    document: &CiLedgerDocument,
-    violations: &mut Vec<String>,
-) {
-    ci_expect_top_string(path, document, "schema_version", "0.1", violations);
-    ci_expect_top_string(
-        path,
-        document,
-        "policy_state",
-        "advisory-ledger",
-        violations,
-    );
-    ci_expect_top_string(path, document, "enforcement", "none", violations);
-    ci_required_non_empty_top_string(path, document, "owner", violations);
-    ci_required_non_empty_top_string(path, document, "reason", violations);
-}
-
-fn validate_ci_budget(
-    path: &str,
-    document: &CiLedgerDocument,
-    violations: &mut Vec<String>,
-) -> BTreeSet<String> {
-    ci_expect_top_string(path, document, "unit", "lem", violations);
-
-    let mut budget_bands = BTreeSet::new();
-    let bands = ci_tables(document, "budget_band");
-    if bands.is_empty() {
-        violations.push(format!("{path} has no [[budget_band]] entries"));
-    }
-    for table in bands {
-        let Some(id) = ci_required_table_id(path, table, "id", "budget band", violations) else {
-            continue;
-        };
-        if !budget_bands.insert(id.clone()) {
-            violations.push(format!(
-                "{path}:{} duplicate budget band id `{id}`",
-                table.line
-            ));
-        }
-        let min = ci_required_table_usize(path, table, "min_lem", violations);
-        let max = ci_optional_table_usize(path, table, "max_lem", violations);
-        if let (Some(min), Some(max)) = (min, max)
-            && max < min
-        {
-            violations.push(format!(
-                "{path}:{} budget band `{id}` has max_lem below min_lem",
-                table.line
-            ));
-        }
-        ci_required_non_empty_table_string(path, table, "posture", violations);
-        ci_required_non_empty_table_string(path, table, "description", violations);
-    }
-
-    let labels = ci_tables(document, "label");
-    if labels.is_empty() {
-        violations.push(format!("{path} has no [[label]] entries"));
-    }
-    let mut label_names = BTreeSet::new();
-    for table in labels {
-        let Some(name) = ci_required_non_empty_table_string(path, table, "name", violations) else {
-            continue;
-        };
-        if !label_names.insert(name.clone()) {
-            violations.push(format!("{path}:{} duplicate label `{name}`", table.line));
-        }
-        ci_required_non_empty_table_string(path, table, "effect", violations);
-        ci_required_non_empty_table_string(path, table, "budget_effect", violations);
-        ci_required_non_empty_table_string(path, table, "notes", violations);
-    }
-
-    budget_bands
-}
-
-fn validate_ci_budget_references(
-    path: &str,
-    document: &CiLedgerDocument,
-    budget_bands: &BTreeSet<String>,
-    violations: &mut Vec<String>,
-) {
-    let defaults = ci_tables(document, "defaults");
-    if defaults.len() != 1 {
-        violations.push(format!("{path} should have exactly one [defaults] table"));
-    }
-    if let Some(table) = defaults.first() {
-        for key in ["required_pr_budget", "advisory_pr_budget", "release_budget"] {
-            if let Some(value) = ci_required_non_empty_table_string(path, table, key, violations)
-                && !budget_bands.contains(&value)
-            {
-                violations.push(format!(
-                    "{path}:{} defaults `{key}` references unknown budget band `{value}`",
-                    table.line
-                ));
-            }
-        }
-    }
-
-    for table in ci_tables(document, "label") {
-        if let Some(effect) =
-            ci_required_non_empty_table_string(path, table, "budget_effect", violations)
-            && effect != "none"
-            && !budget_bands.contains(&effect)
-        {
-            violations.push(format!(
-                "{path}:{} label budget_effect references unknown budget band `{effect}`",
-                table.line
-            ));
-        }
-    }
-}
-
-fn validate_ci_lanes(
-    path: &str,
-    document: &CiLedgerDocument,
-    violations: &mut Vec<String>,
-) -> (BTreeSet<String>, BTreeMap<String, String>, BTreeSet<String>) {
-    let mut artifact_ids = BTreeSet::new();
-    let artifacts = ci_tables(document, "artifact_family");
-    if artifacts.is_empty() {
-        violations.push(format!("{path} has no [[artifact_family]] entries"));
-    }
-    for table in artifacts {
-        let Some(id) = ci_required_table_id(path, table, "id", "artifact family", violations)
-        else {
-            continue;
-        };
-        if !artifact_ids.insert(id.clone()) {
-            violations.push(format!(
-                "{path}:{} duplicate artifact family id `{id}`",
-                table.line
-            ));
-        }
-        if let Some(paths) = ci_required_table_array(path, table, "paths", violations)
-            && paths.is_empty()
-        {
-            violations.push(format!(
-                "{path}:{} artifact family `{id}` has empty paths",
-                table.line
-            ));
-        }
-    }
-
-    let mut lane_ids = BTreeSet::new();
-    let mut lane_postures = BTreeMap::new();
-    let lanes = ci_tables(document, "lane");
-    if lanes.is_empty() {
-        violations.push(format!("{path} has no [[lane]] entries"));
-    }
-    for table in lanes {
-        let Some(id) = ci_required_table_id(path, table, "id", "lane", violations) else {
-            continue;
-        };
-        if !lane_ids.insert(id.clone()) {
-            violations.push(format!("{path}:{} duplicate lane id `{id}`", table.line));
-        }
-        let posture = ci_required_non_empty_table_string(path, table, "posture", violations);
-        if let Some(posture) = posture {
-            if !matches!(
-                posture.as_str(),
-                "required" | "advisory" | "on_demand_release"
-            ) {
-                violations.push(format!(
-                    "{path}:{} lane `{id}` has unsupported posture `{posture}`",
-                    table.line
-                ));
-            }
-            lane_postures.insert(id.clone(), posture);
-        }
-        ci_required_non_empty_table_string(path, table, "workflow", violations);
-        ci_required_table_array(path, table, "jobs", violations);
-        ci_required_table_array(path, table, "commands", violations);
-        ci_required_table_usize(path, table, "estimated_lem", violations);
-        if let Some(families) =
-            ci_required_table_array(path, table, "artifact_families", violations)
-        {
-            validate_ci_artifact_references(
-                path,
-                table.line,
-                &format!("lane `{id}`"),
-                &families,
-                &artifact_ids,
-                violations,
-            );
-        }
-        ci_required_non_empty_table_string(path, table, "description", violations);
-    }
-
-    (lane_ids, lane_postures, artifact_ids)
-}
-
-fn validate_ci_risk_packs(
-    path: &str,
-    document: &CiLedgerDocument,
-    lane_ids: &BTreeSet<String>,
-    artifact_ids: &BTreeSet<String>,
-    violations: &mut Vec<String>,
-) {
-    let risk_packs: Vec<&CiLedgerTable> = document
-        .tables
-        .iter()
-        .filter(|table| table.header.starts_with("risk_pack."))
-        .collect();
-    if risk_packs.is_empty() {
-        violations.push(format!("{path} has no [risk_pack.<id>] entries"));
-    }
-
-    let mut pack_ids = BTreeSet::new();
-    for table in risk_packs {
-        let id = table.header.trim_start_matches("risk_pack.");
-        if !is_snake_case_id(id) {
-            violations.push(format!(
-                "{path}:{} risk pack id `{id}` should be snake_case",
-                table.line
-            ));
-        }
-        if !pack_ids.insert(id.to_string()) {
-            violations.push(format!(
-                "{path}:{} duplicate risk pack id `{id}`",
-                table.line
-            ));
-        }
-        if let Some(paths) = ci_required_table_array(path, table, "paths", violations)
-            && paths.is_empty()
-        {
-            violations.push(format!(
-                "{path}:{} risk pack `{id}` has empty paths",
-                table.line
-            ));
-        }
-        validate_ci_lane_bucket(path, table, id, "required", lane_ids, violations);
-        validate_ci_lane_bucket(path, table, id, "advisory", lane_ids, violations);
-        validate_ci_lane_bucket(path, table, id, "on_demand", lane_ids, violations);
-        if let Some(families) =
-            ci_required_table_array(path, table, "artifact_families", violations)
-        {
-            validate_ci_artifact_references(
-                path,
-                table.line,
-                &format!("risk pack `{id}`"),
-                &families,
-                artifact_ids,
-                violations,
-            );
-        }
-        ci_required_table_usize(path, table, "estimated_lem", violations);
-        ci_required_non_empty_table_string(path, table, "owner", violations);
-        ci_required_non_empty_table_string(path, table, "reason", violations);
-    }
-}
-
-fn validate_ci_exceptions(
-    path: &str,
-    document: &CiLedgerDocument,
-    lane_ids: &BTreeSet<String>,
-    artifact_ids: &BTreeSet<String>,
-    violations: &mut Vec<String>,
-) {
-    let exceptions = ci_tables(document, "exception");
-    if exceptions.is_empty() {
-        violations.push(format!("{path} has no [[exception]] entries"));
-    }
-
-    let mut exception_ids = BTreeSet::new();
-    for table in exceptions {
-        let Some(id) = ci_required_non_empty_table_string(path, table, "id", violations) else {
-            continue;
-        };
-        if !exception_ids.insert(id.clone()) {
-            violations.push(format!(
-                "{path}:{} duplicate exception id `{id}`",
-                table.line
-            ));
-        }
-        ci_required_non_empty_table_string(path, table, "kind", violations);
-        if let Some(paths) = ci_required_table_array(path, table, "paths", violations)
-            && paths.is_empty()
-        {
-            violations.push(format!(
-                "{path}:{} exception `{id}` has empty paths",
-                table.line
-            ));
-        }
-        ci_required_non_empty_table_string(path, table, "current_behavior", violations);
-        ci_required_non_empty_table_string(path, table, "target_behavior", violations);
-        ci_required_non_empty_table_string(path, table, "review_note", violations);
-
-        if let Some(lanes) = ci_optional_table_array(path, table, "lanes", violations) {
-            validate_ci_lane_references(
-                path,
-                table.line,
-                &format!("exception `{id}`"),
-                &lanes,
-                lane_ids,
-                violations,
-            );
-        }
-        if let Some(families) =
-            ci_optional_table_array(path, table, "artifact_families", violations)
-        {
-            validate_ci_artifact_references(
-                path,
-                table.line,
-                &format!("exception `{id}`"),
-                &families,
-                artifact_ids,
-                violations,
-            );
-        }
-    }
-}
-
-fn validate_ci_lane_bucket(
-    path: &str,
-    table: &CiLedgerTable,
-    risk_pack_id: &str,
-    key: &str,
-    lane_ids: &BTreeSet<String>,
-    violations: &mut Vec<String>,
-) {
-    let Some(lanes) = ci_required_table_array(path, table, key, violations) else {
-        return;
-    };
-    for lane in lanes {
-        if !lane_ids.contains(&lane) {
-            violations.push(format!(
-                "{path}:{} risk pack `{risk_pack_id}` references unknown lane `{lane}` in `{key}`",
-                table.line
-            ));
-        }
-    }
-}
-
-fn validate_ci_lane_references(
-    path: &str,
-    line: usize,
-    label: &str,
-    lanes: &[String],
-    lane_ids: &BTreeSet<String>,
-    violations: &mut Vec<String>,
-) {
-    for lane in lanes {
-        if !lane_ids.contains(lane) {
-            violations.push(format!(
-                "{path}:{line} {label} references unknown lane `{lane}`"
-            ));
-        }
-    }
-}
-
-fn validate_ci_artifact_references(
-    path: &str,
-    line: usize,
-    label: &str,
-    families: &[String],
-    artifact_ids: &BTreeSet<String>,
-    violations: &mut Vec<String>,
-) {
-    for family in families {
-        if !artifact_ids.contains(family) {
-            violations.push(format!(
-                "{path}:{line} {label} references unknown artifact family `{family}`"
-            ));
-        }
-    }
-}
-
-fn ci_expect_top_string(
-    path: &str,
-    document: &CiLedgerDocument,
-    key: &str,
-    expected: &str,
-    violations: &mut Vec<String>,
-) {
-    if let Some(actual) = ci_required_non_empty_top_string(path, document, key, violations)
-        && actual != expected
-    {
-        violations.push(format!(
-            "{path}: top-level `{key}` should be `{expected}`, got `{actual}`"
-        ));
-    }
-}
-
-fn ci_required_non_empty_top_string(
-    path: &str,
-    document: &CiLedgerDocument,
-    key: &str,
-    violations: &mut Vec<String>,
-) -> Option<String> {
-    let Some(value) = document.top_level.get(key) else {
-        violations.push(format!("{path}: missing top-level `{key}`"));
-        return None;
-    };
-    ci_string_value(path, "top-level", key, value, violations).and_then(|parsed| {
-        if parsed.trim().is_empty() {
-            violations.push(format!("{path}:{} top-level `{key}` is empty", value.line));
-            None
-        } else {
-            Some(parsed)
-        }
-    })
-}
-
-fn ci_required_table_id(
-    path: &str,
-    table: &CiLedgerTable,
-    key: &str,
-    label: &str,
-    violations: &mut Vec<String>,
-) -> Option<String> {
-    let value = ci_required_non_empty_table_string(path, table, key, violations)?;
-    if !is_kebab_case_id(&value) {
-        violations.push(format!(
-            "{path}:{} {label} id `{value}` should be kebab-case",
-            table.line
-        ));
-    }
-    Some(value)
-}
-
-fn ci_required_non_empty_table_string(
-    path: &str,
-    table: &CiLedgerTable,
-    key: &str,
-    violations: &mut Vec<String>,
-) -> Option<String> {
-    let Some(value) = table.values.get(key) else {
-        violations.push(format!(
-            "{path}:{} table `[{}]` missing `{key}`",
-            table.line, table.header
-        ));
-        return None;
-    };
-    ci_string_value(
-        path,
-        &format!("table `[{}]`", table.header),
-        key,
-        value,
-        violations,
-    )
-    .and_then(|parsed| {
-        if parsed.trim().is_empty() {
-            violations.push(format!(
-                "{path}:{} table `[{}]` field `{key}` is empty",
-                value.line, table.header
-            ));
-            None
-        } else {
-            Some(parsed)
-        }
-    })
-}
-
-fn ci_string_value(
-    path: &str,
-    label: &str,
-    key: &str,
-    value: &CiLedgerValue,
-    violations: &mut Vec<String>,
-) -> Option<String> {
-    match parse_string_value(&value.raw, path, value.line) {
-        Ok(parsed) => Some(parsed),
-        Err(err) => {
-            violations.push(format!("{path}:{} {label} `{key}`: {err}", value.line));
-            None
-        }
-    }
-}
-
-fn ci_required_table_array(
-    path: &str,
-    table: &CiLedgerTable,
-    key: &str,
-    violations: &mut Vec<String>,
-) -> Option<Vec<String>> {
-    let Some(value) = table.values.get(key) else {
-        violations.push(format!(
-            "{path}:{} table `[{}]` missing `{key}`",
-            table.line, table.header
-        ));
-        return None;
-    };
-    ci_array_value(path, table, key, value, violations)
-}
-
-fn ci_optional_table_array(
-    path: &str,
-    table: &CiLedgerTable,
-    key: &str,
-    violations: &mut Vec<String>,
-) -> Option<Vec<String>> {
-    let value = table.values.get(key)?;
-    ci_array_value(path, table, key, value, violations)
-}
-
-fn ci_array_value(
-    path: &str,
-    table: &CiLedgerTable,
-    key: &str,
-    value: &CiLedgerValue,
-    violations: &mut Vec<String>,
-) -> Option<Vec<String>> {
-    match parse_inline_array(&value.raw) {
-        Ok(values) => Some(values),
-        Err(err) => {
-            violations.push(format!(
-                "{path}:{} table `[{}]` field `{key}`: {err}",
-                value.line, table.header
-            ));
-            None
-        }
-    }
-}
-
-fn ci_required_table_usize(
-    path: &str,
-    table: &CiLedgerTable,
-    key: &str,
-    violations: &mut Vec<String>,
-) -> Option<usize> {
-    let Some(value) = table.values.get(key) else {
-        violations.push(format!(
-            "{path}:{} table `[{}]` missing `{key}`",
-            table.line, table.header
-        ));
-        return None;
-    };
-    ci_usize_value(path, table, key, value, violations)
-}
-
-fn ci_optional_table_usize(
-    path: &str,
-    table: &CiLedgerTable,
-    key: &str,
-    violations: &mut Vec<String>,
-) -> Option<usize> {
-    let value = table.values.get(key)?;
-    ci_usize_value(path, table, key, value, violations)
-}
-
-fn ci_usize_value(
-    path: &str,
-    table: &CiLedgerTable,
-    key: &str,
-    value: &CiLedgerValue,
-    violations: &mut Vec<String>,
-) -> Option<usize> {
-    match parse_usize_value(&value.raw, path, value.line) {
-        Ok(parsed) => Some(parsed),
-        Err(err) => {
-            violations.push(format!(
-                "{path}:{} table `[{}]` field `{key}`: {err}",
-                value.line, table.header
-            ));
-            None
-        }
-    }
-}
-
-fn ci_tables<'a>(document: &'a CiLedgerDocument, header: &str) -> Vec<&'a CiLedgerTable> {
-    document
-        .tables
-        .iter()
-        .filter(|table| table.header == header)
-        .collect()
 }
 
 const PROOF_PACK_MANIFEST_PATH: &str = "policy/proof-packs.toml";
@@ -22864,6 +21766,8 @@ pub(crate) fn read_file_policy_test_commands(
             (None, entry.covered_by),
             (Some(FilePolicyHost::Unix), entry.covered_by_unix),
             (Some(FilePolicyHost::Windows), entry.covered_by_windows),
+            (Some(FilePolicyHost::Linux), entry.covered_by_linux),
+            (Some(FilePolicyHost::Macos), entry.covered_by_macos),
         ] {
             for command in values.unwrap_or_default() {
                 if is_cargo_test_command(&command) {
@@ -22883,18 +21787,31 @@ impl FilePolicyHost {
     fn parse(family: &str) -> Result<Self, String> {
         match family {
             "unix" => Ok(Self::Unix),
+            "linux" => Ok(Self::Linux),
+            "macos" => Ok(Self::Macos),
             "windows" => Ok(Self::Windows),
             _ => Err(format!("unsupported file-policy host family `{family}`")),
         }
     }
 
     fn current() -> Result<Self, String> {
-        Self::parse(std::env::consts::FAMILY)
+        Self::parse(match std::env::consts::OS {
+            "linux" => "linux",
+            "macos" => "macos",
+            _ => std::env::consts::FAMILY,
+        })
+    }
+
+    /// Whether this declared scope includes the executing host.
+    fn applies_to(self, host: Self) -> bool {
+        self == host || (self == Self::Unix && matches!(host, Self::Linux | Self::Macos))
     }
 
     fn name(self) -> &'static str {
         match self {
             Self::Unix => "unix",
+            Self::Linux => "linux",
+            Self::Macos => "macos",
             Self::Windows => "windows",
         }
     }
@@ -22982,7 +21899,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                     "classification" => entry.classification = Some(scalar()?),
                     "reason" => entry.reason = Some(scalar()?),
                     "generated_by" => entry.generated_by = Some(scalar()?),
-                    "covered_by" | "covered_by_unix" | "covered_by_windows" => {
+                    "covered_by" | "covered_by_unix" | "covered_by_windows"
+                    | "covered_by_linux" | "covered_by_macos" => {
                         let array_error = || {
                             format!(
                                 "{path}:{field_line} non-Rust allowlist `{key}` requires a string array"
@@ -23003,6 +21921,8 @@ fn parse_file_policy_allowlist(path: &str) -> Result<Vec<FilePolicyAllowEntry>, 
                         match key {
                             "covered_by_unix" => entry.covered_by_unix = Some(commands),
                             "covered_by_windows" => entry.covered_by_windows = Some(commands),
+                            "covered_by_linux" => entry.covered_by_linux = Some(commands),
+                            "covered_by_macos" => entry.covered_by_macos = Some(commands),
                             _ => entry.covered_by = Some(commands),
                         }
                     }
@@ -23087,6 +22007,8 @@ fn validate_file_policy_allow_entry(
     for (field, commands) in [
         ("covered_by_unix", &entry.covered_by_unix),
         ("covered_by_windows", &entry.covered_by_windows),
+        ("covered_by_linux", &entry.covered_by_linux),
+        ("covered_by_macos", &entry.covered_by_macos),
     ] {
         if let Some(commands) = commands
             && (commands.is_empty() || commands.iter().any(|value| !is_cargo_test_command(value)))
@@ -23183,6 +22105,85 @@ fn guarded_allow_attribute_lints() -> BTreeSet<&'static str> {
     ]
     .into_iter()
     .collect()
+}
+
+/// Inspect actual Rust attributes, including each suppression inside cfg_attr.
+/// Comments, example source strings and sibling attributes cannot supply a reason.
+fn unguarded_allows_without_reason(
+    text: &str,
+    guarded: &BTreeSet<&'static str>,
+) -> Vec<(usize, String)> {
+    let mut findings = Vec::new();
+    if !text.contains("allow") {
+        return findings;
+    }
+    let parsed = SourceFile::parse(text, Edition::CURRENT);
+    for meta in parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::TokenTreeMeta::cast)
+    {
+        if let (Some(path), Some(args)) = (meta.path(), meta.token_tree()) {
+            inspect_allow_arguments(&path.to_string(), &args, text, guarded, &mut findings);
+        }
+    }
+    findings
+}
+
+fn inspect_allow_arguments(
+    name: &str,
+    args: &ast::TokenTree,
+    text: &str,
+    guarded: &BTreeSet<&'static str>,
+    findings: &mut Vec<(usize, String)>,
+) {
+    let name = name.strip_prefix("r#").unwrap_or(name);
+    if !matches!(name, "allow" | "cfg_attr") {
+        return;
+    }
+    let tokens: Vec<_> = args
+        .syntax()
+        .children_with_tokens()
+        .filter(|token| {
+            !token.kind().is_trivia()
+                && !matches!(token.kind(), SyntaxKind::L_PAREN | SyntaxKind::R_PAREN)
+        })
+        .collect();
+    let parts = tokens.split(|token| token.kind() == SyntaxKind::COMMA);
+    // The parser exposes a raw-identifier cfg_attr as an ordinary token tree.
+    // Its first argument is a predicate. Each remaining argument is a separate attribute.
+    if name == "cfg_attr" {
+        for part in parts.skip(1) {
+            if let [key, tree] = part
+                && let Some(group) = tree.as_node().cloned().and_then(ast::TokenTree::cast)
+            {
+                inspect_allow_arguments(&key.to_string(), &group, text, guarded, findings);
+            }
+        }
+        return;
+    }
+    if parts.clone().any(|part| matches!(part, [key, eq, value]
+            if matches!(key.to_string().as_str(), "reason" | "r#reason") && eq.kind() == SyntaxKind::EQ && value.kind() == SyntaxKind::STRING)) {
+            return;
+        }
+    for part in parts {
+        if part.is_empty()
+            || !part.iter().all(|t| {
+                matches!(
+                    t.kind(),
+                    SyntaxKind::IDENT | SyntaxKind::COLON | SyntaxKind::COLON2
+                )
+            })
+        {
+            continue;
+        }
+        let lint: String = part.iter().map(ToString::to_string).collect();
+        if !guarded.contains(lint.as_str()) {
+            let offset = usize::from(args.syntax().text_range().start());
+            findings.push((byte_line_number(text, offset), lint));
+        }
+    }
 }
 
 fn guarded_allow_attributes_in_text(
@@ -23597,28 +22598,29 @@ fn suspicious_runtime_file_names() -> Vec<String> {
 
 fn windows_absolute_path_tokens(line: &str) -> Vec<String> {
     let mut tokens = Vec::new();
-    // Every match needs a drive-letter colon; the std search is far cheaper
-    // than the byte loop below on the many lines that have none.
-    if !line.contains(':') {
-        return tokens;
-    }
     let bytes = line.as_bytes();
-    let mut index = 0;
-    while index + 2 < bytes.len() {
-        let token_boundary = index == 0 || is_local_context_token_delimiter(bytes[index - 1]);
+    let mut search_start = 0;
+    // A drive separator is necessary for every match. Search those separators
+    // directly instead of interpreting every byte of ordinary source lines.
+    while let Some(offset) = line[search_start..].find(':') {
+        let colon = search_start + offset;
+        search_start = colon + 1;
+        if colon == 0 || colon + 1 >= bytes.len() {
+            continue;
+        }
+        let start = colon - 1;
+        let token_boundary = start == 0 || is_local_context_token_delimiter(bytes[start - 1]);
         if token_boundary
-            && bytes[index].is_ascii_alphabetic()
-            && bytes[index + 1] == b':'
-            && (bytes[index + 2] == b'\\' || bytes[index + 2] == b'/')
+            && bytes[start].is_ascii_alphabetic()
+            && (bytes[colon + 1] == b'\\' || bytes[colon + 1] == b'/')
         {
-            let start = index;
-            index += 3;
-            while index < bytes.len() && !is_local_context_token_delimiter(bytes[index]) {
-                index += 1;
+            let mut end = colon + 2;
+            while end < bytes.len() && !is_local_context_token_delimiter(bytes[end]) {
+                end += 1;
             }
-            tokens.push(line[start..index].to_string());
-        } else {
-            index += 1;
+            tokens.push(line[start..end].to_string());
+            // Colons inside an already consumed path are part of that token.
+            search_start = end;
         }
     }
     tokens
@@ -23876,6 +22878,22 @@ pub(crate) fn is_non_rust_programming_candidate(path: &str) -> bool {
 pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'static str> {
     if matches!(
         path,
+        "tools/ci/main-qualification.py" | "tools/ci/test_main_qualification.py"
+    ) {
+        return Some(
+            "The advisory sentinel reads landed GitHub qualification with runner-provided stdlib Python and gh, without building Rust or executing product code; its API and tracker-shell controls run on Linux through the Rust-owned main_health_sentinel_contract target (#14500).",
+        );
+    }
+    if matches!(
+        path,
+        "tools/ci/shard-verifier-artifact.py" | "tools/ci/test_shard_verifier_artifact.py"
+    ) {
+        return Some(
+            "The unprivileged verifier must validate downloaded xtask before executing it, without a Rust toolchain; its stdlib Python command-entry and ZIP controls run through the Rust-owned shard_verifier_artifact integration target (#14580).",
+        );
+    }
+    if matches!(
+        path,
         "tools/provision-dev.cjs" | "tools/provision-dev.test.cjs"
     ) {
         return Some(
@@ -23914,6 +22932,17 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some("npm launcher runtime and focused launcher contract tests");
     }
+    if matches!(
+        path,
+        "packaging/npm/qualification/bin/journey.cjs"
+            | "packaging/npm/qualification/lib/journey.cjs"
+            | "packaging/npm/qualification/lib/registry.cjs"
+            | "packaging/npm/qualification/test/journey.test.cjs"
+    ) {
+        return Some(
+            "The npm install-to-use journey must drive real npm and Node package resolution on consumer runners that have no Rust toolchain; its controls run through the Rust-owned npm_consumer integration target (#4627, #4632).",
+        );
+    }
     if path == "editors/vscode/test/developerSetup.cjs" {
         return Some(
             "Dependency-free Node setup entrypoint must inspect the editor checkout before Rust or npm dependencies are available; explicit verification delegates to existing validation owners (#13201, #13212).",
@@ -23928,6 +22957,26 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     if path.starts_with("benchmarks/agentic/cohort/harness/") && path.ends_with(".py") {
         return Some(
             "Opt-in agent cohort harness drives headless `claude -p` sessions and scores hidden mutants with stdlib Python; it is never on the default CI path (#12902).",
+        );
+    }
+
+    if matches!(
+        path,
+        "benchmarks/mutation_spot_check/run_python_calibration.py"
+            | "benchmarks/mutation_spot_check/test_run_python_calibration.py"
+    ) {
+        return Some(
+            "Bounded Python real-mutant calibration must run the authored subjects' own pytest suites with the subject interpreter and drive ripr check --diff per mutant; it is stdlib-only, never on the default CI path, and its receipt is re-derived by the Rust-owned python_calibration tests (#12901).",
+        );
+    }
+
+    if matches!(
+        path,
+        "tools/python/installed-wheel-identity/verify_installed_wheel.py"
+            | "tools/python/installed-wheel-identity/test_verify.py"
+    ) {
+        return Some(
+            "The package smoke checks the pip environment's own scripts directory without a checkout or xtask; its stdlib verifier and substitution controls run on the existing release rehearsal (#4624).",
         );
     }
 
@@ -23968,6 +23017,15 @@ pub(crate) fn non_rust_programming_retention_reason(path: &str) -> Option<&'stat
     {
         return Some(
             "Fixture workspaces may contain TypeScript / JavaScript / Python source as analyzed inputs for the Campaign 27 preview adapters (RIPR-SPEC-0027 / RIPR-SPEC-0028).",
+        );
+    }
+
+    if path.starts_with("examples/")
+        && (path.ends_with(".ts") || path.ends_with(".py"))
+        && (path.contains("/project/") || path.contains("/strengthened/"))
+    {
+        return Some(
+            "Starter example projects are analyzed inputs that users run `ripr check` on (#14151); the Python and TypeScript examples must stay in their own language to show the preview adapters honestly.",
         );
     }
 

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr agent receipt` refusals for a `--verify-json` file whose `inputs` block is missing or incomplete now say to pass the unedited JSON that `ripr agent verify` wrote, and an unknown `--seam-id` says to pass one the verify JSON lists. Test-stub read and directory-creation failures say to check the file or its permissions, then rerun, and a doctor tool override that cannot be resolved says to fix or unset it (#16019).

@@ -75,6 +75,8 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "first-action",
     "first-pr",
     "gate",
+    "gate evaluate",
+    "gate check",
     "impacted-evidence",
     "init",
     "lsp",
@@ -156,7 +158,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "feedback record" => FEEDBACK_RECORD_HELP,
         "first-action" => FIRST_ACTION_HELP,
         "first-pr" => FIRST_PR_HELP,
-        "gate" => GATE_HELP,
+        "gate" | "gate check" | "gate evaluate" => GATE_HELP,
         "impacted-evidence" => IMPACTED_EVIDENCE_HELP,
         "init" => INIT_HELP,
         "lsp" => LSP_HELP,
@@ -295,7 +297,7 @@ fn push_catalog_example(examples: &mut Vec<&'static str>, path: &str) {
 
 /// The catalog `example` field for one command path: the catalog row looked up
 /// by path, then the metadata row joined on the catalog id.
-fn catalog_example(path: &str) -> Option<&'static str> {
+pub(super) fn catalog_example(path: &str) -> Option<&'static str> {
     let entry = crate::cli::command_catalog::catalog()
         .iter()
         .find(|entry| entry.path == path)?;
@@ -340,12 +342,14 @@ pub(super) fn print_gate_help() {
     );
 }
 
-/// Help for a group command (`policy`, `reports`, `baseline`, `pr-comments`).
+/// Help for a group command (`policy`, `reports`, `baseline`, `pr-comments`,
+/// `assistant-loop`).
 ///
 /// The group shares one body across its leaves. When the first argument names
-/// a registered leaf (`policy readiness`), the body's lead sentence is replaced
-/// by that leaf's one-line catalog summary, the same sentence `ripr help --all`
-/// shows; otherwise the group help prints unchanged.
+/// a registered leaf (`policy readiness`), only that leaf's help prints: its
+/// catalog summary, its own usage lines, its own options section, its catalog
+/// example, and a pointer to the whole family (#14314, see `help_leaf`).
+/// Otherwise the group help prints unchanged.
 pub(super) fn print_group_help(group: &str, args: &[String]) {
     let prefix = format!("{group} ");
     let Some(group_body) = registered_command_paths()
@@ -355,22 +359,21 @@ pub(super) fn print_group_help(group: &str, args: &[String]) {
     else {
         return;
     };
-    let rendered = render_command_help(group_body, &[]);
-    let leaf_summary = args.first().and_then(|leaf| {
+    let leaf_help = args.first().and_then(|leaf| {
         let path = format!("{group} {leaf}");
         if !registered_command_paths().contains(&path.as_str()) {
             return None;
         }
-        catalog_summary(&path)
+        crate::cli::help_leaf::leaf_help(&path)
     });
-    match (leaf_summary, rendered.split_once('\n')) {
-        (Some(summary), Some((_, rest))) => println!("{summary}\n{rest}"),
-        _ => println!("{rendered}"),
+    match leaf_help {
+        Some(scoped) => println!("{scoped}"),
+        None => println!("{}", render_command_help(group_body, &[])),
     }
 }
 
 /// The catalog `summary` field for one command path.
-fn catalog_summary(path: &str) -> Option<&'static str> {
+pub(super) fn catalog_summary(path: &str) -> Option<&'static str> {
     let entry = crate::cli::command_catalog::catalog()
         .iter()
         .find(|entry| entry.path == path)?;
@@ -547,7 +550,7 @@ mod tests {
     fn review_comments_help_discloses_cooperative_budget_boundary() -> Result<(), String> {
         let text = super::help_text_for("review-comments").ok_or("missing review-comments help")?;
         for required in [
-            "default 120000ms",
+            "default 600000ms",
             "safe boundaries",
             "Non-preemptible operations can overrun",
             "outer orchestration wrapper for a hard process bound",
@@ -873,6 +876,14 @@ mod tests {
                     .to_string(),
             );
         }
+        // The header describes the route; the refusal remedy for extra
+        // arguments belongs only in the refusal itself.
+        if header.contains("drop the extra arguments") {
+            return Err(
+                "the help --all header should not carry the extra-arguments refusal remedy"
+                    .to_string(),
+            );
+        }
         if !header.contains("except on ripr help --json") {
             return Err(
                 "the help --all global-flags paragraph should except the machine catalog route"
@@ -936,7 +947,9 @@ mod tests {
         assert!(CHECK_HELP.contains("which one governed"));
         assert!(CHECK_HELP.contains("`--root .`"));
         assert!(CHECK_HELP.contains("needs test-efficiency"));
-        assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
+        assert!(CHECK_HELP.contains(
+            "https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_ADOPTION.md"
+        ));
         assert!(CHECK_HELP.contains("--mode ready --json"));
         assert!(CHECK_HELP.contains("--quiet"));
         assert!(CHECK_HELP.contains("ripr progress:"));
@@ -1627,11 +1640,9 @@ mod tests {
             &["parse_first_action_options"],
         ),
         ("first-pr", FIRST_PR_PARSER_RS, &["parse_options"]),
-        (
-            "gate",
-            GATE_PARSER_RS,
-            &["parse_gate_options", "parse_gate_check_plan"],
-        ),
+        ("gate", GATE_PARSER_RS, &["parse_gate_options_for"]),
+        ("gate evaluate", GATE_PARSER_RS, &["parse_gate_options_for"]),
+        ("gate check", GATE_PARSER_RS, &["parse_gate_check_plan"]),
         (
             "impacted-evidence",
             IMPACTED_EVIDENCE_PARSER_RS,
@@ -1804,7 +1815,13 @@ mod tests {
             if !line.starts_with(' ') {
                 continue;
             }
-            if let Some(rest) = trimmed.strip_prefix("--") {
+            // A comma after the opening flag continues a list of flags that
+            // share one description (`--root, --label, --out`); known_flags
+            // reads every member, so this miner does too (#14086).
+            for token in trimmed.split_whitespace() {
+                let Some(rest) = token.strip_prefix("--") else {
+                    break;
+                };
                 let name: String = rest
                     .chars()
                     .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
@@ -1814,6 +1831,9 @@ mod tests {
                     if !flags.contains(&flag) {
                         flags.push(flag);
                     }
+                }
+                if !token.ends_with(',') {
+                    break;
                 }
             }
         }
@@ -2274,6 +2294,21 @@ fn parse_demo<'a>(xs: &'a str) {
                 "--static-json",
                 "hidden alias of --repo-exposure-json",
             ),
+            // #10543 item 4: `--output-dir` is the documented directory
+            // spelling; the old `--out-dir` stays accepted so existing
+            // scripts and workflows keep working, without listing two
+            // spellings for one option.
+            ("first-pr", "--out-dir", "hidden alias of --output-dir"),
+            (
+                "pr-comments requests",
+                "--out-dir",
+                "hidden alias of --output-dir",
+            ),
+            (
+                "pr-comments summary",
+                "--out-dir",
+                "hidden alias of --output-dir",
+            ),
             // `mcp --help --all` is rejected with a route to the documented
             // extended help (#9867); `--all` is not an accepted mcp flag, so
             // it owns no Options entry — the help body names the supported
@@ -2282,6 +2317,14 @@ fn parse_demo<'a>(xs: &'a str) {
                 "mcp",
                 "--all",
                 "rejected with --help; extended help is `ripr help --all`",
+            ),
+            // `completions --shell` is refused with the positional spelling
+            // (#15259); it is not an accepted flag, so it owns no Options
+            // entry.
+            (
+                "completions",
+                "--shell",
+                "rejected; the shell is positional (`ripr completions bash`)",
             ),
         ];
 

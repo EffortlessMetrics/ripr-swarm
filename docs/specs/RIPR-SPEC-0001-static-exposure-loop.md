@@ -74,6 +74,21 @@ of the block carries a comment delimiter (`/*`, `*/`) or an odd number of `"`.
 Only `name: value,` field lines may cross an edited line, since they may move
 within their literal. Text is compared exactly apart from a trailing `\r`.
 
+A `match` rewritten as `let ... else` (clippy `manual_let_else`) keeps its
+diverging statement: a removed single-line `None => return R,` arm and the
+added `return R;` seed no probe on either side when the `match` scrutinee and
+the `let ... else` scrutinee are the same text, the added statement is the
+first added line after its opener, and each text occurs exactly once in the
+window (#14428). The added pattern must use the unqualified spelling
+`Some(...)`, with no space before the opening parenthesis. An added
+`let None = option else {` diverges on the opposite variant. The pairing
+also leaves `Option::Some(x)` and `Some (x)` unpaired. All three forms keep
+both probes (#14498). A changed scrutinee, a changed return value, a multi-line
+`None => { .. }` arm, or a repeated statement keeps both probes. A pattern
+that itself holds ` = ` inside a string literal (`let Some("a = b") = s else
+{ .. }`) is not split from its scrutinee, so it fails closed and both probes
+stay; `a_pattern_with_an_equals_sign_never_pairs` pins that limit.
+
 A changed `struct`, `enum`, `union` or `trait` header that opens its body on the
 same line (`enum Operator<P, Q: Ord + Copy> {`, with any visibility or `unsafe`
 prefix) declares bounds and runs nothing, so it is one `static_unknown` probe
@@ -95,6 +110,246 @@ does not establish that every edit was represented. Uneven blocks, unrepresented
 families and ambiguous edits retain historical evidence. This rule changes
 removed-side reconciliation only; parser selection and constructor identities
 remain separate authorities.
+
+A change confined to one range expression or range pattern whose values feed an
+absorbing consumer (a method on the range's chain outside the length-preserving
+set such as `sum`, `contains`, `find` or `take`, a `for` header, or a match range
+pattern) reads infection `yes` only when an `assert_eq!`-family or bare boolean
+`assert!` holds a bare literal call of the owner (or its `.await`) whose folded
+result differs between the old and new range (#14419), compared against a
+literal equal to the current result. A helper, or a binding that is reassigned or
+read elsewhere, could move in lockstep with the owner, an `#[ignore]` test never
+runs, and a `#[should_panic]` test can pass on both versions, so none earns credit. A relational or
+`assert_ne!` check at such an input, or every asserted call agreeing on both
+versions, reads infection `weak`. The second case is not claimed for an
+equivalent rewrite or when the owner has other callers. A range handed to a call
+(`Iterator::sum(0..n)`) is gated like an absorbing method, `v.get(a..b)` and its
+unchecked or mutable forms slice like `v[a..b]`, and an assertion that
+never runs (a literal-false block, an uncalled closure, after a `return`, even
+on the same line as live code) reads nothing. An assertion inside code that may
+run zero times or not at all (a nested `fn` or `macro_rules!`, a closure, an
+`async` block, an `if` or `match`, a `for`, `while` or `loop` body, or a
+`#[cfg]`-gated statement) reads nothing too (#14538). A line where several
+ranges change at once is gated unless every changed range keeps a
+length-preserving reading with no range nested inside it. An edit inside a
+macro input (`matches!(n, 1..=5)`) or on a line that does not parse is gated
+when a range's written endpoints or operator differ between the versions
+(an edit beside the ranges, or a change in how many ranges the line holds, is
+not gated), and a
+moved char endpoint
+(`'a'..='z'` to `'b'..='y'`) is gated like an integer one (#14538). Any other gated change, including an input ripr cannot fold, reads
+`unknown`, except a moved match range pattern: whenever the fold does not
+establish what the tests see (arms it cannot read such as `&str` results, or
+rebound assertion macros), it keeps the ordinary arm-routing reading (#5992).
+So `(0..n).sum()` to `(0..=n).sum()` tested only by `sum_to(0)` is not
+`exposed`. A `sum` or
+`product` folds only when the owner's return type is written as a fixed-width
+integer (`u8` to `u64`, `i8` to `i64`) and no cast follows it; an unresolved
+alias such as `type Byte = u8` or a cast could wrap to the old value, so it is
+not folded. A test whose body
+rebinds or imports the owner's name supplies no separating input. Ranges feeding
+length-preserving chains (`.iter().map(..).collect()`, slicing, `.len()`,
+`.count()`) keep the ordinary reading, since an element more shows at every
+non-empty input. A set collect or an input where both ranges are empty is the
+known limit there.
+
+A free owner whose whole body is one single-line tail that is a parameter,
+bare on one side of the diff and under one prefix `-` (a signed `i8`-`i64`
+parameter) or `!` (a `bool` or primitive integer parameter) on the other,
+gets the owner's return as its flow sink (#14815), but only when, inside the
+owner's span, the diff adds exactly that tail line and removes exactly its
+positional counterpart, so the base-side owner is the current owner with that
+line restored; the paired removed line alone never stands in for the old
+owner. The base-side item must be the one the shared base-owner identity
+verifies as the same function (same qualified path and attributes, unique
+under that path on both sides, no added line on its signature or an
+enclosing header, no changed `mod` declaration on its module chain), and
+that item must equal the current one with the tail line restored. A `cfg`
+on the function, an enclosing item, the file or a `mod` declaration on its
+chain, or any `#[path]` module declaration, refuses, so a swapped module,
+`#[cfg]` twin or `#[path]` target cannot supply another function's body.
+The identity also reads the gates outside `mod` declarations and the
+function's own body attributes (see "Base-owner cfg gates" below). As a
+second layer, the reading also refuses when the index holds another function
+of the owner's name, or any indexed file renames an import to that name,
+calls `include!`, or defines a `macro_rules!` that may emit a module or such
+a function.
+The parameter and return types must be the same unshadowed primitive.
+`!` differs from its operand at every input, so the ordinary infection
+reading applies. `-a` and `a` agree at `0`, so infection reads `yes` only when
+an exact assertion pins a bare literal call whose folded result differs
+between the base-side and current owner, or every owner call in every related
+test that names it is such a literal call; agreeing asserted calls read
+`weak`, and an argument ripr cannot fold (a local, a loop row, a constant)
+reads `unknown`. So `-a` to `a` tested by `assert_eq!(f(0), 0)` is not
+`exposed`.
+Such a literal call counts only where it runs: a call in a closure, nested
+`fn`, loop, branch, `async` block, `let`-`else` `else` block, `cfg`-gated
+statement, after a `return` or
+after a statement that always diverges on a constant (a `let`-`else` whose
+one-variant pattern cannot match its literal value, a literal `Err(..)?` or
+`None?`; RIPR-SPEC-0231 rule 8) refuses the reading. So does a call in the
+right operand of `&&` or `||` (unless the left operand is the literal `true`
+or `false` that always evaluates it), and a call in the input of any macro
+other than `vec!`, `dbg!`, the `assert*` / `debug_assert*` family and the
+`format!` / `print!` / `write!` family, because that input is token text
+(`stringify!(f(5))`). An assertion macro evaluates only its operands (one for
+`assert!` / `debug_assert!`, two for the `*_eq!` / `*_ne!` forms) and formats
+any message only when it fails, so a call in the message arguments refuses
+(`assert!(true, "{}", f(5))`) while a call in an operand still counts. A call
+in a `let`-`else` `else` block refuses; one in its initializer still counts. An evaluating macro's input that holds `&&`, `|`, `?`, a
+nested macro or a control-flow keyword refuses too, even when the call would
+run (`assert!(true && f(5) == 5)`), because the parser does not read inside
+macro input (#14968).
+
+A predicate whose `if` (or `else if`) condition became the literal `true` or
+`false` reads its infection from the two owner versions (#14816), but only
+for a free owner when, inside the owner's span, the diff replaces exactly the
+condition's line and nothing else, and the two lines differ only by that one
+condition: a bare bool literal on the current side, and on the base side a
+single-line condition that is not itself a bool literal and holds no `let`
+(an `if let` pattern binds and tests, which a literal cannot stand in for). A
+condition spanning lines, two conditions starting on one line, or an
+attribute in the owner's body refuses. The base-side item must pass the same
+base-owner identity the unary-tail reading uses (same function, not
+`cfg`-gated, equal to the current item with the line restored), and the
+reading refuses when another function, import rename, `include!` or
+`macro_rules!` may answer the owner's name. The infection stage then folds
+both versions at the related tests' literal calls: `yes` when an exact
+assertion pins a call whose folded result differs, or every owner call in
+every related test that names it is such a call; `weak` when only a
+relational or inequality assertion separates them, or every asserted input
+already took the forced branch on the base side; `unknown` when the fold
+cannot read an argument, the condition or the body, or the workspace rebinds
+an assertion macro. An ignored or `should_panic` test supplies no reaching
+call. Infection credit does not confirm the predicate's reveal pairing, so an
+exact pin at a separating input stays `weakly_exposed`, not `exposed`.
+
+A removed line that is one bare literal (a number, `true`/`false`, or one
+quoted string or char, optionally followed by `,` or `;`) adds no removed-side
+`static_unknown` probe when its positional replacement in the same block
+already carries a modeled-family probe whose `before` is that literal
+(#14325). That probe judges the replaced value; a base-side catch-all would
+keep verification refused for code no test can reach. An equal literal
+deleted with no replacement keeps its own probe.
+
+A changed line that lies wholly inside a statement (`let`, expression
+statement or item) of a closure or `async` body nested in a multi-line
+returned expression is a statement of that body, not part of the returned
+value (#14192). A trailing comment on the line does not count. Examples are
+`let doubled = item * 2;` inside `with(|| { .. })`, inside
+`Box::pin(async move { .. })`, or inside an `async { .. }` tail. The
+`return_value` and `error_path` shapes of the outer expression do not select
+it, so it reads the families the same statement reads in a function body or a
+plain `if` tail block. A `return` on that line keeps its own narrower shape.
+The nested block's own tail expression, a method-chain link and an argument
+line are part of the returned value and keep the outer shape. A shape or line
+the parse cannot place keeps the earlier selection.
+Known under-credit: the rule is syntactic, so a `let` that feeds the nested
+tail (`.map(|x| {\n let y = x + 1;\n y\n})`) reads as the same statement
+in a function body does, not as the returned value. The lexical fallback
+that classifies such a line still reads its text the way it reads any
+function-body statement (a `?` reads `error_path`).
+
+### Base-owner cfg gates (#15003, #14952)
+
+A claim that compares a changed function's old and new body reads the
+base-side item through the shared base-owner identity, which reports whether
+a `cfg` or `cfg_attr` may compile the function out or swap it for a twin. A
+claim that sees that gate does not credit the function, so a test that runs a
+twin, or a function that no build compiles, never reads `exposed`,
+`weakly_exposed` or `reachable_unrevealed` with propagation credited from the
+changed body. The identity reports a gate when any of these holds:
+
+- a `cfg`/`cfg_attr` on the function, an enclosing item or the owner file, or
+  an inner attribute of the function's own body (`fn f() { #![cfg(..)] .. }`),
+  which Rust applies to the function itself (#15003);
+- a `cfg`/`cfg_attr` on a `mod` declaration named like a component of the
+  owner file's path, on an item enclosing one or on its declaring file, or any
+  `#[path]` declaration;
+- a `use` item (not emitted by a macro) with its own `cfg`/`cfg_attr`, or a
+  `pub` one under a gated item or file, whose leaf or rename is the owner's
+  name, a name in the self type or trait of an enclosing `impl`, or an
+  enclosing `trait` or inline module's name (`pub use real::Thing;` beside
+  `pub use fake::Thing;` swaps `Thing::ready`), or which may alias a module
+  named like a component of the owner's path, enclosing inline modules
+  included: by its last segment (`use a::imp;`), a rename or the segment it
+  renames (`use real as imp;`, `use crate::{real as imp};`), or any segment
+  of a glob or `self` import (`pub use crate::real_impl::*;`; #14952,
+  #15035). An intermediate segment of another leaf only names the module
+  that leaf lives in (`#[cfg(test)] use crate::real::Helper;` does not gate
+  `src/real.rs`). Two gated imports are not gates. One rooted at a sysroot
+  crate (`std`, `core`, `alloc`, `proc_macro`, `test`) in a module whose
+  items cannot shadow that root (no item, `use`, `extern crate`, non-sysroot
+  glob or macro call naming it) names that crate, unless an `extern crate ..
+  as` anywhere in the workspace (an item, or macro tokens spelling one)
+  renames a crate to a sysroot name (`extern crate self as std;`). A private
+  `use super::name;` directly inside a `#[cfg(test)]` module in which
+  nothing else can bind `name` (no other `use` binding it, no glob but
+  `super::*`, no item or `extern crate` naming it, and no module-level macro
+  call, which may emit the import) binds `name` to the parent's item or to
+  nothing. Every other root (`crate`, `self`, `super`, a module or any other
+  crate name) counts as crate-local, since telling a third-party crate from a
+  workspace package would need the manifests;
+- the owner file is not a crate root and no out-of-line `mod` declaration is
+  named like its module (or no module is named like a directory above it),
+  as for a file reached only through `include!` (#14952). A
+  crate root is `src/lib.rs`, `src/main.rs`, a file directly under `src/bin`,
+  `tests`, `examples` or `benches`, or such a directory's `x/main.rs`; its
+  `x/mod.rs` (`tests/common/mod.rs`) is module `x` of a sibling root, and a
+  library's `src/bin.rs` is module `bin`, and a root below another `src`
+  directory (`src/a/src/lib.rs`) reads as a module named by its stem when
+  some module named `src` is declared (#15035);
+- an `include!` (a call whose macro path ends in `include`, a comment before
+  its `!` included) whose literal path, resolved against the including file's
+  directory, is the owner file (compared case-insensitively); a literal that cannot be resolved (absolute, or climbing above
+  the including path) gates the owner file's stem by name. An `include!` of
+  one `concat!` call gates, by name, the stem of the `.rs` path `concat!`'s
+  trailing string literals spell, joined (`"/src/re", "al.rs"` spells
+  `/src/real.rs`), and every owner otherwise: any other macro argument
+  (`include!(src_file!("unused.rs"))`), arguments not ending in a literal, a
+  literal with escapes, or a run after another argument that spells no `/`
+  (#15035). A bare `concat!` is trusted only while no file of its package
+  (any file once one mentions `macro_export`, or once a `#[path]` may move a
+  file between packages) may bind a macro named `concat` (`macro_rules! concat`, `macro concat`, `as concat`
+  in an item or macro tokens, a `use` leaf named `concat`, or any
+  `#[macro_use] extern crate`; a glob bringing one in is not read), and a
+  `core::`/`std::` qualified one only while nothing binds `core` or `std`
+  (an `extern crate .. as`, a `use` leaf or rename, or a `mod core`);
+- a `macro_rules!` transcriber or `macro` body that may emit an out-of-line module (`mod`
+  followed by a name and no `{` body), an `include!` or a `#[path]`
+  (`path =`), and the owner file is not a crate root of the package that
+  defines the macro (the directories above its anchor), or of any package
+  when it is exported (`#[macro_export]`, or a `macro` with a visibility); a
+  macro emitting only inline `mod name { .. }` modules is not a gate.
+
+A diff that adds or removes any of these refuses the identity; touching an
+attribute of an item enclosing a gated `use` or `include!` (removing
+`#[cfg(not(test))]` from a `mod api` whose `pub use` is unchanged) counts.
+Two changes are narrowed to what the unchanged reading gates: a touched
+sysroot rename refuses only owners a gated sysroot-rooted `use` (either side)
+names, and a touched module-emitting macro does not refuse a crate-root owner
+(#15035). Names approximate the module chain, so a name can only gate more
+owners than the exact chain would, except for these name-coincidence limits:
+a module of the same name in another directory satisfies the declaration
+check for a file reached only through a renamed `include!`, or only through a
+`mod` inside a macro call the reading cannot expand (`cfg_if::cfg_if!`); and
+a package scope is read from the path layout (a non-exported macro reaches
+every target of its package, no other). Not read: a module or
+re-export emitted by a procedural macro; a private `use` gated only through
+its enclosing module; a gated `use` a macro's tokens emit (a
+`cfg_if::cfg_if!` block, a `macro_rules!` emitting a gated `pub use`, an
+import a macro emits in the test module); and a
+gated alias of a module that only re-exports the owner (`#[cfg(not(test))]
+use api as imp;`), since only the owner's own chain is matched (#15037);
+a gated glob of such a re-export facade module (#15037); an `include!` whose
+path a forwarding macro passes through its arguments (a macro-emitted item);
+and an `include!` through a renamed macro (`use core::include as inc;`),
+whose owner file is still gated when no `mod` declares it. These limits can
+credit on either tail path: the unary-tail reading's own refusals catch some
+(a `cfg_if!` block beside a stand-in) but not, for example, a
+`macro_rules!`-emitted gated `pub use` beside a stand-in that is not a
+function.
 
 ## Required Evidence
 
@@ -151,6 +406,49 @@ initializer or discriminant `=`. Declared limit: a bare path such as `None` or
 `Foo` is indistinguishable from a type, so `value: None,` inside an item macro
 reads as a declaration; so does `A + B` between two bound names and a
 parenthesised single path `(a)`.
+A parameter line of a `fn` written in a macro call body (`feature! { fn f(
+a: u32, ) {} }`) is a declaration under the same type-syntax allowlist
+(#13983). Its `( .. )` tree must directly follow `fn name` or `fn name<..>`;
+the generic list must balance, may hold `Item = u8` and `Fn() -> u8` bounds,
+and fails closed on `;` or `=>`. The parameter list must sit in an item
+position of the macro call: the call's own token tree, or below it only
+`{ .. }` trees that are each an `impl`, `trait` or `mod` body or the body of a
+nested `name! { .. }` call, at most eight levels deep. A fn-pointer type
+(`fn(..)`), a call argument (`make(a: 1,)`), a macro arm, a struct literal and
+a default value (`d: u32 = 1,`) keep their probes. Declared limits: a receiver
+line (`&self,`) has no type and is not classified by this rule, and a fn nested
+inside another fn body in a macro keeps `field_construction`.
+
+A complete Rust item moved within its file and its owner, with no other
+change, seeds no probe on either side (#15110). The removed run and the added
+run must hold the same text and the same code once comments and strings are
+blanked, no other run may hold that text, the block must be one or more
+complete items starting at an item boundary, and both copies must sit in the
+same owner: the file's top level, or the same chain of `mod` headers ending in
+a `mod`, `impl` or `trait` header. An owner block that opens with an inner
+attribute is never that owner. A file where order or source position is
+observable keeps every move probed: `macro_rules!` or `#[macro_use]`,
+`std::panic::Location`, `line` or `column` imported under another name, or a
+macro invocation outside a short list of position-free standard macros. A
+statement, field or variant reordered inside its parent, a move into another
+owner, a fragment of an item and a move with an edit keep their probes.
+
+A replaced line whose code is unchanged seeds no probe on either side when
+the only difference is a trailing `//` comment, its line ending, or a block
+comment inside the line (`if x > 1 /* old */ {`) added, removed or reworded
+(#14175, #15232). For a block comment, each line is read on its own: its code
+with comment and literal contents masked and whitespace kept only where it
+separates two word characters or two characters of a longer Rust token
+(`&&`, `==`, `::`), and the raw text of each string and character literal,
+must equal the other line's. At least one side must hold an actual block
+comment before any line comment.
+These keep their probes:
+- a comment that held two tokens apart (`a/*x*/b` against `ab`);
+- a documentation comment (`///`, `//!`, `/**`, `/*!`) on either side;
+- a line that ends inside a comment or string, or that reads differently in
+  its file than alone (inside a multi-line comment or string);
+- a changed literal;
+- a position macro or string continuation on either line.
 
 Finding IDs remain content-addressed by path, probe family, owner and normalized
 expression. Line movement, checkout root, diff/discovery order and unrelated
@@ -208,6 +506,25 @@ and literal consumer controls are specified by
 - GitHub annotations
 - LSP diagnostics and hover content when used through the editor
 - agent context packet for a selected finding
+
+For the same workspace, diff and root path, `ripr check --diff` stdout in the
+pinned formats (`human`, `human-full`, `json`, `json-terse`, `agent`,
+`github`, `sarif`, `missed-txt`) is byte-identical across repeated runs, a
+cold or warm run cache, one or four analysis workers (`RAYON_NUM_THREADS`),
+and the workspace's files written in reverse order. Not covered by this
+contract: `check-findings-json`, whose artifact stamps a per-run time unless
+`RIPR_GENERATED_AT=unix_ms:<millis>` pins it (the pinned artifact then
+repeats byte for byte, and a malformed pin refuses the run), and
+the human digest's one-time first-run legend (#10481), which is intended
+state. Rerun commands carry the absolute root, so output also differs by
+checkout location (#14230).
+
+The same pin sets a receipt's `written_at` and the report commands'
+`generated_at`, which are otherwise the only bytes that differ between two
+writes of one receipt or report; a malformed pin refuses those commands
+before anything is written (#14230). The pin never moves a deadline
+judgment: `ripr zero status`, which judges review deadlines against its own
+stamp, stays on the current time.
 
 ## Classifications
 
@@ -422,10 +739,22 @@ credit: an unresolved boundary keeps its own reason, and a predicate with no
 input at its boundary keeps its weak reading. An edit inside one operand of
 an unchanged chain keeps its boundary credit. Because it compares only the
 connectives, swapping one operand for another (`a && 100 <= p` to `100 < p
-&& b`) or regrouping a chain is not yet caught. The rule reads one changed
-line: a chain that rustfmt splits across lines (`if other > 0` over `&&
-100 <= points`) pairs only its first old line as `before`, so it is not yet
-covered (#7945).
+&& b`) or regrouping a chain is not yet caught. A chain that rustfmt split
+across removed lines (`if other > 0` over `&& 100 <= points`) is read whole
+(#7945): when a predicate's replacement block removes two or more consecutive
+old lines and one of them starts or ends with `&&` or `||` outside strings
+and comments, the predicate's old text is the whole block, joined into its
+one-line spelling, instead of the one removed line that pairing names. A
+block holding a comment keeps its line breaks and is compared uncut. A block
+holding more than one statement head (outside strings and comments it holds
+a `;`, a `}` or more than one `{`) is not read whole, because its connectives
+belong to several predicates; it keeps the single-line pairing, and its
+lines keep their own probes. The chain's old lines
+(each line that starts or ends with a connective, and the neighbour it
+continues) are the predicate's old side, so they get no deleted-line probe of
+their own: one operand of the old chain is not a predicate an input at its
+boundary can expose. A new-side chain that spans several added lines still
+reads its probe's own shape text.
 
 A computed argument or operand is not the literal it contains. An owner-call,
 table-row, or builder-method argument that applies a binary arithmetic,
@@ -601,9 +930,149 @@ owner's own source file through the shared named-constant lookup in
   the constant's value; repo-seam grip reports activation unknown with the
   boundary-constant limitation and no actionable repair packet.
 
+Appended string-equality arm example (#14388):
+
+```rust
+pub fn options_from_flag(flag: &str) -> Options {
+    Options { retries: 3, verbose: flag == "-v" || flag == "--verbose" }
+}
+```
+
+When the diff appends one `|| param == "lit"` arm to a chain of string
+equalities on the same parameter (base `flag == "-v"`), a related test that
+calls the owner with exactly the new literal (`options_from_flag("--verbose")`)
+reads infection `yes` (medium confidence): distinct literals make every
+original arm false on that input and the new arm true. The reading is
+fail-closed and every other shape keeps the ordinary reading. It requires:
+
+- every arm to be a plain `==` between the one parameter and an escape-free
+  string literal, joined only by `||`, with distinct literals and the base
+  chain equal to the head chain minus its last arm;
+- the parameter to be declared `&str`, `&'a str`, `String` or `&String`
+  (another type may implement `PartialEq<&str>` differently), never
+  rebound, and the owner to have no other callers;
+- an owner-call argument fact binding the parameter to exactly the new
+  literal, and no assertion macro name rebound anywhere in the indexed
+  workspace, since a rebound macro could discard the call. This is a
+  workspace-wide condition, as in RIPR-SPEC-0353;
+- the chain to be the owner's first decision and to end its expression. No
+  `if`, `match`, loop, `return`, `break`, `continue`, `?`, `=>`, closure,
+  `&&`, macro, call, index, `/` or `%` precedes it, and `,`, `;` or `}`
+  follows it.
+
+Integer and char arms read the same way (#15027): `n == 1 || n == 2` with
+`n` declared as a primitive integer (`u8` to `u128`, `usize`, `i8` to
+`i128`, `isize`), and `c == ',' || c == ';'` with `c: char`. Every arm
+uses one literal kind. Integer literals are plain decimal, with no sign,
+suffix, underscore, radix prefix or leading zero, and at most 18 digits, so
+two distinct spellings are two distinct values (`5` and `05`, `5_u32` or
+`0x5` decline). A longer literal declines too, which costs only recall. A char
+literal is one unescaped character that cannot read as an operator, so
+`'|'`, `'!'`, `'('` and any escape decline. A newtype, a float, a reference
+or a `u8` compared with a char literal declines. The infection summary names
+the kind: "every original integer-equality arm is false".
+
+When such a chain (string, integer or char) is the owner's returned tail on
+the changed line, propagation reads `yes` through the return sink. Any input
+equal to the new literal flips the whole chain, so the chain's change is the
+returned change. Any other `||` or `&&` tail keeps no sink, because a changed
+operand of `x > 1 || y` may be masked by `y`. The sink establishes
+propagation only. A test that passes only an original arm's literal still
+leaves infection short of `yes`.
+
+Guarded boundary rule (#13037): a changed comparison joined by top-level
+`&&` to guards that are each a bare owner parameter or its negation
+(`order_cents >= FREE_OVER_CENTS && !express`) compares the parameter with
+the boundary; the guards are not part of either operand. The boundary must
+be a literal or a constant the rules above resolve, the compared parameter
+and every guard must be parameters the owner never rebinds, nothing
+before the changed line may divert a row, and the edit must leave the
+guards as they were (same names and polarity): an edit that adds, removes
+or flips a guard is not read this way, since rows that hold the new guards
+may behave the same on both sides, and keeps the general reading. Every
+related row must spell each guard as a literal. A shape with unchanged bare
+parameter guards that misses another condition is declined, as listed
+below. Then:
+
+- only a test call that holds every guard as a literal (`express = false`)
+  and sits on the boundary value activates the boundary, and same-test
+  pairing reads each observed call (and each bound result) on its own, so a
+  boundary call that misses a guard never pairs with an exact assertion;
+- a boundary row tells the versions apart only when the edit changed just
+  the operator and the old and new operators disagree at equality (`>` to
+  `>=`, not `>=` to `<=`), or when an equality test (`==` or `!=`) kept its
+  operator and changed only the compared value (`x == 4000` to
+  `x == 5000`), whose new-value row takes the other branch in each version;
+  a moved ordering threshold (`x >= 5` to `x >= 6`) is not read this way;
+- a pure insertion is read only for a non-strict operator (`>=`, `<=`,
+  `==`), whose boundary row enters the inserted branch, as for a lone
+  inserted guard (#12414);
+- when readable rows exist but none holding the guards sits on the
+  boundary, the boundary is unresolved (`infection unknown`) with the guard
+  and boundary value named. It is never reported as an actionable missing
+  discriminator, because this narrow reading cannot tell a fixture or
+  builder input it does not see from a missing one;
+- a guarded shape this rule declines is unresolved (`infection unknown`)
+  with the guards named, never an actionable gap. That covers a `mut` or
+  rebound guard, a compared side that is not a plain owner parameter (a
+  field, a local, a call or arithmetic), a boundary whose value the owner's
+  file does not show, an earlier branch or early return before the changed
+  line, a moved ordering threshold, operators that agree at the boundary, a
+  strict inserted comparison, and rows that do not spell each guard as a
+  literal. It does not fall
+  through to the compound-predicate reading (#9637, RIPR-SPEC-0158), which
+  reads the comparison without its guards and would credit a boundary row
+  with `express = true`, a row neither version tells apart;
+- any other compound shape (`||`, a guard that is a call or a comparison,
+  two comparisons) keeps the previous reading unchanged.
+
+Fixture `fixtures/rust_guarded_boundary_guard_missing` and honesty-corpus
+case `rust_guarded_boundary_guard_missing_not_promoted` pin the guard-missing
+boundary row as `infection_unknown`.
+
+The repo-wide seam view (`--format repo-exposure-json`, the evidence `ripr
+repair` reads) applies the same rule to the comparison seam it splits from
+such a predicate (#14872). The seam's activation is `unknown` with the guards
+named, and it carries no missing value, unless one related test call sits on
+the boundary value while holding every guard, and a discriminating
+assertion's compared operands observe that same call (the call, or `r`
+from `let r = call;` with `r` bound once, as a whole operand; a line
+with two owner calls, a call buried in a larger expression, or a name only
+in the assertion message or a comment, does not count).
+A literal, a test local bound once and never shadowed or reassigned, or
+the boundary constant's own name each count; any other local, a `mut` or
+rebound guard parameter, or a compared side that is not a plain parameter,
+counts as unheld. A constant on the left (`LIMIT <= amount`) is oriented as
+`check` orients it. The call must resolve to the changed owner, not a
+same-named function in another module, and the seam keeps `unknown` without
+crediting any row when the tested parameter may be rebound before the
+comparison or an earlier decision in the owner can return first, the same
+reachability `check` requires. Such a seam is not offered as a `ripr repair`
+start (a `stock > 0 && blocked` change tested only with `blocked = false`
+starts the whole-line seam, not the boundary). So a row that misses a guard can no longer grip the seam
+while `check` reads the same change as unclear. Both views read the guard
+from the comparison's own `if`/`else if`/`while` line plus any lines rustfmt
+wraps under it that each open with `&&`, up to the opening brace, with
+comments masked; an edit
+whose old line cannot be read with the wrapped guards is declined; a predicate
+written as `let`/`return` is not yet read as guarded (#14874). Honesty-corpus case
+`rust_repo_exposure_guarded_boundary_guard_missing_not_promoted` pins it.
+
 ## Test Mapping
 
+Output determinism (#14230):
+
+- `crates/ripr/tests/output_determinism.rs::rust_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::python_check_output_is_byte_identical_across_runs_workers_and_write_order`
+- `crates/ripr/tests/output_determinism.rs::typescript_check_output_is_byte_identical_across_runs_workers_and_write_order`
+
 Fixture coverage:
+
+- `crates/ripr/tests/guarded_boundary_13037.rs` (guarded boundary rule: a
+  guard-holding boundary pin is exposed; guard-missing rows, no boundary
+  row, split tests, a guard-missing bound result (also beside a same-line
+  sibling), an added guard, a moved threshold, operators that agree at the
+  boundary, a strict insertion and a rebound guard are not credited)
 
 - `unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim`
 - `weak_direct_owner_assertion_keeps_exact_value_advice`
@@ -675,6 +1144,7 @@ Fixture coverage:
 - `fallible_slice_observations_cannot_credit_later_rows`
 - `fixtures/rust_slice_table_boundary`
 - `fixtures/rust_slice_table_zero_elements`
+- `fixtures/rust_multi_line_dropped_conjunct`
 - `fixtures/rust_slice_table_try_exit`
 - `fixtures/rust_slice_table_call_exit`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
@@ -722,17 +1192,48 @@ Fixture coverage:
 - `lone_else_split_hunk_is_not_no_behavioral_candidates`
 - `multi_line_attribute_entries_seed_no_probe_but_the_same_text_as_code_does`
 - `attribute_continuation_lines_cover_the_span_and_fail_closed`
+- `multi_line_use_entries_seed_no_probe_but_the_same_text_as_code_does`
+- `use_continuation_lines_cover_the_span_and_fail_closed`
 - `an_identical_line_inside_a_replacement_block_seeds_no_probe`
 - `identical_line_suppression_is_fail_closed`
 - `identical_line_pairing_never_hides_reorders_or_block_moves`
+- `a_manual_let_else_rewrite_pairs_its_diverging_statement`
+- `manual_let_else_pairing_is_fail_closed`
+- `manual_let_else_pairing_requires_an_unqualified_adjacent_some_pattern`
+- `a_reversed_let_else_pattern_never_pairs`
+- `a_neighbouring_functions_arm_never_pairs`
+- `a_scrutinee_with_an_equals_sign_still_pairs`
+- `a_pattern_with_an_equals_sign_never_pairs`
 - `multiline_builder_chain_setup_row_is_dropped_beside_the_assertion`
 - `multiline_setup_row_stays_unless_it_is_a_bare_unwrap_chain_beside_an_assertion`
 - `keyword_probe_tokens_do_not_relate_tests_by_name`
+
+A private, plain `extern crate name;` line seeds no probe: like a private `use`
+import it only links a crate and holds no behavior a test could notice
+(#14403). A visibility-qualified form (`pub extern crate foo;`) re-exports the
+crate under the module's path, like a visible `use`, and keeps its probe; so do
+the renaming form (`extern crate core as std;`, `extern crate self as name;`)
+and a line with any trailing code. The rule reads one line on either diff side, so a removed
+`#[macro_use]` + `extern crate foo;` pair also seeds no probe, matching the
+existing `#[macro_use] mod name;` behavior; a macro that pair brought into scope
+is a known limitation, not a reported change.
+- `plain_extern_crate_is_ignored_but_a_rename_is_not`
+- `diff_producer_ignores_plain_extern_crate_but_probes_a_rename`
 
 The entries of a multi-line `#![..]`/`#[..]` attribute (a lint list, a `cfg_attr`
 argument list) are attribute text, like the single-line form, and seed no probe
 on either diff side (#10089). The closing line counts only when nothing follows
 the bracket, and an unclosed attribute marks nothing.
+
+The entries of a multi-line `use a::{ .. };` or `pub use a::{ .. };` declaration
+are import text, like the single-line form, and seed no probe on either diff
+side (#8389). The openers are exactly the single-line forms already skipped, so
+a visibility-qualified re-export (`pub(crate) use`) keeps its probes on every
+line. The closing line counts only when nothing follows the `;`, and a
+declaration that never closes, closes outside its braces, or holds a character
+no `use` tree can hold marks nothing. Import-shaped tokens inside a
+token-observing macro such as `stringify!` are that macro's data and keep
+their probes.
 
 Related-test name tokens come from the changed expression's identifiers. A Rust
 keyword (`return`, `while`, `loop`, ...) is syntax and never a name token, and
@@ -752,12 +1253,36 @@ closer on or inside a function span (including its `end_line`) keeps its probe
 helper checks the line's position, not the kind of item it closes. The removed
 side is unchanged.
 
+A closers-only added line that is its function's `end_line` also seeds no probe
+when Git's diff slider moved it (#15270). This happens when an item such as
+`agent stub --write`'s test module is appended right after a function. Git then
+reports the function's unchanged `}` as the first added line and leaves the
+appended item's identical closer as context. All of the following must hold:
+
+- the line starts a contiguous added run of more than one line;
+- the line right after that run is unchanged;
+- that context line is byte-identical to the added line, ignoring only a CRLF
+  carriage return;
+- that context line is an item-level closer in the sense above.
+
+Any other function-end closer keeps its probe. That includes an indented
+method closer followed by its `impl`'s closer, and a closer whose run has a gap.
+
 A changed line that opens with the `impl` keyword (optionally `unsafe`) and holds
 no body brace, `;` or `fn ` is the first line of a rustfmt-wrapped `impl` header
 (`impl<Item, const N: usize> Drop` before `for Holder<Item, N>` and `{` on later
 lines). It declares only, so it seeds a single `static_unknown` probe like a
 one-line `impl ... {` header (#8389) and never `field_construction` for a
 const-generic bound or `call_deletion` for a generic attribute (#10244).
+
+A one-line `type` item (a trait's associated type `type Eq: CmpEq;` or
+`type Item;`, an impl binding `type Eq = __m128i;`, or a type alias
+`pub type Map<K> = BTreeMap<K, u8>;`) declares a type and runs nothing. It
+seeds a single `static_unknown` probe, like an item header, and never
+`field_construction` for its `name: Bound` text (#14429). A line that does not
+end the item with `;`, joins a second statement, or whose type holds an
+expression (a block, a macro, or any array length such as `[T; 4]`) keeps its
+ordinary families.
 
 ## Implementation Mapping
 

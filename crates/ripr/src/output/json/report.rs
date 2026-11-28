@@ -262,10 +262,15 @@ pub(crate) fn render_with_config(
         })
         .collect();
     // #13819: findings withheld because their changed owner opted out.
-    let withheld_reasons: BTreeMap<&str, &str> = output
+    let withheld_reasons: BTreeMap<&str, (&str, &str)> = output
         .owner_opt_outs
         .iter()
-        .map(|opt_out| (opt_out.finding_id.as_str(), opt_out.reason.as_str()))
+        .map(|opt_out| {
+            (
+                opt_out.finding_id.as_str(),
+                (opt_out.reason.as_str(), opt_out.scope.as_str()),
+            )
+        })
         .collect();
     // Streaming byte cutoff (#5203): findings render in the pipeline's
     // deterministic `sort_findings` order; once the emitted array bytes
@@ -886,12 +891,12 @@ pub(super) fn finding_json(out: &mut String, finding: &Finding, indent: usize) {
 }
 
 /// Additive per-finding markers: the `--suppression-policy` selector that
-/// suppressed it (#1441) and the owner opt-out reason that withheld it
-/// (#13819). Both are `None` for an ordinary finding.
+/// suppressed it (#1441) and the owner opt-out reason and scope that withheld
+/// it (#13819, #13910). Both are `None` for an ordinary finding.
 #[derive(Clone, Copy, Default)]
 struct FindingMarks<'a> {
     suppressed_by: Option<&'a str>,
-    withheld_by: Option<&'a str>,
+    withheld_by: Option<(&'a str, &'a str)>,
 }
 
 fn finding_json_with_config_and_counts(
@@ -919,8 +924,11 @@ fn finding_json_with_config_and_counts(
     // Additive (#13819): present only on findings withheld because their
     // changed owner opted out (`owner_mutants_skip`). The finding stays fully
     // rendered with its unchanged class, so the withholding is visible.
-    if let Some(reason) = marks.withheld_by {
+    // `withheld_scope` (#13910) names the scope that carried the attribute:
+    // `fn`, `impl`, `trait`, `module` or `file`.
+    if let Some((reason, scope)) = marks.withheld_by {
         field(out, indent + 1, "withheld_by", reason, true);
+        field(out, indent + 1, "withheld_scope", scope, true);
     }
     if let Some(gap) = &finding.canonical_gap {
         field(out, indent + 1, "canonical_gap_id", &gap.id, true);
@@ -1387,10 +1395,13 @@ fn strongest_related_test(finding: &Finding) -> Option<&RelatedTest> {
     ) {
         return crate::output::related_test_miss::typescript_script_preview_related_test(finding);
     }
+    // #14483: the shared observation tier leads, so the summary never
+    // describes a row whose assertion cannot observe the change while a row
+    // that can is listed; strength then picks within the tier.
     finding
         .related_tests
         .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
+        .max_by_key(|test| (test.observation_tier(), test.oracle_strength.rank()))
 }
 
 /// The observed values the check JSON renders for a finding: every value up
@@ -1563,7 +1574,9 @@ fn missing_discriminator_json(out: &mut String, fact: &MissingDiscriminatorFact,
     out.push_str(&format!("{sp}}}"));
 }
 
-fn flow_sink_json(out: &mut String, sink: &FlowSinkFact) {
+/// One flow sink as `{kind,text,line}`, the shape both `check` findings and
+/// context packets use for `missing_discriminators[].flow_sink` (#10516).
+pub(super) fn flow_sink_json(out: &mut String, sink: &FlowSinkFact) {
     out.push_str(&format!(
         "{{\"kind\":\"{}\",\"text\":\"{}\",\"line\":{}}}",
         sink.kind.as_str(),
@@ -1577,6 +1590,7 @@ struct RepairPlacement {
     suggested_test_name: String,
     suggested_test_node_id: Option<String>,
     verify_command: String,
+    verify_cwd: Option<String>,
     verify_command_confidence: String,
 }
 
@@ -1597,6 +1611,7 @@ fn repair_placement_from_evidence(finding: &Finding) -> Option<RepairPlacement> 
             "suggested_verify_command_confidence: ",
         )?
         .to_string(),
+        verify_cwd: evidence_value(finding, "suggested_verify_cwd: ").map(ToString::to_string),
     })
 }
 
@@ -1638,6 +1653,9 @@ fn repair_placement_json(out: &mut String, placement: &RepairPlacement, indent: 
         &placement.verify_command,
         true,
     );
+    if let Some(cwd) = &placement.verify_cwd {
+        field(out, indent + 1, "verify_cwd", cwd, true);
+    }
     field(
         out,
         indent + 1,
@@ -1753,6 +1771,9 @@ fn python_repair_card_json(out: &mut String, card: &PythonRepairCard, indent: us
     out.push_str(&format!("{} }},\n", "  ".repeat(indent + 1)));
     out.push_str(&format!("{}\"verify\": {{\n", "  ".repeat(indent + 1)));
     field(out, indent + 2, "command", &card.verify_command, true);
+    if let Some(cwd) = &card.verify_cwd {
+        field(out, indent + 2, "cwd", cwd, true);
+    }
     field(
         out,
         indent + 2,
@@ -2201,6 +2222,7 @@ mod evidence_path_separator_tests {
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:9:error_path".to_string()),
                 location: SourceLocation::new("src/lib.rs", 9, 1),
                 owner: Some(SymbolId("crate::sample".to_string())),
@@ -2272,9 +2294,13 @@ mod evidence_path_separator_tests {
         if windows.contains('\\') {
             return Err(format!("evidence_path kept a backslash: {windows}"));
         }
-        if windows
-            != "related test tests/discount.test.ts:4 applies the discount uses strong exact value oracle"
-        {
+        // On Unix a backslash is a file-name byte, spelled `%5C` (#15908).
+        let expected = if cfg!(unix) {
+            "related test tests%5Cdiscount.test.ts:4 applies the discount uses strong exact value oracle"
+        } else {
+            "related test tests/discount.test.ts:4 applies the discount uses strong exact value oracle"
+        };
+        if windows != expected {
             return Err(format!("unexpected evidence_path line: {windows}"));
         }
         let posix = related_line("tests/discount.test.ts")?;

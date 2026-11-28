@@ -3,6 +3,19 @@
 ## Pending
 
 Reason:
+#13895: suppressed seam records keep the domain `canonical_gap_id` (optional
+field) so a suppressed or cap-omitted gap still matches its baseline entry
+after source movement.
+
+Command:
+`RIPR_UPDATE_FIXTURES=1 cargo test -p ripr --lib output::review_comments::tests::review_comments_pr_guidance_fixtures_pin_required_cases -- --exact`
+
+Updated:
+- `capped/comments.json`
+
+## Previous
+
+Reason:
 RIPR-SPEC-0068: emit `suggested_test.proposed_target` (`null` when the producer
 has no governed InlineUnit/Integration new-test proposal) on working-set review
 cards so the gate can project a distinct Proposed repair target (#3162).

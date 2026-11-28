@@ -44,9 +44,9 @@ pub(crate) fn probes_for_repo_file_seeded(
         // #9119: a production fn sharing a physical line with a #[test]
         // fn stays production-eligible (fail closed), matching
         // `changed_line_is_test_evidence` in probes/diff.rs.
-        let owner_function = find_owner_function(index, path, shape.start_line);
+        let owner_function = find_owner_function(index, path, shape.start_line());
         if owner_function.is_some_and(|function| {
-            repo_owner_is_unambiguous_test_evidence(index, path, shape.start_line, function)
+            repo_owner_is_unambiguous_test_evidence(index, path, shape.start_line(), function)
         }) {
             continue;
         }
@@ -66,8 +66,9 @@ pub(crate) fn probes_for_repo_file_seeded(
         let required_oracles = required_oracles(&shape.text, &family);
 
         let probe = Probe {
+            before_condition: None,
             id,
-            location: SourceLocation::new(root.join(path), shape.start_line, 1),
+            location: SourceLocation::new(root.join(path), shape.start_line(), 1),
             owner,
             family,
             delta: DeltaKind::Unknown,
@@ -78,7 +79,7 @@ pub(crate) fn probes_for_repo_file_seeded(
             required_oracles,
         };
         let parser_span = (shape.start_line == shape.end_line)
-            .then(|| ParserByteSpan::same_line(&shape.text, shape.start_byte))
+            .then(|| ParserByteSpan::same_line(&shape.text, shape.start_byte()))
             .flatten();
         probes.push(SeededProbe::maybe_with_span(probe, parser_span));
     }
@@ -106,6 +107,7 @@ pub(crate) fn probes_for_repo_file_seeded(
             u32::try_from(ordinal + 1).unwrap_or(u32::MAX),
         );
         probes.push(SeededProbe::from_probe(Probe {
+            before_condition: None,
             id,
             location: SourceLocation::new(root.join(path), region.start_line, 1),
             owner: None,
@@ -210,10 +212,10 @@ mod tests {
 
     fn predicate_shape(line: usize, text: &str) -> ProbeShapeFact {
         ProbeShapeFact {
-            start_line: line,
-            end_line: line,
+            start_line: crate::analysis::facts::probe_shape_position(line),
+            end_line: crate::analysis::facts::probe_shape_position(line),
             start_byte: 0,
-            end_byte: text.len(),
+            end_byte: crate::analysis::facts::probe_shape_position(text.len()),
             kind: ProbeShapeKind::Predicate,
             text: text.into(),
             value_consumed: false,

@@ -43,7 +43,7 @@ impl<'a> FunctionKey<'a> {
 /// every index consumer sees the same executable-test role regardless of
 /// which syntax producer handled the file.
 pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), String> {
-    let generator_files = super::quickcheck_generator::verified_files(index);
+    let generator_impls = super::quickcheck_generator::verified_impls(index);
     let aliases = LocalTestAliases::collect(
         &index.files,
         &index.function_facts,
@@ -53,7 +53,7 @@ pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), S
     for facts in index.files.values_mut() {
         cancellation::checkpoint()?;
         let alias_credit = aliases.credit_for(&facts.path);
-        let generator_file = generator_files.contains(&facts.path);
+        let generator_file = generator_impls.get(&facts.path).map(Vec::as_slice);
         normalize_indexed_file_test_styles(
             facts,
             &mut index.function_facts,
@@ -103,7 +103,7 @@ fn normalize_indexed_file_test_styles(
     functions: &mut FactArena<FunctionFact>,
     tests: &mut FactArena<TestFact>,
     alias_credit: FileAliasCredit,
-    generator_file: bool,
+    generator_file: Option<&[super::quickcheck_generator::AdmittedImpl]>,
 ) -> Result<(), String> {
     let mut existing_tests = std::mem::take(&mut facts.tests)
         .into_iter()
@@ -170,7 +170,9 @@ fn normalize_indexed_file_test_styles(
             // A proof harness is verification source, not a production seam
             // and not a test: no `TestFact`, no assertion credit.
             FunctionSourceRole::ProofHarness
-        } else if generator_file && super::quickcheck_generator::is_generator(function) {
+        } else if generator_file
+            .is_some_and(|impls| super::quickcheck_generator::is_generator(function, impls))
+        {
             FunctionSourceRole::TestInputGenerator
         } else {
             FunctionSourceRole::Production
@@ -218,6 +220,67 @@ pub(crate) fn attributes_define_test<'attribute>(
             // `#[cfg_attr(all(), test)]` is a `#[test]` in a test build.
             || cfg_predicates::attribute_introduces_only_test(attribute)
     })
+}
+
+/// Attributes that cannot rewrite a function body: they gate, document,
+/// lint, or carry harness arguments. An attribute outside this set and the
+/// built-in test harnesses may be an attribute macro, which can add a `use`
+/// or replace the body (#12857).
+const BODY_PRESERVING_ATTRIBUTE_PATHS: &[&str] = &[
+    "ignore",
+    "should_panic",
+    "cfg",
+    "allow",
+    "warn",
+    "deny",
+    "forbid",
+    "expect",
+    "doc",
+    "inline",
+    "track_caller",
+    "must_use",
+    "deprecated",
+    "rustfmt::skip",
+    "case",
+    "serial",
+    "serial_test::serial",
+];
+
+/// Whether every attribute is a known test harness or a body-preserving
+/// built-in. `false` means an unrecognised attribute macro could rewrite the
+/// body, so a macro-generated test must not borrow invocation-site scopes.
+pub(crate) fn attributes_preserve_body<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().all(|attribute| {
+        attribute_path_before_arguments(attribute).is_some_and(|path| {
+            is_test_attribute_path(&path)
+                || BODY_PRESERVING_ATTRIBUTE_PATHS.contains(&path.as_str())
+        }) || cfg_predicates::attribute_introduces_only_test(attribute)
+    })
+}
+
+/// The attribute's path, read up to its first `(`, `=` or `]`. Only the path
+/// decides whether an attribute can rewrite a body, so the arguments are not
+/// scanned: a `#[doc = "an opening ( token"]` string must not hide a
+/// body-preserving `doc` (#12857). `normalized_test_attribute_path` stays
+/// strict because `attributes_define_test` must keep rejecting
+/// `#[test = "x"]` and unbalanced arguments. Anything that is not
+/// `#[` + path + one of those delimiters reads as unknown, which withholds.
+fn attribute_path_before_arguments(attribute: &str) -> Option<String> {
+    let body = attribute.trim().strip_prefix("#[")?;
+    let delimiter = body.find(['(', '=', ']'])?;
+    let path = body
+        .get(..delimiter)?
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let path = path.trim_start_matches("::");
+    let is_path = !path.is_empty()
+        && path
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | ':'));
+    is_path.then(|| path.to_string())
 }
 
 /// Whether any attribute is `#[crate::test]` / `#[self::test]` and the file's
@@ -604,6 +667,9 @@ pub(crate) const BUILT_IN_TEST_ATTRIBUTE_PATHS: &[&str] = &[
     "test",
     "tokio::test",
     "async_std::test",
+    "actix_rt::test",
+    "actix_web::test",
+    "test_log::test",
     "rstest",
     "rstest::rstest",
     "quickcheck",

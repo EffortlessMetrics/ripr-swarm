@@ -311,3 +311,47 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — ts_field_update_overwrite_computed (25)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_field_update_overwrite_computed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — ts_field_update_overwrite_computed (26)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_field_update_overwrite_computed --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — ts_field_update_overwrite_computed (27)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_field_update_overwrite_computed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — ts_field_update_overwrite_computed (28)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless ts_field_update_overwrite_computed --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

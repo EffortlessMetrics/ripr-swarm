@@ -140,7 +140,20 @@ omitted before ranking and neither rank nor count toward the cap):
 3. related-test confidence;
 4. file path;
 5. line;
-6. seam ID.
+6. same-line seam kind (`error_variant` before every other kind);
+7. seam ID.
+
+A `return_value` seam over a `return Err(..)` statement folds into the
+visible `error_variant` seam for the same `Err(..)` constructor in the same
+file, line and owner function. The producer stores the `return_value` seam
+as the whole statement and the `error_variant` seam as the bare constructor;
+the comparison drops the `return` keyword and trailing `;` from both. A folded seam is not shown, does not count as
+visible or toward the cap, and the brief adds a warning naming the fold
+count. Seams of other kinds never fold. The streamed selector keeps unmatched
+twins past the cap, at most twice the cap, so it selects the same seams as
+the complete selector unless that bound drops a candidate. When the bound
+drops a candidate and a fold happens, it adds a warning that lower-ranked
+visible seams may be missing.
 
 `--seam-id` is an explicit lookup and should return that seam first when it is
 a selectable repair target under current config. Other seams may be included
@@ -154,6 +167,37 @@ broader than a line-level `changed_assertion_near_related_test` match and
 should sort after that assertion-near match. A line-level related-test match
 for the test declaration remains the stronger `changed_test_for_related_seam`
 case.
+
+A related-test match (`changed_test_for_related_seam` or
+`changed_assertion_near_related_test`) needs a relation that ties the test to
+the seam: a proximity-only relation (`same_test_file`, `same_module`,
+`weak_token_substring`) never raises one, for any caller (#12940). On a large
+module one edited test is proximity-related to every seam beside it, which is
+noise, not a reason to look at those seams now. Seams in an edited file still
+match `same_file_seam`.
+
+The file-level `changed_test_for_related_seam` match ("working set includes
+related test") credits only a related test the diff edited when the caller
+knows which functions the diff edited and the test's file has changed lines
+(#12940). `review-comments`, and the PR comment and CI packet paths built on
+it, supply that attribution: a test is edited when a changed line falls
+inside its span or inside the attribute and comment prefix above its `fn`
+token (including an argument line of a multi-line attribute such as
+`#[cfg(all(...))]`, and line or block comments). When that prefix cannot
+be placed (unbalanced brackets, a raw string, or a prefix longer than 256
+lines), or the edit is an inner attribute or an attribute of a `mod` item
+(which can gate every test in it), every test in that file counts as edited,
+so an unattributable edit never prunes a related seam. An untouched test that merely shares a file with an edit is
+not a reason to surface a seam, and crediting it made review guidance on a
+large workspace evaluate every caller-file seam related to any test in a
+changed test file. A file named without changed lines (a file-only request),
+or a caller without edit attribution, keeps the file-wide match. Because a
+seam can then reach a related-test match only through an edited test or a
+changed line on or just after a test header, the bounded review selector
+evaluates a second-stage seam only when the seam itself can match (a changed
+line or owner, or a working-set file) or it relates, by a relation that is not
+proximity-only, to such a test, checked against that small test pool with the
+same relation rules evidence uses.
 
 ### JSON Shape
 
@@ -285,6 +329,11 @@ Field contract:
   `--seam-id`; otherwise `null`.
 - `limits.default` — always `3`.
 - `limits.hard_cap` — always `10`.
+- Successful empty file, diff and base briefs include `limits.cap_omitted_seams`,
+  `limits.omitted_by_policy`, and `limits.static_limited_omitted_seams`.
+  The static-limited count is included in the policy count. Zero describes
+  the inventory seen by selection. Assessed scope completeness remains unknown.
+  These measurements are absent on explicit-ID lookups, populated briefs and refusals.
 - `top_seams[]` — ranked seam summaries. Each entry is intentionally smaller
   than a full agent seam packet.
 - `top_seams[].why_now.reason` — one of the ranking reasons above.
@@ -454,7 +503,8 @@ counted in one warning per reason, so a large diff cannot flood `warnings`:
     "files": ["src/pricing.rs"],
     "changed_lines": []
   },
-  "limits": { "requested": 3, "returned": 0, "default": 3, "hard_cap": 10 },
+  "limits": { "requested": 3, "returned": 0, "default": 3, "hard_cap": 10,
+              "cap_omitted_seams": 0, "omitted_by_policy": 2, "static_limited_omitted_seams": 0 },
   "top_seams": [],
   "warnings": [
     "1 matching seam was hidden because configured severity is off",
@@ -469,7 +519,25 @@ Each brief entry must include enough information for an agent to select a
 focused next action without reading the full repo report:
 
 - seam ID, file, line, owner, kind, expression, grip class, and severity;
+- for a match-arm seam whose expression is only the arm head
+  (`Size::Medium =>`), an `arm_result` naming the arm's result when it sits
+  on the head's own line (`450`), read under the flow model's fail-closed
+  same-line rule (#14683). It is omitted when not read; `expression` stays
+  the head;
 - `why_now` reason and confidence;
+- when any seam is named, one top-level `value_basis` note, in one of two
+  wordings. While a changed line reaches every named seam, it says
+  `expression` and `arm_result` are read from the changed code, so a new test
+  asserts what that code does now; that an input whose behavior did not
+  change keeps its value; and that `candidate_values` are inputs or values to
+  assert, not all of one kind (#15361). For any other named seam (a seam
+  asked for by its ID, a repository fallback after a comment-only or an
+  unrelated change, a seam chosen for its owner, its test or its file), it
+  says the values are the current source's behavior, that a seam counts as
+  changed code there only where its `why_now.reason` is
+  `changed_line_intersects_seam`, and the same two things about what to
+  assert (#15361 review). Each note says no more: it is spent against the
+  brief's byte ceiling;
 - RIPR stage evidence summary;
 - recommended test placement when available;
 - nearest strong test to imitate when available;
@@ -520,6 +588,12 @@ This spec does not require:
   badge, LSP, or calibration outputs.
 
 ## Acceptance Examples
+
+When two selected seams propose creating the same test function in the same
+file, the brief gives them distinct names. Reordering those seams preserves
+each name, including when their source lines match. Each suggested Cargo
+command uses the corresponding name as a substring filter. A filter can also
+select other tests whose names contain it (#14717).
 
 ### Diff-scoped brief ranks touched seam first
 
@@ -602,6 +676,10 @@ Planned tests:
 - `agent_brief_json_shape_is_stable`
 - `agent_receipt_selects_one_verify_seam`
 - `agent_receipt_rejects_verify_json_outside_root`
+- `match_arm_seam_result_reads_the_heads_line` (#14683 head-only arm result)
+- `brief_names_a_head_only_arm_seam_result` (#14683)
+- `agent_brief_renders_arm_result_only_when_read` (#14683)
+- `agent_brief_names_seam_values_as_changed_behavior_to_pin` (#12078)
 
 ## Implementation Mapping
 
@@ -799,3 +877,22 @@ explicitly cleared any shared analysis/cache surfaces.
 - `agent_brief_with_nearest_test_total`
 - `agent_brief_with_assertion_shape_total`
 - `agent_brief_with_verification_commands_total`
+
+## Opt-in lossless line-range profile (#13395)
+
+`--json --line-ranges` emits minified schema 0.2 with the profile marker
+`agent-brief-line-ranges-v1`. Only changed-line representation changes: adjacent
+records for one displayed file share a group of inclusive `[start,end]` pairs.
+Merge only the checked successor of the previous endpoint; preserve duplicates,
+order, descending/disjoint records, file re-entry, and empty input. Expanding in
+array order must reproduce the full document after removing the marker.
+`--line-ranges` without `--json` is a usage error. Default JSON and generated
+start artifacts remain byte-identical, and refusal envelopes remain unchanged.
+
+Production-path nonempty fixtures with max-seams 1 cover 1,000 contiguous and
+isolated lines plus multiple files, semantic expansion and final-byte counts.
+Literal unit controls cover Unicode/path punctuation and integer boundaries.
+Shared schema controls reject mixed, missing and unknown profiles and malformed
+pairs; deliberate dropped/merged-range controls challenge the semantic oracle.
+No truncation, token dependency, runtime authority change, universal byte/token
+savings, provider cost, or complete journey improvement is claimed.

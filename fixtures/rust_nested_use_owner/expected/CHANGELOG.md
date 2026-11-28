@@ -206,3 +206,60 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (17)
+
+Reason:
+RIPR-SPEC-0197: a same-name path qualifier is not the owner passed as a function value, so the indirect-owner limit no longer withholds the weak-oracle gap
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (18)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_nested_use_owner (19)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_nested_use_owner (20)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_nested_use_owner (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

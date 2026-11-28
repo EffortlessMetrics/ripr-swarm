@@ -126,10 +126,11 @@ fn no_reached_caller_declines_with_the_multi_caller_edge() -> Result<(), String>
 
 #[test]
 fn a_reached_caller_whose_call_does_not_bind_carries_its_own_stop() -> Result<(), String> {
-    // `to_string_as` mentions the owner twice: the hop cannot split it.
+    // `to_string_as` splits the owner call over several lines: the hop
+    // cannot split its arguments.
     let source = crate_with(OTHER_CALLER, CALLS).replace(
         "fmt_size(self.0, si_unit)\n",
-        "let _ = fmt_size(self.0, si_unit);\n        fmt_size(self.0, si_unit)\n",
+        "fmt_size(\n            self.0,\n            si_unit,\n        )\n",
     );
     let chain = chain_of(&source)?;
     assert!(chain.hops.is_empty(), "{chain:?}");
@@ -137,9 +138,23 @@ fn a_reached_caller_whose_call_does_not_bind_carries_its_own_stop() -> Result<()
         chain
             .stop_above
             .as_deref()
-            .is_some_and(|edge| edge.contains("called 2 times")),
+            .is_some_and(|edge| edge.contains("not statically splittable")),
         "{chain:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn a_reached_caller_with_two_sites_carries_reach_only() -> Result<(), String> {
+    // #14918: `to_string_as` calls the owner twice. The reached caller
+    // still carries reach, through a reach-only hop that binds no rows.
+    let source = crate_with(OTHER_CALLER, CALLS).replace(
+        "fmt_size(self.0, si_unit)\n",
+        "let _ = fmt_size(self.0, si_unit);\n        fmt_size(self.0, si_unit)\n",
+    );
+    let chain = chain_of(&source)?;
+    assert_eq!(callers(&chain), vec!["to_string_as", "check"], "{chain:?}");
+    assert!(chain.hops[0].multi_site && chain.hops[0].arguments.is_empty());
     Ok(())
 }
 

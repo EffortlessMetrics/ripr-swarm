@@ -241,3 +241,51 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — atomic_ordering_swap_strong_object_oracle (19)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless atomic_ordering_swap_strong_object_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+- `expected/sarif.json`
+- `expected/github.txt`
+
+## Pending — atomic_ordering_swap_strong_object_oracle (20)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless atomic_ordering_swap_strong_object_oracle --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — atomic_ordering_swap_strong_object_oracle (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless atomic_ordering_swap_strong_object_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — atomic_ordering_swap_strong_object_oracle (22)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless atomic_ordering_swap_strong_object_oracle --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

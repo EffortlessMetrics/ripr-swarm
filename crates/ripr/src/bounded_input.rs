@@ -17,6 +17,9 @@
 //! Non-regular files are deliberately not refused: `--diff <(git diff ...)`
 //! passes a FIFO, and stdin (`-`) is a pipe; both are legitimate and are
 //! bounded by the same cap instead.
+//! Fixed-path reads of checkout-supplied artifacts (`read_metadata_toml`,
+//! `read_repository_artifact`) are the exception: nothing legitimate puts a
+//! FIFO or device there, so they refuse non-regular files (#15275).
 
 use std::io::Read;
 use std::path::Path;
@@ -56,6 +59,51 @@ pub(crate) fn read_metadata_toml(path: impl AsRef<Path>) -> std::io::Result<Stri
     read_metadata_toml_with_limit(path, MAX_METADATA_TOML_BYTES)
 }
 
+/// Read `relative_path` under `root` as repository metadata TOML, refusing
+/// any file that resolves outside the root through a link in the file or a
+/// parent directory. A link inside a checkout can point anywhere, so errors
+/// name only the configured relative path and the outside file is never read.
+/// The canonical path is what is read, and only as a regular file under the
+/// metadata TOML cap. A missing file is `Ok(None)`. `what` names the input in
+/// messages, for example `suppressions manifest` (#15546).
+pub(crate) fn read_root_metadata_toml(
+    root: &Path,
+    relative_path: &Path,
+    what: &str,
+) -> Result<Option<String>, String> {
+    let path = root.join(relative_path);
+    // Only a genuinely missing file is absent: a permission-denied lookup or
+    // a link loop reaches the sanitized resolution error below instead.
+    if matches!(
+        std::fs::metadata(&path),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound
+    ) {
+        return Ok(None);
+    }
+    let display = relative_path.display();
+    let (root, path) = match (root.canonicalize(), path.canonicalize()) {
+        (Ok(root), Ok(path)) => (root, path),
+        (Err(err), _) | (_, Err(err)) => {
+            return Err(format!(
+                "refusing to read {what} {display}: its location cannot be resolved ({}); check that it and its parent directories are readable and not a link loop",
+                err.kind()
+            ));
+        }
+    };
+    if !path.starts_with(&root) {
+        return Err(format!(
+            "refusing to read {what} {display}: it resolves outside the repository root; keep it as a regular file inside the repository"
+        ));
+    }
+    read_metadata_toml(&path)
+        .map(Some)
+        .map_err(|err| {
+            format!(
+                "failed to read {what} {display}: {err}; keep it as a readable regular file within the size limit"
+            )
+        })
+}
+
 pub(crate) fn read_metadata_toml_with_limit(
     path: impl AsRef<Path>,
     limit: u64,
@@ -83,7 +131,10 @@ pub(crate) fn read_metadata_toml_with_limit(
     String::from_utf8(bytes).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("stream did not contain valid UTF-8 ({err})"),
+            format!(
+                "not UTF-8 text (invalid byte at offset {}); pass a UTF-8 text file",
+                err.utf8_error().valid_up_to()
+            ),
         )
     })
 }
@@ -113,6 +164,106 @@ fn metadata_oversize_error(limit: u64) -> std::io::Error {
     )
 }
 
+/// Bounded read of a JSON or text artifact at a fixed path inside a checkout
+/// (`target/ripr/reports/...`), which the analyzed tree itself can supply,
+/// for example as a committed symlink to `/dev/zero`. Like
+/// [`read_metadata_toml`] it refuses anything that is not a regular file
+/// (following symlinks) before opening it, so a FIFO cannot block an editor
+/// session forever, and it caps the read at [`MAX_CLI_INPUT_BYTES`].
+pub(crate) fn read_repository_artifact(path: impl AsRef<Path>) -> std::io::Result<String> {
+    read_repository_artifact_with_limit(path, MAX_CLI_INPUT_BYTES)
+}
+
+pub(crate) fn read_repository_artifact_with_limit(
+    path: impl AsRef<Path>,
+    limit: u64,
+) -> std::io::Result<String> {
+    let path = path.as_ref();
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "is not a regular file; ripr reads repository artifacts only from regular files",
+        ));
+    }
+    read_to_string_with_limit(path, limit)
+}
+
+/// Decode bytes that open with a UTF-16 byte-order mark. The outer `None`
+/// means there is no such mark; the inner `None` means the mark is there but
+/// the rest is not complete UTF-16 (an odd byte count or an unpaired
+/// surrogate). The decode is exact and the mark is dropped.
+///
+/// Windows PowerShell 5.1 writes every `>` redirect as UTF-16LE with a mark
+/// (#15907, #15936), so a user-made diff or JSON artifact arrives this way.
+pub(crate) fn decode_utf16_with_bom(bytes: &[u8]) -> Option<Option<String>> {
+    let (payload, little_endian) = match bytes {
+        [0xFF, 0xFE, payload @ ..] => (payload, true),
+        [0xFE, 0xFF, payload @ ..] => (payload, false),
+        _ => return None,
+    };
+    let (pairs, trailing) = payload.as_chunks::<2>();
+    let units = pairs.iter().map(|pair| {
+        if little_endian {
+            u16::from_le_bytes(*pair)
+        } else {
+            u16::from_be_bytes(*pair)
+        }
+    });
+    let decoded = char::decode_utf16(units).collect::<Result<String, _>>();
+    Some(decoded.ok().filter(|_| trailing.is_empty()))
+}
+
+/// Bounded read of a user-named JSON artifact that a shell redirect may have
+/// written (`ripr check --format json > check.json`, a gate decision).
+///
+/// Windows PowerShell 5.1 writes such a file as UTF-16 with a byte-order
+/// mark, and its `-Encoding utf8` writes a UTF-8 mark that the JSON parser
+/// refuses at column 1 (#15936). Both decode to the same text as the plain
+/// UTF-8 file. UTF-16 that cannot be decoded exactly is refused by name.
+/// Not for source files: there a mark is content and byte offsets matter.
+pub(crate) fn read_artifact_text(path: impl AsRef<Path>) -> std::io::Result<String> {
+    decode_artifact_text(&read(path)?)
+}
+
+/// [`read_artifact_text`] that also returns the bytes as written, for a
+/// caller that hashes the file: the hash covers the bytes, the parse reads
+/// the decoded text.
+pub(crate) fn read_artifact_bytes_and_text(
+    path: impl AsRef<Path>,
+) -> std::io::Result<(Vec<u8>, String)> {
+    let bytes = read(path)?;
+    let text = decode_artifact_text(&bytes)?;
+    Ok((bytes, text))
+}
+
+/// Decode the bytes of a user-named JSON artifact the way
+/// [`read_artifact_text`] does. For a caller that must keep the exact bytes
+/// it read (a gate input whose subject hash covers them) and parse the same
+/// bytes: the hash stays over the file as written, and the parsed value is a
+/// pure function of those bytes.
+pub(crate) fn decode_artifact_text(bytes: &[u8]) -> std::io::Result<String> {
+    if let Some(decoded) = decode_utf16_with_bom(bytes) {
+        return decoded.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "the file starts with a UTF-16 byte-order mark but is not complete UTF-16 \
+                 text; write it as UTF-8 (in Windows PowerShell 5.1 a `>` redirect writes \
+                 UTF-16)",
+            )
+        });
+    }
+    let text = std::str::from_utf8(bytes).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "not UTF-8 text (invalid byte at offset {}); pass a UTF-8 text file",
+                err.valid_up_to()
+            ),
+        )
+    })?;
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(text).to_owned())
+}
+
 /// Bounded replacement for `std::fs::read` on a user-named input.
 pub(crate) fn read(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     read_with_limit(path, MAX_CLI_INPUT_BYTES)
@@ -140,13 +291,39 @@ pub(crate) fn read_with_limit(path: impl AsRef<Path>, limit: u64) -> std::io::Re
 /// Open `path`, rejecting a regular file whose reported length already
 /// exceeds `limit` without reading it. This is only a fast path: devices and
 /// FIFOs report length 0, so the read itself stays capped.
+///
+/// A directory is refused with [`directory_error`] instead of the host's
+/// read errno, which differs by platform (`Is a directory (os error 21)` on
+/// Unix from the read, `Access is denied. (os error 5)` on Windows from the
+/// open) and tells the user nothing about what to pass instead.
 fn open_within_limit(path: &Path, limit: u64) -> std::io::Result<std::fs::File> {
-    let file = std::fs::File::open(path)?;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        // Windows refuses to open a directory (`PermissionDenied`): keep
+        // that kind for callers that branch on it, and replace only the text.
+        Err(err) if path.is_dir() => return Err(directory_error_with_kind(err.kind())),
+        Err(err) => return Err(err),
+    };
     let metadata = file.metadata()?;
+    if metadata.is_dir() {
+        return Err(directory_error());
+    }
     if metadata.is_file() && metadata.len() > limit {
         return Err(oversize_error(limit));
     }
     Ok(file)
+}
+
+/// Plain, platform-independent cause for a directory named where a file
+/// belongs. Callers prefix the flag or path, so this names only the cause and
+/// the fix. The kind is [`std::io::ErrorKind::IsADirectory`] when the open
+/// succeeded (Unix); a failed open keeps the host's kind.
+pub(crate) fn directory_error() -> std::io::Error {
+    directory_error_with_kind(std::io::ErrorKind::IsADirectory)
+}
+
+fn directory_error_with_kind(kind: std::io::ErrorKind) -> std::io::Error {
+    std::io::Error::new(kind, "is a directory, not a file; pass the path of a file")
 }
 
 pub(crate) fn read_reader_to_string_with_limit(
@@ -158,7 +335,10 @@ pub(crate) fn read_reader_to_string_with_limit(
     String::from_utf8(bytes).map_err(|err| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("stream did not contain valid UTF-8 ({err})"),
+            format!(
+                "not UTF-8 text (invalid byte at offset {}); pass a UTF-8 text file",
+                err.utf8_error().valid_up_to()
+            ),
         )
     })
 }
@@ -181,7 +361,27 @@ pub(crate) fn read_failure_detail(err: &std::io::Error) -> String {
     if err.kind() == std::io::ErrorKind::NotFound {
         "not found".to_string()
     } else {
-        err.to_string()
+        let text = err.to_string();
+        // Drop the host errno suffix (`(os error N)`); the leading words keep
+        // the reason in plain language.
+        match text.find(" (os error ") {
+            Some(index) => text[..index].to_string(),
+            None => text,
+        }
+    }
+}
+
+/// Plain-words reason an explicitly named input path cannot be used, with the
+/// imperative next step kept literal. A missing file reads `does not exist`;
+/// any other failure keeps the OS reason without the `(os error N)` suffix.
+pub(crate) fn unreadable_input_phrase(err: &std::io::Error, next_step: &str) -> String {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        format!("does not exist; {next_step}")
+    } else {
+        format!(
+            "cannot be read ({}); {next_step}",
+            crate::bounded_input::read_failure_detail(err)
+        )
     }
 }
 
@@ -196,7 +396,7 @@ pub(crate) fn read_required_input(
     path: &Path,
     recovery: Option<&str>,
 ) -> Result<String, String> {
-    read_to_string(path).map_err(|err| {
+    read_artifact_text(path).map_err(|err| {
         let mut message = format!(
             "{attempted} {} failed: {}",
             crate::output::path::display_path(path),
@@ -376,6 +576,40 @@ mod tests {
     }
 
     #[test]
+    fn directory_input_names_the_cause_without_the_host_errno() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-bounded-input-dir-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let text = read_to_string(&dir);
+        let bytes = read_with_limit(&dir, MAX_CLI_INPUT_BYTES);
+        #[cfg(windows)]
+        let open_kind = std::fs::File::open(&dir).err().map(|err| err.kind());
+        let _ = std::fs::remove_dir(&dir);
+        let err = text.err().ok_or("a directory must not read as text")?;
+        // Unix opens a directory and refuses it after; Windows keeps the
+        // `PermissionDenied` its open returns. The text is the same on both.
+        #[cfg(unix)]
+        assert_eq!(err.kind(), std::io::ErrorKind::IsADirectory);
+        #[cfg(windows)]
+        assert_eq!(Some(err.kind()), open_kind);
+        assert_eq!(
+            err.to_string(),
+            "is a directory, not a file; pass the path of a file"
+        );
+        assert_eq!(read_failure_detail(&err), err.to_string());
+        let err = bytes.err().ok_or("a directory must not read as bytes")?;
+        assert_eq!(
+            err.to_string(),
+            "is a directory, not a file; pass the path of a file"
+        );
+        assert!(!err.to_string().contains("os error"), "{err}");
+        Ok(())
+    }
+
+    #[test]
     fn read_failure_detail_prefers_plain_not_found() {
         let not_found = std::io::Error::from(std::io::ErrorKind::NotFound);
         assert_eq!(read_failure_detail(&not_found), "not found");
@@ -414,6 +648,61 @@ mod tests {
             .err()
             .ok_or("a directory must be refused")?;
         assert!(err.to_string().contains("is a directory"), "{err}");
+        Ok(())
+    }
+
+    #[test]
+    fn repository_artifact_reads_a_regular_file_within_its_cap() -> Result<(), String> {
+        let path = temp_file("artifact-limit", b"{\"a\":1}")?;
+        let text = read_repository_artifact_with_limit(&path, 7).map_err(|err| err.to_string())?;
+        assert_eq!(text, "{\"a\":1}");
+        let oversize = read_repository_artifact_with_limit(&path, 6)
+            .err()
+            .ok_or("an artifact over its cap must be refused")?;
+        assert_eq!(oversize.kind(), std::io::ErrorKind::InvalidData);
+        let missing = read_repository_artifact(path.with_file_name("absent"))
+            .err()
+            .ok_or("a missing artifact must stay an error")?;
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_artifact_refuses_fifo_device_and_links_to_them() -> Result<(), String> {
+        let path = temp_file("artifact-fifo", b"")?;
+        let fifo = path.with_file_name("fifo");
+        let _ = std::fs::remove_file(&fifo);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map_err(|err| format!("mkfifo: {err}"))?;
+        assert!(made.success(), "mkfifo failed");
+        let link = path.with_file_name("zero-link");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink("/dev/zero", &link).map_err(|err| err.to_string())?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probes = [
+            fifo.clone(),
+            link.clone(),
+            std::path::PathBuf::from("/dev/zero"),
+        ];
+        std::thread::spawn(move || {
+            let outcomes = probes
+                .iter()
+                .map(|probe| read_repository_artifact(probe).map_err(|err| err.to_string()))
+                .collect::<Vec<_>>();
+            let _ = tx.send(outcomes);
+        });
+        let outcomes = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|err| format!("reading a non-regular artifact blocked: {err}"))?;
+        for outcome in outcomes {
+            let err = outcome
+                .err()
+                .ok_or("a non-regular artifact must be refused")?;
+            assert!(err.contains("is not a regular file"), "{err}");
+        }
         Ok(())
     }
 

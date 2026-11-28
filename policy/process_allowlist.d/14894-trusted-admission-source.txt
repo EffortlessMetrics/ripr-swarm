@@ -1,0 +1,2 @@
+tools/repo-policy/tests/trusted_admission_source.rs|Command::new|1|repo-policy-tests|Runs the extracted Select trusted admission source shell under a mocked git to prove the merge-ref first-parent anchor and the two-parent refusal. No network, no user-repository mutation.
+tools/repo-policy/tests/trusted_admission_source.rs|use std::process::Command|1|repo-policy-tests|Import for the bounded Bash replay described above.

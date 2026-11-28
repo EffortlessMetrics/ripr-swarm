@@ -1,0 +1,61 @@
+# Golden Output Changes
+
+## Pending — rust_multi_line_dropped_conjunct (1)
+
+Reason:
+RIPR-SPEC-0001: a conjunct dropped from a multi-line predicate reads infection_unknown against its whole old chain (#7945)
+
+Command:
+`cargo xtask goldens bless rust_multi_line_dropped_conjunct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_multi_line_dropped_conjunct (2)
+
+Reason:
+RIPR-SPEC-0001: add the human-full projection of the multi-line dropped-conjunct refusal (#7945)
+
+Command:
+`cargo xtask goldens bless rust_multi_line_dropped_conjunct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_multi_line_dropped_conjunct (3)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless rust_multi_line_dropped_conjunct --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_multi_line_dropped_conjunct (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_multi_line_dropped_conjunct --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_multi_line_dropped_conjunct (5)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_multi_line_dropped_conjunct --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

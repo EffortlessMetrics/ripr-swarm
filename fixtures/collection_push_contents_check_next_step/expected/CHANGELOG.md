@@ -35,3 +35,36 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — collection_push_contents_check_next_step (4)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — collection_push_contents_check_next_step (5)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — collection_push_contents_check_next_step (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/human.txt`

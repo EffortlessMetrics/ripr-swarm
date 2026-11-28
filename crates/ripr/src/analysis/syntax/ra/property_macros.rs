@@ -46,22 +46,104 @@ pub(super) fn unresolved_property_macros(
             // Read identifier tokens already owned by the first parse. Do not
             // clone the token-tree source or construct affirmative CallFacts:
             // repeated calls on one long line would duplicate that whole line.
-            let mentioned_identifiers = tree
+            let tokens: Vec<_> = tree
                 .syntax()
                 .descendants_with_tokens()
                 .filter_map(|element| element.into_token())
-                .filter(|token| token.kind() == SyntaxKind::IDENT)
-                .map(|token| token.text().trim_start_matches("r#").to_string())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
+                .filter(|token| !token.kind().is_trivia())
                 .collect();
+            let kinds: Vec<_> = tokens.iter().map(|token| token.kind()).collect();
+            let binding = binding_positions(&kinds);
+            let mut mentioned = BTreeSet::new();
+            let mut referenced = BTreeSet::new();
+            for (position, token) in tokens.iter().enumerate() {
+                if token.kind() != SyntaxKind::IDENT {
+                    continue;
+                }
+                let text = token.text().trim_start_matches("r#");
+                mentioned.insert(text);
+                if !binding[position] {
+                    referenced.insert(text);
+                }
+            }
+            let binding_only_identifiers = mentioned
+                .difference(&referenced)
+                .map(|text| (*text).to_string())
+                .collect();
+            let mentioned_identifiers = mentioned.into_iter().map(str::to_string).collect();
             Some(UnresolvedPropertyMacroFact {
                 name,
                 line,
                 mentioned_identifiers,
+                binding_only_identifiers,
             })
         })
         .collect()
+}
+
+/// Marks token positions that only declare a name inside the opaque body:
+/// the identifier after `fn`, and each parameter binding of that signature
+/// (`x: T` for QuickCheck, `x in strategy` for proptest, with `mut`/`ref`).
+/// Such a token names the property or its input, never a callee, so it
+/// cannot bind a provider failure to a same-named production owner.
+fn binding_positions(kinds: &[SyntaxKind]) -> Vec<bool> {
+    let mut binding = vec![false; kinds.len()];
+    let mut cursor = 0;
+    while cursor < kinds.len() {
+        if kinds[cursor] != SyntaxKind::FN_KW {
+            cursor += 1;
+            continue;
+        }
+        cursor += 1;
+        if kinds.get(cursor) != Some(&SyntaxKind::IDENT) {
+            continue;
+        }
+        binding[cursor] = true;
+        cursor += 1;
+        // Generic parameters may precede the parameter list; a body or item
+        // end before any `(` means there is no signature to read.
+        while cursor < kinds.len()
+            && !matches!(
+                kinds[cursor],
+                SyntaxKind::L_PAREN | SyntaxKind::L_CURLY | SyntaxKind::SEMICOLON
+            )
+        {
+            cursor += 1;
+        }
+        if kinds.get(cursor) != Some(&SyntaxKind::L_PAREN) {
+            continue;
+        }
+        cursor += 1;
+        let mut depth = 1usize;
+        let mut segment_start = true;
+        while cursor < kinds.len() && depth > 0 {
+            match kinds[cursor] {
+                SyntaxKind::L_PAREN | SyntaxKind::L_BRACK | SyntaxKind::L_CURLY => depth += 1,
+                SyntaxKind::R_PAREN | SyntaxKind::R_BRACK | SyntaxKind::R_CURLY => depth -= 1,
+                SyntaxKind::COMMA if depth == 1 => {
+                    segment_start = true;
+                    cursor += 1;
+                    continue;
+                }
+                SyntaxKind::MUT_KW | SyntaxKind::REF_KW if depth == 1 && segment_start => {
+                    cursor += 1;
+                    continue;
+                }
+                SyntaxKind::IDENT if depth == 1 && segment_start => {
+                    let next = kinds.get(cursor + 1);
+                    let single_colon = next == Some(&SyntaxKind::COLON)
+                        && kinds.get(cursor + 2) != Some(&SyntaxKind::COLON);
+                    if next == Some(&SyntaxKind::IN_KW) || single_colon {
+                        binding[cursor] = true;
+                    }
+                }
+                _ => {}
+            }
+            segment_start = false;
+            cursor += 1;
+        }
+    }
+    binding
 }
 
 #[cfg(test)]
@@ -238,6 +320,33 @@ mod tests {
                 );
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn property_declaration_and_parameter_names_are_binding_only() -> Result<(), String> {
+        let source = "proptest! {\n #[test] fn discounted_total<T>(mut amount in 0..10u32, ref limit: u32, (pair, other) in any()) {\n final_price(limit, pair);\n }\n}\nquickcheck! {\n fn checks(x: u32) -> bool { discounted_total(x) == x }\n}\n";
+        let facts = summarize_file_with_parser(Path::new("tests/property.rs"), source)?;
+        assert_eq!(facts.unresolved_property_macros.len(), 2);
+        let proptest = &facts.unresolved_property_macros[0];
+        for name in ["discounted_total", "amount", "final_price", "limit", "pair"] {
+            assert!(
+                proptest.mentioned_identifiers.iter().any(|m| m == name),
+                "{name}"
+            );
+        }
+        // `limit` and the tuple element are used in the body; only the
+        // property name and the unused `amount` binding are binding-only.
+        assert_eq!(
+            proptest.binding_only_identifiers,
+            vec!["amount".to_string(), "discounted_total".to_string()]
+        );
+        // A call to the same spelling in another invocation is a reference.
+        let quickcheck = &facts.unresolved_property_macros[1];
+        assert_eq!(
+            quickcheck.binding_only_identifiers,
+            vec!["checks".to_string()]
+        );
         Ok(())
     }
 

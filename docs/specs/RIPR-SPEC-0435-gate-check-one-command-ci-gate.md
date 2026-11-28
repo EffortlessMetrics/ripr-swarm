@@ -33,6 +33,15 @@ guidance document behind, and the second step then evaluates stale evidence.
    `--mode acknowledgeable` unless `--mode` is given, writing the usual
    `gate-decision.json` and `.md` reports.
 
+Default destinations follow `--root` (#15378): with `--root <dir>` and no
+`--guidance-out` / `--out`, the guidance lands at
+`<dir>/target/ripr/review/comments.json` and the decision at
+`<dir>/target/ripr/reports/gate-decision.{json,md}`, where
+`ripr reports ci-summary --root <dir>` and the report's own hints read them.
+`review-comments --root <dir>` and `gate evaluate --root <dir>` default the same
+way. Explicit relative destinations keep resolving against the invoking
+directory, and the implicit `.` root keeps the bare `target/ripr/...` spelling.
+
 The decision and exit come only from the shared gate evaluator and its exit
 mapping: `0` for pass, advisory or acknowledged, `3` for blocked, `2` for
 config_error. When review-comments fails, ripr prints the producer error to
@@ -50,7 +59,7 @@ files (a guidance path ending in `.md` is refused). `--pr-guidance`,
 gate check produces its own guidance. Waiver inputs (`--label`,
 `--labels-json`, `--acknowledgement-label`), `--exception-policy`,
 `--acknowledgements`, `--baseline`, `--root`, `--out` and `--out-md` mean the
-same as for `gate evaluate`. `--timeout-ms` goes to review-comments.
+same as for `gate evaluate`. `--timeout-ms` and `--suppression-policy` (#13895) go to review-comments.
 
 ## Required Evidence
 
@@ -70,6 +79,8 @@ same as for `gate evaluate`. `--timeout-ms` goes to review-comments.
 - An end-to-end test on a git fixture asserts that a weak boundary test
   blocks (exit `3`), the waiver label and visible-only mode exit `0`, and a
   boundary-discriminating test passes.
+- A plan test pins that `--suppression-policy` goes only to the
+  review-comments argv and that a bare flag is a usage error (#13895).
 - Command metadata binds `cmd:gate.check` to the gate exit contract.
 
 ## Known Limits

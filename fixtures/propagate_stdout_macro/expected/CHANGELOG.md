@@ -539,3 +539,49 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — propagate_stdout_macro (33)
+
+Reason:
+RIPR-SPEC-0162: the check digest states the analyzer limit once; a Why hint that the Analyzer limit line repeats word for word is dropped (#14308)
+
+Command:
+`cargo xtask goldens bless propagate_stdout_macro --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — propagate_stdout_macro (34)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless propagate_stdout_macro --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — propagate_stdout_macro (35)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless propagate_stdout_macro --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — propagate_stdout_macro (36)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless propagate_stdout_macro --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -263,7 +263,11 @@ fn explicit_drops(masked: &str) -> Vec<(usize, usize, usize, &str)> {
         if before.ends_with("::") {
             let path = before.trim_end_matches("::");
             let segment_start = path
-                .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+                // A non-ASCII char continues the path segment (`größe::drop`),
+                // so the char found here is ASCII and one byte wide (#14089).
+                .rfind(|c: char| {
+                    !(c.is_ascii_alphanumeric() || c == '_' || c == ':' || !c.is_ascii())
+                })
                 .map_or(0, |separator| separator + 1);
             if !matches!(&path[segment_start..], "mem" | "std::mem" | "core::mem") {
                 continue;
@@ -542,5 +546,14 @@ mod tests {
         assert!(relates(&fixture(
             "/* if c { return; } */ let _n = 1; // x?"
         )));
+    }
+
+    /// #14089: the path scan stopped on a non-ASCII identifier char and the
+    /// slice began one byte later, inside it.
+    #[test]
+    fn a_drop_under_a_non_ascii_path_is_another_function() {
+        assert!(explicit_drops("größe::drop(x);").is_empty());
+        assert!(explicit_drops("x\u{301}::drop(x);").is_empty());
+        assert_eq!(explicit_drops("std::mem::drop(x);").len(), 1);
     }
 }

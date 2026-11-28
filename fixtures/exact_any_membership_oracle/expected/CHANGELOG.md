@@ -241,3 +241,37 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (21)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (22)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — exact_any_membership_oracle (23)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless exact_any_membership_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

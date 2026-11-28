@@ -1225,6 +1225,42 @@ fn live_runs(scratch: &Scratch) -> Vec<LiveRun> {
     runs
 }
 
+/// The executable cargo reported for the `ripr` bin in `cargo build --message-format=json`.
+///
+/// #14762: the build output directory is cargo's answer, not a guess from the
+/// running image. The check runs from the relocated driver copy under
+/// `<target-root>/ripr/drivers`, so `current_exe().parent()` is not a profile
+/// directory and the old join looked for `ripr.exe` beside the driver.
+fn built_ripr_executable(stdout: &str) -> Option<PathBuf> {
+    for line in stdout.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if value.get("reason").and_then(serde_json::Value::as_str) != Some("compiler-artifact") {
+            continue;
+        }
+        let target = value.get("target");
+        if target
+            .and_then(|target| target.get("name"))
+            .and_then(serde_json::Value::as_str)
+            != Some("ripr")
+        {
+            continue;
+        }
+        let Some(executable) = value.get("executable").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        if executable.is_empty() {
+            continue;
+        }
+        let path = PathBuf::from(executable);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    None
+}
+
 fn resolve_ripr_binary(explicit: Option<&str>) -> Result<PathBuf, String> {
     if let Some(path) = explicit {
         let path = PathBuf::from(path);
@@ -1238,27 +1274,44 @@ fn resolve_ripr_binary(explicit: Option<&str>) -> Result<PathBuf, String> {
     let dir = exe
         .parent()
         .ok_or_else(|| "xtask binary has no parent directory".to_string())?;
+    // The profile is still inferred from the running image, not from cargo's
+    // answer: the flag has to be chosen before the build runs. Under the
+    // relocated driver copy this is always false, so the check builds debug.
+    // That is harmless here because the scanned runs are help/usage/check/
+    // pilot/doctor/status/repair/continue/explain/context/agent, whose text
+    // does not depend on the profile.
     let release = dir.file_name().is_some_and(|name| name == "release");
     let mut build = Command::new("cargo");
-    build.args(["build", "-q", "-p", "ripr", "--bin", "ripr"]);
+    build.args([
+        "build",
+        "-q",
+        "-p",
+        "ripr",
+        "--bin",
+        "ripr",
+        // `json-render-diagnostics` keeps the artifact records on stdout and
+        // also renders compiler diagnostics to stderr, so a failed build
+        // reports the diagnostic rather than only the summary line.
+        "--message-format=json-render-diagnostics",
+    ]);
     if release {
         build.arg("--release");
     }
-    let status = build
-        .status()
+    let output = build
+        .output()
         .map_err(|err| format!("build ripr for check-user-text: {err}"))?;
-    if !status.success() {
-        return Err(
-            "cargo build -p ripr --bin ripr failed (instrument failure, not a pass)".into(),
-        );
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "cargo build -p ripr --bin ripr failed (instrument failure, not a pass): {}",
+            stderr.trim()
+        ));
     }
-    let name = if cfg!(windows) { "ripr.exe" } else { "ripr" };
-    let path = dir.join(name);
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(format!("built ripr binary not found at {}", path.display()))
-    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    built_ripr_executable(&stdout).ok_or_else(|| {
+        "cargo build -p ripr --bin ripr did not report a ripr executable (instrument failure, not a pass)"
+            .to_string()
+    })
 }
 
 /// Scratch directory outside the checkout. `.cargo/config.toml` forces TMPDIR
@@ -1717,10 +1770,10 @@ fn write_report(root: &Path, body: &str) {
 }
 
 /// `--tree <path>` (#11385): scan and gate the goldens of another checkout with
-/// the matcher compiled into this binary. CI builds the merge-base's xtask in a
-/// separate worktree and points it at the PR tree, so the judge is the code the
-/// PR could not have changed. `.github/workflows/rust-gates.yml` looks for this literal in the
-/// base source to know whether the merge-base can do that yet.
+/// the matcher compiled into this binary. CI builds the merge-base's repo-policy
+/// (or legacy xtask) in a separate worktree and points it at the PR tree, so the
+/// judge is the code the PR could not have changed. The workflow looks for this
+/// literal in the base source to know whether the merge-base can do that yet.
 const TREE_FLAG: &str = "--tree";
 
 fn tree_root(path: &Path) -> Result<PathBuf, String> {
@@ -1736,21 +1789,24 @@ fn tree_root(path: &Path) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+#[cfg(test)]
 fn repo_root() -> Result<PathBuf, String> {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir.parent().map(Path::to_path_buf).ok_or_else(|| {
-        format!(
-            "failed to resolve repo root from {}",
-            manifest_dir.display()
-        )
-    })
+    crate::test_support::workspace_root()
 }
 
-/// Paths changed against the base or the working tree, or an error.
-fn changed_paths() -> Result<Vec<String>, String> {
-    let mut changed = crate::changed_files_vs_base(Path::new("."))?;
-    changed.extend(crate::git_changed_files(Path::new("."), "HEAD")?);
-    Ok(changed)
+#[cfg(not(test))]
+fn repo_root() -> Result<PathBuf, String> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .ok_or_else(|| {
+            format!(
+                "failed to resolve repo root from {}",
+                manifest_dir.display()
+            )
+        })
 }
 
 /// Run the live half when forced, when a changed path can alter what the built
@@ -1769,20 +1825,27 @@ pub(crate) fn live_trigger_path(path: &str) -> bool {
         || path == "Cargo.lock"
         || path.starts_with("rust-toolchain")
         || path.starts_with(".cargo/")
-        || path == "xtask/src/policy/user_text.rs"
+        || path == MATCHER_SOURCE
+        || path == "xtask/src/policy/user_text_frontdoor.rs"
         || path == BASELINE_PATH
 }
 
-/// Always scans the live output too (check-pr and CI).
-pub(crate) fn check_user_text_full() -> Result<(), String> {
-    check_user_text_with_args(&["--full".to_string()])
+/// Lightweight foreign-tree command. Live output remains owned by the xtask facade.
+pub fn check_foreign_tree(args: &[String]) -> Result<(), String> {
+    if !matches!(args, [flag, _] if flag == TREE_FLAG) {
+        return Err("usage: cargo policy check-user-text --tree <path>; live, full and ratchet modes require cargo xtask".into());
+    }
+    check_user_text_with_args(args, || {
+        Err("foreign-tree mode does not select live output".into())
+    })
 }
 
-pub(crate) fn check_user_text() -> Result<(), String> {
-    check_user_text_with_args(&[])
-}
-
-pub(crate) fn check_user_text_with_args(args: &[String]) -> Result<(), String> {
+/// Shared matcher and orchestration. The xtask facade supplies its existing local
+/// change selector; foreign-tree execution never calls that product-side helper.
+pub fn check_user_text_with_args(
+    args: &[String],
+    changed_paths: impl FnOnce() -> Result<Vec<String>, String>,
+) -> Result<(), String> {
     let mut ripr: Option<String> = None;
     let mut ratchet = false;
     let mut full = false;
@@ -1953,6 +2016,49 @@ mod tests {
         let mut counts = Counts::new();
         scan_text(surface, "seed", text, &mut counts);
         counts
+    }
+
+    #[test]
+    fn cargo_artifact_json_names_the_ripr_executable() -> Result<(), String> {
+        // #14762: the build's own answer, not the running image's directory.
+        let fixture = std::env::temp_dir().join(format!(
+            "ripr-artifact-{}-{:?}.exe",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&fixture, b"").map_err(|err| format!("write fixture: {err}"))?;
+        let other = serde_json::json!({
+            "reason": "compiler-artifact",
+            "target": {"name": "xtask"},
+            "executable": null,
+        });
+        let artifact = serde_json::json!({
+            "reason": "compiler-artifact",
+            "target": {"name": "ripr"},
+            "executable": fixture.display().to_string(),
+        });
+        let found = built_ripr_executable(&format!("{other}\n{artifact}\n"))
+            .ok_or_else(|| "ripr artifact is the executable".to_string())?;
+        assert_eq!(found, fixture);
+        let _ = std::fs::remove_file(&fixture);
+        Ok(())
+    }
+
+    #[test]
+    fn a_missing_or_foreign_artifact_is_not_the_ripr_binary() {
+        assert!(built_ripr_executable("").is_none());
+        assert!(
+            built_ripr_executable(
+                r#"{"reason":"compiler-artifact","target":{"name":"ripr"},"executable":null}"#
+            )
+            .is_none()
+        );
+        assert!(built_ripr_executable(r#"{"reason":"build-finished","success":true}"#).is_none());
+        // A reported path that is not a file is not an executable.
+        assert!(built_ripr_executable(
+            r#"{"reason":"compiler-artifact","target":{"name":"ripr"},"executable":"/nonexistent/ripr"}"#
+        )
+        .is_none());
     }
 
     #[test]
@@ -2275,7 +2381,7 @@ mod tests {
             matches!(missing, Err(ref e) if e.contains(TREE_FLAG)),
             "{missing:?}"
         );
-        let no_path = check_user_text_with_args(&[TREE_FLAG.to_string()]);
+        let no_path = check_user_text_with_args(&[TREE_FLAG.to_string()], || Ok(Vec::new()));
         assert!(
             matches!(no_path, Err(ref e) if e.contains("needs a path")),
             "{no_path:?}"
@@ -2286,8 +2392,10 @@ mod tests {
     #[test]
     fn tree_judges_goldens_only_and_rejects_the_modes_that_need_a_local_binary() {
         for other in ["--ratchet", "--full"] {
-            let outcome =
-                check_user_text_with_args(&[TREE_FLAG.to_string(), ".".into(), other.to_string()]);
+            let outcome = check_user_text_with_args(
+                &[TREE_FLAG.to_string(), ".".into(), other.to_string()],
+                || Ok(Vec::new()),
+            );
             assert!(
                 matches!(outcome, Err(ref e) if e.contains("goldens only")),
                 "{other}: {outcome:?}"
@@ -2377,10 +2485,10 @@ mod tests {
     /// and must not gate goldens with the absolute `evaluate` directly.
     #[test]
     fn the_command_calls_the_gate_with_origin_main_and_the_ci_flag() -> Result<(), String> {
-        let source = fs::read_to_string(repo_root()?.join("xtask/src/policy/user_text.rs"))
+        let source = fs::read_to_string(repo_root()?.join(MATCHER_SOURCE))
             .map_err(|err| format!("read user_text.rs: {err}"))?;
         let start = source
-            .find("pub(crate) fn check_user_text_with_args(")
+            .find("pub fn check_user_text_with_args(")
             .ok_or("command not found")?;
         let end = source[start..]
             .find("\n}\n")
@@ -3582,10 +3690,10 @@ mod tests {
     /// golden half runs, and list the surface in the report.
     #[test]
     fn the_command_wires_the_lsp_scan() -> Result<(), String> {
-        let source = fs::read_to_string(repo_root()?.join("xtask/src/policy/user_text.rs"))
+        let source = fs::read_to_string(repo_root()?.join(MATCHER_SOURCE))
             .map_err(|err| format!("read user_text.rs: {err}"))?;
         let start = source
-            .find("pub(crate) fn check_user_text_with_args(")
+            .find("pub fn check_user_text_with_args(")
             .ok_or("command not found")?;
         let end = source[start..].find("\n}\n").ok_or("command end")? + start;
         let command = &source[start..end];
@@ -3599,7 +3707,7 @@ mod tests {
     /// editor-visible strings, and the scan sees a real corpus.
     #[test]
     fn lsp_sources_use_plain_words_for_seam_and_discriminator() -> Result<(), String> {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = repo_root()?;
         let mut counts = Counts::new();
         let (files, strings) = scan_lsp_prose(&root, &mut counts)?;
         if files < 20 || strings < 200 {
@@ -3622,7 +3730,7 @@ mod tests {
         // are scanned (identifiers, comments and JSON keys such as
         // `seam_diagnostics` or `seamId` are not prose), and only the two
         // words #12213 audited; the rest of the glossary has its own rows.
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = repo_root()?;
         let dir = root.join("editors/vscode/src");
         let mut scanned_strings = 0usize;
         let mut hits = Vec::new();
@@ -3659,6 +3767,84 @@ mod tests {
         if !flagged.contains(&"discriminator") {
             return Err("matcher no longer flags a retired word".to_string());
         }
+        Ok(())
+    }
+    #[test]
+    fn lightweight_command_rejects_local_modes() {
+        for args in [
+            vec![],
+            vec!["--full".into()],
+            vec!["--tree".into()],
+            vec!["--tree".into(), ".".into(), "--ratchet".into()],
+            vec![
+                "--tree".into(),
+                ".".into(),
+                "--ripr".into(),
+                "binary".into(),
+            ],
+        ] {
+            let result = check_foreign_tree(&args);
+            assert!(
+                matches!(result, Err(ref e) if e.contains("usage: cargo policy")),
+                "{args:?}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn foreign_tree_never_asks_for_local_changed_paths() -> Result<(), String> {
+        let root = repo_root()?;
+        let mut requested = false;
+        check_user_text_with_args(
+            &[TREE_FLAG.into(), root.to_string_lossy().into_owned()],
+            || {
+                requested = true;
+                Err("local selector must not run for a foreign tree".into())
+            },
+        )?;
+        assert!(!requested);
+        Ok(())
+    }
+
+    #[test]
+    fn stable_matcher_source_preserves_historical_pins_and_refuses_malformed_owner()
+    -> Result<(), String> {
+        let legacy = matcher_source("\"seam\", \"frobnicate\"");
+        let root = golden_repo(
+            "legacy-matcher-owner",
+            &[(A, "plain\n"), (MATCHER_SOURCE, &legacy)],
+            &[],
+        )?;
+        let base = resolve_sha(&root, &["rev-parse", "main"])?;
+        let historical = base_needles(&root, &base)?;
+        assert_eq!(historical, vec!["seam", "frobnicate"]);
+        write_file(&root.join(MATCHER_SOURCE), "malformed semantic owner\n")?;
+        run_git(&root, &["add", "-A"])?;
+        run_git(&root, &["commit", "-q", "-m", "malformed current owner"])?;
+        let head = resolve_sha(&root, &["rev-parse", "HEAD"])?;
+        let malformed = base_needles(&root, &head);
+        assert!(
+            matches!(malformed, Err(ref e) if e.contains("BANNED")),
+            "{malformed:?}"
+        );
+        fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn shared_owner_and_facade_are_live_triggers_and_keep_tree_capability() -> Result<(), String> {
+        assert!(live_trigger_path(MATCHER_SOURCE));
+        assert!(live_trigger_path("xtask/src/policy/user_text_frontdoor.rs"));
+        let matcher =
+            fs::read_to_string(repo_root()?.join(MATCHER_SOURCE)).map_err(|e| e.to_string())?;
+        assert!(matcher.contains("\"--tree\""));
+        let facade =
+            fs::read_to_string(repo_root()?.join("xtask/src/policy/user_text_frontdoor.rs"))
+                .map_err(|e| e.to_string())?;
+        assert!(
+            facade
+                .contains("repo_policy::user_text::check_user_text_with_args(args, changed_paths)")
+        );
         Ok(())
     }
 }

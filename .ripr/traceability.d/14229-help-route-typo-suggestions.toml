@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0189"
+tests = [
+  "crates/ripr/tests/cli_help_hierarchy.rs::help_route_typos_name_the_route_that_works",
+]
+code = [
+  "crates/ripr/src/cli/command.rs::help_option_typo_error",
+  "crates/ripr/src/cli/command.rs::unknown_command_message",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0189-workflow-catalog-help-workflow.md",
+]

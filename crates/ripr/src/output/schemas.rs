@@ -302,19 +302,16 @@ mod tests {
         })
     }
 
+    // The diff report names its version as a constant (#14067), so the
+    // producer value is read directly instead of parsed out of the source.
     fn live_diff_report_schema_version() -> Result<&'static str, String> {
-        unique_quoted_before_following_lines(
-            include_str!("diff_report.rs"),
-            "schema_version: \"",
-            &["kind: \"ripr_diff\".to_string(),"],
-        )
+        Ok(crate::output::diff_report::DIFF_REPORT_SCHEMA_VERSION)
     }
 
     fn live_targeted_rerun_schema_version() -> Result<&'static str, String> {
-        unique_quoted_before_following_lines(
+        unique_const_str(
             include_str!("../cli/rerun.rs"),
-            "schema_version: \"",
-            &["state,", "selector,"],
+            "TARGETED_RERUN_SCHEMA_VERSION",
         )
     }
 
@@ -400,7 +397,7 @@ mod tests {
             (
                 "`ripr rerun --json`",
                 live_targeted_rerun_schema_version()?,
-                "crates/ripr/src/cli/rerun.rs TargetedRerunReport.schema_version",
+                "cli::rerun::TARGETED_RERUN_SCHEMA_VERSION",
             ),
             (
                 "`ripr agent brief`",

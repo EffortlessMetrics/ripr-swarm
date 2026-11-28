@@ -132,7 +132,7 @@ fn unsupported_artifact_preserves_valid_artifact_and_its_context() -> TestResult
     assert_eq!(report["findings"].as_array().map(Vec::len), Some(1));
     let bytes = fs::read(root.join("accepted.json"))?;
     let artifact: Value = serde_json::from_slice(&bytes)?;
-    assert_eq!(artifact["schema_version"], "ripr-check-artifact-v1");
+    assert_eq!(artifact["schema_version"], "ripr-check-artifact-v2");
     let before = context(root, "accepted.json")?;
     assert_eq!(before.status.code(), Some(0));
     let packet: Value = serde_json::from_slice(&before.stdout)?;
@@ -169,7 +169,7 @@ fn unsupported_artifact_keeps_advisory_partial_write_and_reuse() -> TestResult {
     );
     assert_eq!(report["findings"].as_array().map(Vec::len), Some(1));
     let artifact: Value = serde_json::from_slice(&fs::read(root.join("partial.json"))?)?;
-    assert_eq!(artifact["schema_version"], "ripr-check-artifact-v1");
+    assert_eq!(artifact["schema_version"], "ripr-check-artifact-v2");
     assert_eq!(artifact["findings"].as_array().map(Vec::len), Some(1));
     let reused = context(root, "partial.json")?;
     assert_eq!(reused.status.code(), Some(0));

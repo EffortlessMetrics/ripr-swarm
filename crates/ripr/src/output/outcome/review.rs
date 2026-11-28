@@ -1,7 +1,7 @@
 use super::{TargetedTestOutcomeReport, targeted_test_outcome_gap_summary};
 
 pub(super) fn review_what_changed(report: &TargetedTestOutcomeReport) -> Vec<String> {
-    vec![
+    let mut items = vec![
         format!(
             "Compared before snapshot {} with after snapshot {}.",
             report.before_path, report.after_path
@@ -14,7 +14,10 @@ pub(super) fn review_what_changed(report: &TargetedTestOutcomeReport) -> Vec<Str
             report.new.len(),
             report.removed.len()
         ),
-    ]
+    ];
+    // #14139: named only when a snapshot withheld seams.
+    items.extend(super::outcome_owner_opt_outs_line(report));
+    items
 }
 
 pub(super) fn review_ripr_flagged_before(report: &TargetedTestOutcomeReport) -> Vec<String> {

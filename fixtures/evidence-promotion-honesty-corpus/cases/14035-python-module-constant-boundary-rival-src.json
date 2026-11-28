@@ -1,0 +1,45 @@
+{
+  "id": "python_module_constant_boundary_rival_src",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_module_constant_boundary_rival_src",
+  "vector": "module_constant_boundary_read_through_rival_src_module",
+  "probe_family": "predicate",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "weakly_exposed"
+    },
+    {
+      "type": "expected_finding_owner",
+      "owner": "python:svc/a/src/pricing.py::discounted_total"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "test_at",
+      "file": "svc/b/tests/test_pricing.py",
+      "line": 13,
+      "kind": "exact_value",
+      "strength": "strong"
+    },
+    {
+      "type": "expected_related_test",
+      "name": "test_above",
+      "file": "svc/b/tests/test_pricing.py",
+      "line": 9,
+      "kind": "exact_value",
+      "strength": "strong",
+      "miss": "missing_input"
+    }
+  ]
+}

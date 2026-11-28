@@ -70,10 +70,11 @@ shown) and runs ripr on your change:
 ```bash
 v=0.10.0; t=x86_64-unknown-linux-gnu; f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
-curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } && tar xzf $f \
-  && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
-ripr check
+curl -fsSLO "$b/$f" && curl -fsSLO "$b/$f.sha256" && \
+  echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
+  && mkdir ripr-bin && tar xzf $f -C ripr-bin \
+  && export PATH="$PWD/ripr-bin:$PATH" \
+  && ./ripr-bin/ripr check
 ```
 
 On macOS set `t=aarch64-apple-darwin` (Apple silicon) or
@@ -88,6 +89,10 @@ analysis could not complete. On the base branch itself there are no changed
 files, and ripr says so. A result with no findings or limited evidence is not a
 clean bill of health. If a check cannot complete, run `ripr doctor` (standalone;
 it exits 3 when a check fails).
+
+No change of your own to try it on? The [starter examples](examples/README.md)
+are three small projects (Rust, Python and TypeScript) with a known gap and the
+one added assertion that closes it.
 
 The example output above and `--worktree` come from the 0.11 development build,
 which is not yet the published release. In it, `ripr check` uses uncommitted
@@ -171,8 +176,8 @@ a promise that every surface is available from the published package.
 
 With no `ripr.toml`, ripr analyzes Rust and also enables Python preview when
 it detects Python project markers or Python source under `src/` or `tests/`;
-TypeScript preview is likewise enabled when it detects a root `tsconfig.json`
-or `jsconfig.json`, or TypeScript source under `src/` or `tests/`; otherwise
+TypeScript preview is likewise enabled when it detects a root `tsconfig.json`,
+`jsconfig.json`, `deno.json` or `deno.jsonc`, or TypeScript source under `src/` or `tests/`; otherwise
 TypeScript/JavaScript is enabled through `[languages] enabled` in `ripr.toml`,
 and a `ripr.toml` that sets `enabled = ["rust"]` keeps Python off (and
 TypeScript off too)
@@ -189,10 +194,11 @@ and limits; the [capability matrix](docs/CAPABILITY_MATRIX.md) and
 
 ## Docs
 
-[Quickstart](docs/QUICKSTART.md) · [Configuration](docs/CONFIGURATION.md) ·
+[Quickstart](docs/QUICKSTART.md) · [Upgrading from 0.10](docs/INSTALL_CHANNELS.md#upgrading-from-010-to-011) ·
+[Configuration](docs/CONFIGURATION.md) ·
 [Editor extension](docs/EDITOR_EXTENSION.md) · [Agent guide](docs/LLM_OPERATOR_GUIDE.md) ·
-[Output formats](docs/OUTPUT_SCHEMA.md) · [Proof and limits](docs/PUBLIC_PROOF.md) ·
-[All documentation](docs/README.md)
+[Output formats](docs/OUTPUT_SCHEMA.md) · [Integrations and Git hooks](docs/INTEGRATIONS.md) ·
+[Proof and limits](docs/PUBLIC_PROOF.md) · [All documentation](docs/README.md)
 
 For the full test-and-evidence walkthrough, see [Targeted tests](docs/TARGETED_TEST_WORKFLOW.md),
 [First PR workflow](docs/FIRST_PR_WORKFLOW.md), and [repair recovery](docs/REPAIR_ATTEMPT.md).

@@ -1,0 +1,6 @@
+[package]
+name = "branch-local-rebound-let"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]

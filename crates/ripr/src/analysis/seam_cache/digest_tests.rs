@@ -11,26 +11,6 @@ fn reference_digest<T: Serialize>(domain: &str, body: &T) -> Result<String, Stri
     Ok(format!("sha256:{:x}", hash.finalize()))
 }
 
-// Exact pre-buffering stream shape, retained as a differential performance
-// control. Unlike the independent to_vec oracle it never retains a body Vec.
-fn legacy_digest<T: Serialize>(domain: &str, body: &T) -> Result<String, String> {
-    struct Writer(Sha256);
-    impl std::io::Write for Writer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.update(bytes);
-            Ok(bytes.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut writer = Writer(Sha256::new());
-    writer.0.update(domain.as_bytes());
-    writer.0.update([0]);
-    serde_json::to_writer(&mut writer, body).map_err(|error| error.to_string())?;
-    Ok(format!("sha256:{:x}", writer.0.finalize()))
-}
-
 #[test]
 fn digest_preserves_independent_byte_oracle_across_buffer_boundaries() -> Result<(), String> {
     // JSON quotes make the 8190-byte string exactly one 8192-byte buffer.
@@ -149,45 +129,32 @@ fn real_file_facts_keep_compact_cache_bytes_and_integrity() -> Result<(), String
     assert_eq!(borrowed_digest, envelope.expected_digest()?);
     assert_eq!(borrowed_bytes, codec::encode_file_facts(&envelope)?);
     let digest = reference_digest("ripr-cache:FileFactCacheEnvelope:v1", &envelope)?;
-    let expected = serde_json::to_vec(&ChecksummedBody {
-        body: &envelope,
-        payload_digest: digest,
-    })
-    .map_err(|error| error.to_string())?;
+    // The stored entry is `<digest>\n<compact body>`, and the framed digest
+    // over those body bytes is the same semantic digest the re-serializing
+    // definition gives for the decoded envelope (#9216).
+    let body = serde_json::to_vec(&envelope).map_err(|error| error.to_string())?;
+    let mut expected = digest.clone().into_bytes();
+    expected.push(b'\n');
+    expected.extend_from_slice(&body);
     let encoded = codec::encode_file_facts(&envelope)?;
     assert_eq!(encoded, expected);
-    // Both paths use compact encoding so this comparison still isolates
-    // digest buffering. Bounded alternating pairs profile the actual route;
-    // duration is reported, never used as a flaky pass/fail threshold.
-    for sample in 0..7 {
-        let legacy = || -> Result<Vec<u8>, String> {
-            encode_integrity_body_compact(
-                &envelope,
-                legacy_digest("ripr-cache:FileFactCacheEnvelope:v1", &envelope)?,
-            )
-        };
-        let current = || codec::encode_file_facts(&envelope);
-        let measure = |encode: &dyn Fn() -> Result<Vec<u8>, String>| -> Result<u128, String> {
-            let started = std::time::Instant::now();
-            let bytes = encode()?;
-            let elapsed = started.elapsed().as_nanos();
-            assert_eq!(bytes, expected);
-            Ok(elapsed)
-        };
-        let (legacy_ns, current_ns) = if sample % 2 == 0 {
-            (measure(&legacy)?, measure(&current)?)
-        } else {
-            let current_ns = measure(&current)?;
-            (measure(&legacy)?, current_ns)
-        };
-        eprintln!(
-            "file-fact-codec sample={sample} legacy_ns={legacy_ns} current_ns={current_ns} bytes={}",
-            encoded.len()
-        );
-    }
-    let mut loaded = codec::decode_file_facts(&encoded)?;
-    loaded.validate_integrity()?;
-    loaded.file_facts.source = "changed source".into();
-    assert!(loaded.validate_integrity().is_err());
+    assert_eq!(
+        semantic_digest_for_bytes("ripr-cache:FileFactCacheEnvelope:v1", &body),
+        digest
+    );
+    let loaded = codec::decode_file_facts(&encoded)?;
+    assert!(loaded.digest_matches);
+    assert_eq!(loaded.envelope.expected_digest()?, digest);
+    // A body edited behind the stored digest decodes for its identity but
+    // fails the digest, so it is never served.
+    let tampered = String::from_utf8(encoded.clone())
+        .map_err(|error| error.to_string())?
+        .replacen("value_0", "value_X", 1);
+    let tampered = codec::decode_file_facts(tampered.as_bytes())?;
+    assert!(!tampered.digest_matches);
+    // An entry without the digest header falls back to the embedded digest,
+    // which this body lacks, so it is never served.
+    let unframed = codec::decode_file_facts(&body)?;
+    assert!(!unframed.digest_matches);
     Ok(())
 }

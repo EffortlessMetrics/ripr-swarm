@@ -28,7 +28,6 @@ Options:
                    and an edited section is kept unless --force refreshes it.
                    A symlink, an unreadable file or an unterminated marker is
                    refused. With cursor, --mcp also writes .cursor/mcp.json.
-                   Guide: docs/AGENT_QUICKSTART.md.
   --dry-run       Show the plan and the file bodies without writing anything.
                    Resolves the same preconditions as the real run, so it
                    fails the same way (existing file without --force, root
@@ -68,7 +67,9 @@ Options:
 The command uses the same ancestor-aware loader as analysis and fails with the
 path-qualified parser or policy error. A missing ripr.toml follows the normal
 built-in-defaults path; use `ripr init` when you want to materialize those
-defaults into a file.
+defaults into a file. It also checks the suppressions manifest the config
+selects: a configured [suppressions] path that does not exist fails, and a
+present manifest (default .ripr/suppressions.toml) must parse.
 "#;
 pub(super) const PILOT_HELP: &str = r#"Find the top test gap in this repo and write a packet you can act on.
 
@@ -100,7 +101,7 @@ Progress:
   `still active after <elapsed class>` heartbeats, exactly as `ripr check`
   reports them, including `processed_<n>_of_<total>` once the inventory has
   an honest seam denominator. Non-TTY / CI output is newline-delimited with
-  no control sequences; stdout and the pilot packet stay byte-clean. When
+  no control sequences and starts after the first 2s of a run; stdout and the pilot packet stay byte-clean. When
   the default timeout passes, the same run continues under the same progress
   stream. `--quiet` turns this stream off.
 
@@ -193,7 +194,7 @@ adjacent commits. Matching heads still do not mean matching working trees.
 /// flag mining for typo suggestions and the help tests read the full text.
 pub(super) const CHECK_HELP_SHORT: &str = r#"Analyze the current diff and name the changed behavior your tests may not catch.
 
-Usage: ripr check [OPTIONS]
+Usage: ripr check [OPTIONS] [PATH...]
 
 Common options:
   --base REV        Compare against this revision; when omitted, ripr uses
@@ -221,14 +222,14 @@ Exit status: 0 for a completed run, including findings that are `exposed` or wea
 `unsupported_input` reports exit 2, as do usage errors. Do not build
 a CI gate on check's exit code; run `ripr gate evaluate` (exit 3 on `blocked`).
 Examples:
-  ripr check
+  ripr check [src/lib.rs]   (a PATH keeps only that changed file, like --path)
   ripr check --base origin/main --json --quiet   (--json on a pipe is already quiet; --quiet also silences a terminal)
 More:
   ripr check --help --all   Every option (--path/--exclude too), format, and env var.
 "#;
 pub(super) const CHECK_HELP: &str = r#"Analyze a diff or workspace and emit findings in human, JSON, SARIF, or badge form.
 
-Usage: ripr check [OPTIONS]
+Usage: ripr check [OPTIONS] [PATH...]
 
 Options:
   --root PATH              Workspace root. Defaults to current directory, then
@@ -263,11 +264,13 @@ Options:
                            or glob: `src/lib.rs`, `crates/api`, `src/**/*.rs`.
                            Applied before the diff-size limits, so they measure
                            only the chosen files. Changed files outside the
-                           scope are named in a language_scope_unsupported
-                           limitation and have no finding: the outcome is
-                           partial_with_limitations, never clean. A scope that
+                           scope are named in a requested_scope_excluded
+                           scope note and have no finding; the outcome stays
+                           complete. Built-in generated skips still make the
+                           run partial. A scope that
                            leaves no changed file is an error. Not supported
-                           for repo-scoped formats.
+                           for repo-scoped formats. A bare PATH argument
+                           (`ripr check src/lib.rs`) is the same as --path.
   --exclude GLOB           Skip changed files matching GLOB (repeatable;
                            wins over --path). Same pattern shapes, same
                            disclosure as --path.
@@ -296,8 +299,8 @@ Options:
                            Cost class: whole-workspace modes (deep, ready) can
                            take roughly an order of magnitude longer than the
                            diff-scoped modes (instant, draft, fast) on large
-                           workspaces. See docs/CONFIGURATION.md "Analysis
-                           modes".
+                           workspaces. See the analysis modes guide:
+                           https://github.com/EffortlessMetrics/ripr/blob/main/docs/CONFIGURATION.md#analysis-modes
   --format FORMAT          Output format. Defaults to human.
                            Choose by task: eye review -> human (the default);
                            every finding with drill-in commands -> human-full;
@@ -354,7 +357,8 @@ Options:
                            writes that file yet; hand-author the documented
                            minimum shape from real test measurements or wait
                            for the portable producer (not shipped yet).
-                           See docs/BADGE_ADOPTION.md.
+                           See the badge adoption guide:
+                           https://github.com/EffortlessMetrics/ripr/blob/main/docs/BADGE_ADOPTION.md
                            repo-* and agent-seam-packets-json formats render
                            against the full repo baseline; the non-repo badge-*
                            formats remain diff-scoped.
@@ -369,14 +373,22 @@ Options:
                            Apply a suppressions TOML (same schema as
                            .ripr/suppressions.toml) to the findings-based
                            formats (human, human-full, json, json-compact,
-                           github, missed-txt). exposure_gap
-                           entries select findings by finding_id or by a
-                           path glob (with optional static_class narrowing).
-                           Suppressed findings stay visible in JSON with
-                           suppressed: true; per-class summary counts cover
+                           github, missed-txt) and to sarif and
+                           sarif-compact. exposure_gap entries select
+                           findings by finding_id, by path + function, or by
+                           a path glob (with optional static_class
+                           narrowing). Suppressed findings stay visible in
+                           JSON with suppressed: true and in SARIF with a
+                           suppressions entry; per-class summary counts cover
                            unsuppressed findings only. Relative PATH
                            resolves against --root; a missing or malformed
-                           policy fails the run.
+                           policy fails the run. Every other format (agent,
+                           json-terse, badge and repo formats) refuses the
+                           flag as a usage error. Without the flag, sarif,
+                           sarif-compact, badge-json, badge-shields and the
+                           badge-plus formats read [suppressions] path from
+                           ripr.toml (default .ripr/suppressions.toml); the
+                           flag replaces that file for sarif.
   --output-dir DIR         With a named --diff file, write native badge.json,
                            detail.json and human.txt from one analysis. DIR must
                            be new (parent exists). Verify manifest.json and member
@@ -384,9 +396,10 @@ Options:
                            --format/--json, scope switches, --gap-ledger,
                            --write-artifact or --suppression-policy. Bounded input
                            inventory refuses drift, nonregular files and external
-                           module reads. See docs/OUTPUT_SCHEMA.md.
+                           module reads. See the output schema guide:
+                           https://github.com/EffortlessMetrics/ripr/blob/main/docs/OUTPUT_SCHEMA.md
   --write-artifact PATH    Write a full-fidelity check artifact (schema
-                           ripr-check-artifact-v1) for later
+                           ripr-check-artifact-v2) for later
                            `ripr explain --from PATH` /
                            `ripr context --from PATH` reuse. The artifact
                            records the complete finding set plus the input
@@ -451,7 +464,9 @@ Progress:
   github, missed-txt) keep stdout byte-clean. With json, json-compact, sarif,
   missed-txt, badge-*
   or agent selected and stderr not a terminal, the stream is off by default;
-  `RIPR_PROGRESS=1` restores it. A terminal and the human formats keep it. Unknown totals
+  `RIPR_PROGRESS=1` restores it. A terminal keeps it. A human format on a
+  non-terminal stderr holds it for the first 2s, so a run that finishes
+  sooner prints nothing; `RIPR_PROGRESS=1` makes those lines immediate. Unknown totals
   never become a percentage or ETA. Progress does not mean analysis is faster
   or that the command will succeed. `--quiet` turns this stream
   off; so does setting `RIPR_QUIET` to anything but empty, `0` or
@@ -527,10 +542,12 @@ Environment variables:
                                           an unparseable value fails the run.
                                           Default: 1000000 (1 MB).
   RIPR_QUIET                              Silence the stderr `ripr progress:` stream
-                                          like --quiet (check, explain, context,
-                                          pilot, repair, continue). Any value except
-                                          empty, 0 or false silences it; stdout, exit
-                                          codes and errors are unchanged.
+                                          like --quiet on every command that takes
+                                          it (check, explain, context, pilot,
+                                          evidence-health, repair, continue, status,
+                                          agent repair, reports ci-packet). Any value
+                                          except empty, 0 or false silences it;
+                                          stdout, exit codes and errors are unchanged.
   RIPR_PROGRESS                           Keep the `ripr progress:` stream for a
                                           machine format on a non-terminal stderr,
                                           where it is off by default. Any value
@@ -610,8 +627,9 @@ Options:
                directory).
   --format F   human (default; text is an alias) or agent. agent prints the selected finding as
                compact `check --format agent` lines (one record, its related
-               test, and an explicit done=/open=/stop= terminal line plus
-               next=<ripr context command>), static advisory only. For the
+               test, owner=/before= lines, and an explicit done=/open=/stop=
+               terminal line plus next=<ripr context command> when the JSON
+               packet holds more), static advisory only. For the
                JSON packet use `ripr context --at <finding-id>`.
   --quiet      Suppress analysis progress and heartbeats on stderr, like
                `ripr check --quiet`. Does not change stdout, exit codes, or
@@ -671,10 +689,11 @@ pub(super) const CONTEXT_HELP: &str = r#"Print one finding's changed code and re
 Use this when an agent or tool needs the facts behind one `ripr check`
 finding: the changed expression ripr examined, the tests that appear to
 reach it, the values they check, and any assertion that seems to be missing.
-Output is always JSON. To read the same finding as prose, run `ripr explain`
-with the same selector.
+Output is always JSON; `--json` is accepted and changes nothing.
+`--format json-compact` removes JSON whitespace. To read the same finding as
+prose, run `ripr explain` with the same selector.
 
-Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json] [--quiet]
+Usage: ripr context [--root PATH] [--base REV] [--worktree|--committed|--diff PATH] [--from PATH] [--path GLOB] [--exclude GLOB] [--mode MODE] [--no-unchanged-tests] [--perl-facts PATH] [--suppression-policy PATH] --at <finding-id|file:line> [--max-related-tests N] [--json|--format json|json-compact] [--quiet]
 
 Options:
   --at <finding-id|file:line>
@@ -682,6 +701,8 @@ Options:
                `ripr check --json`, or a changed `file:line`.
   --finding ID
                Same as --at.
+  --format FORMAT
+               JSON presentation: json (default) or json-compact.
   --max-related-tests N
                List at most N related tests. Defaults to
                `reports.max_related_tests` in ripr.toml, otherwise 5.
@@ -716,9 +737,10 @@ Options:
   --mode MODE  How much of the workspace is indexed: instant (changed
                files only, cheapest), draft (packages the diff touches; the
                default), fast (same as draft for now), deep and ready (whole
-               workspace, slowest). See docs/CONFIGURATION.md "Analysis
-               modes". With --from, this feeds the identity recomputation
-               (see `ripr explain --help`).
+               workspace, slowest). With --from, this feeds the identity
+               recomputation (see `ripr explain --help`).
+               See the analysis modes guide:
+               https://github.com/EffortlessMetrics/ripr/blob/main/docs/CONFIGURATION.md#analysis-modes
   --no-unchanged-tests
                Limit the index to changed Rust files. With --from, feeds
                the identity recomputation (see `ripr explain --help`).
@@ -796,7 +818,9 @@ pub(super) const DOCTOR_HELP: &str = r#"Diagnose the local ripr setup (workspace
 Usage: ripr doctor [--root PATH] [--json] [--timings] [--profile analysis|source-build]
 
 Options:
-  --root PATH   Diagnose the selected workspace (defaults to `.`).
+  --root PATH   Workspace to diagnose. Defaults to the root `ripr check` would
+                use: the current directory, then the enclosing workspace or
+                package, or the git top level; `--root .` pins this directory.
   --json        Emit the core checks as stable JSON and use the same exit status.
   --timings     With --json, include the volatile timing fields (elapsed_ms,
                 segments). Default --json output is byte-stable across runs

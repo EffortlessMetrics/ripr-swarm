@@ -40,6 +40,13 @@ pub(in crate::analysis::language::python) enum PythonRepoRunStatus {
     NoPythonSource,
     /// Python analysis is disabled for this run (config/feature policy).
     /// Discovery did not run.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "typed ahead of a config producer (#3554); production only matches it"
+        )
+    )]
     Disabled,
 }
 
@@ -80,11 +87,25 @@ impl PythonRepoRunStatus {
     /// a no-subject run, and a disabled run must never be reported as
     /// clean-complete (#3554 bounded-analysis contract; #2109 cap
     /// semantics).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "unit-tested invariant with no production consumer yet (#3554)"
+        )
+    )]
     pub(in crate::analysis::language::python) fn can_support_full_denominator(&self) -> bool {
         matches!(self, Self::Complete)
     }
 
     /// Stable status label for typed disclosure on output surfaces.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "unit-tested label with no production output surface yet (#3554)"
+        )
+    )]
     pub(in crate::analysis::language::python) fn as_str(&self) -> &'static str {
         match self {
             Self::Complete => "complete",

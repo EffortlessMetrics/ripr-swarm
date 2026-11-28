@@ -1,0 +1,7 @@
+pub fn case_one(value: i32) -> bool { value >= 10 }
+pub fn case_two(value: i32) -> bool { value >= 10 }
+pub fn case_three(value: i32) -> bool { value >= 10 }
+pub fn case_four(value: i32) -> bool { value >= 10 }
+pub fn case_five(async_value: i32) -> bool { async_value >= 10 }
+pub fn case_six(spawn_value: i32) -> bool { spawn_value >= 10 }
+pub fn case_seven(await_value: i32) -> bool { await_value >= 10 }

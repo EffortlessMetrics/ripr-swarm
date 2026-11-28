@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0184"
+tests = [
+  "crates/ripr/tests/cli_help_hierarchy.rs::help_documentation_links_work_outside_the_source_checkout",
+]
+code = [
+  "crates/ripr/src/cli/help/core.rs",
+  "crates/ripr/src/cli/help/overview.rs",
+]

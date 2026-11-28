@@ -107,12 +107,38 @@ const EXACT_ASSERTION_PRESENT_PHRASES: [&str; 2] = [
     "already asserts an exact value",
 ];
 
+/// The banned snake_case state tokens (#10697). A classifier may lead a
+/// `missing` entry with one as a label (`propagation_unknown: changed value
+/// sinks ...`). JSON `missing` and `human-full` keep that label byte-for-byte;
+/// the default human line drops it and keeps the prose that follows, the same
+/// way [`plain_probe_family`] maps the catch-all family to `unclear`.
+const STATE_TOKEN_PREFIXES: [&str; 6] = [
+    "weakly_exposed: ",
+    "reachable_unrevealed: ",
+    "no_static_path: ",
+    "infection_unknown: ",
+    "propagation_unknown: ",
+    "static_unknown: ",
+];
+
+/// Drop a leading `<state token>: ` label from a default human line. Only the
+/// exact token-plus-separator form is rewritten; any other text is unchanged.
+fn strip_state_token_prefix(text: &str) -> &str {
+    for prefix in STATE_TOKEN_PREFIXES {
+        if let Some(rest) = text.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    text
+}
+
 /// #13037: [`plain_default_missing`] for one finding. When the finding's own
 /// next step says a related test already has an exact assertion, "No strong
 /// assertion was detected" would contradict it, so the default line says what
 /// is actually missing: the link from that assertion to the changed value.
 /// JSON `missing` and `human-full` keep the classifier wording byte-for-byte.
 pub(crate) fn plain_default_missing_for(finding: &crate::domain::Finding, text: &str) -> String {
+    let text = strip_state_token_prefix(text);
     let exact_assertion_present = finding
         .recommended_next_step
         .as_deref()
@@ -493,7 +519,22 @@ fn evidence_path<T>(
                 > 1
         })
         .unwrap_or(false);
+    // #15421: `ripr explain` prints the Weakness reason's `observed <name>
+    // values: ...` right below, so a function-argument row it already lists is
+    // the same fact twice. Skipped only in explain wording and only while the
+    // window is not truncated, so `showing N of M` stays true.
+    let skip_restated = wording == JsonPointerWording::ExplainNamesCheck
+        && observed_values_total <= MAX_OBSERVED_VALUES_SHOWN;
+    // A skipped row still counts as a source-value row for the literal
+    // evidence fallback below, so dropping it never brings the literals back.
+    let mut skipped_restated = false;
     for (index, value) in shown_values.into_iter().enumerate() {
+        if skip_restated
+            && value_restated_by_discriminator(value, &finding.activation.missing_discriminators)
+        {
+            skipped_restated = true;
+            continue;
+        }
         let file = files.and_then(|files| files[index].as_deref());
         lines.push(project(
             if name_files {
@@ -531,7 +572,7 @@ fn evidence_path<T>(
         ), EvidenceSource::Window));
     }
 
-    if lines.len() == 5 && !finding.evidence.is_empty() {
+    if lines.len() == 5 && !skipped_restated && !finding.evidence.is_empty() {
         lines.extend(
             finding
                 .evidence
@@ -555,6 +596,41 @@ fn evidence_path<T>(
     }
 
     lines
+}
+
+/// Whether a missing-discriminator reason already lists this function-argument
+/// fact as `observed <name> values: ..., <value>`. The fact's `name = value`
+/// spelling is the typed ValueFact value; the reason is the producer's prose,
+/// which carries no typed observed-value list, so only its fixed
+/// `observed <name> values:` segment is read, up to the next `;`.
+fn value_restated_by_discriminator(
+    fact: &crate::domain::ValueFact,
+    discriminators: &[crate::domain::MissingDiscriminatorFact],
+) -> bool {
+    if fact.context != crate::domain::ValueContext::FunctionArgument {
+        return false;
+    }
+    let Some((name, value)) = fact.value.split_once(" = ") else {
+        return false;
+    };
+    let (name, value) = (name.trim(), value.trim());
+    if name.is_empty() || value.is_empty() {
+        return false;
+    }
+    let needle = format!("observed {name} values: ");
+    discriminators.iter().any(|discriminator| {
+        discriminator
+            .reason
+            .match_indices(&needle)
+            .any(|(start, _)| {
+                let rest = &discriminator.reason[start + needle.len()..];
+                let segment = rest.split(';').next().unwrap_or(rest);
+                segment
+                    .trim_end_matches('.')
+                    .split(", ")
+                    .any(|item| item.trim() == value)
+            })
+    })
 }
 
 pub(super) fn weakness_lines(finding: &Finding) -> Vec<String> {
@@ -643,4 +719,38 @@ fn is_duplicate_discriminator_missing(missing: &str, discriminator_values: &[&st
         return false;
     };
     discriminator_values.contains(&value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_state_token_prefix;
+
+    #[test]
+    fn a_leading_state_token_label_is_dropped_from_the_default_line() {
+        let producer = "propagation_unknown: changed value sinks to the owner return value or \
+                        constructed object (`5`); all strong assertions observe an unrelated \
+                        expression, not the changed sink; propagation unknown";
+        let plain = strip_state_token_prefix(producer);
+        assert!(!plain.contains("propagation_unknown"), "{plain}");
+        assert!(
+            plain.starts_with("changed value sinks to the owner return value"),
+            "{plain}"
+        );
+        assert!(plain.ends_with("propagation unknown"), "{plain}");
+    }
+
+    #[test]
+    fn a_token_that_is_not_a_leading_label_is_left_alone() {
+        // The prose tail keeps the plain words; only the label form is rewritten.
+        let prose = "changed value sinks to a non-escaping call effect; propagation unknown";
+        assert_eq!(strip_state_token_prefix(prose), prose);
+        // A token inside a sentence is not a label.
+        let inline = "the class is propagation_unknown here";
+        assert_eq!(strip_state_token_prefix(inline), inline);
+        // A token without the separator is not a label.
+        assert_eq!(
+            strip_state_token_prefix("propagation_unknown"),
+            "propagation_unknown"
+        );
+    }
 }

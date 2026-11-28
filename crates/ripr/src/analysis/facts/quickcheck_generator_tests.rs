@@ -122,7 +122,7 @@ fn findings_at_with_provider_admission(
                 "fixture ambient configuration"
             );
             assert_eq!(
-                quickcheck_generator::verified_files(&index).contains(&path),
+                quickcheck_generator::verified_impls(&index).contains_key(&path),
                 expected_provider_admission,
                 "provider admission; functions: {:?}",
                 index
@@ -380,6 +380,46 @@ fn quickcheck_generator_opaque_expansions_and_compiler_overrides_refuse_role() -
                 }
             }
             Ok(())
+        },
+    )
+}
+
+#[test]
+fn quickcheck_generator_role_requires_the_admitted_trait_spelling() -> Result<(), String> {
+    crate::testing::compiler_environment::plain(
+        module_path!(),
+        "quickcheck_generator_role_requires_the_admitted_trait_spelling",
+        || {
+            // Both methods sit inside the admitted impl's one-line range; only
+            // the method of the admitted trait takes the generator role.
+            let source = "#[derive(Clone, Debug)]\nstruct A(u8);\nimpl quickcheck::Arbitrary for A { fn arbitrary(_: &mut quickcheck::Gen) -> Self { A(1) } } impl Default for A { fn default() -> Self { A(0) } }\n";
+            let root = drop_in::temp_workspace(
+                "quickcheck-generator-trait-spelling",
+                &[("Cargo.toml", MANIFEST), ("src/lib.rs", source)],
+            )?;
+            let result = (|| {
+                let index = build_index(&root, &[PathBuf::from("src/lib.rs")])?;
+                let role = |name: &str| {
+                    index
+                        .functions()
+                        .iter()
+                        .find(|function| function.name == name)
+                        .map(|function| function.source_role)
+                };
+                assert_eq!(
+                    role("arbitrary"),
+                    Some(crate::analysis::facts::FunctionSourceRole::TestInputGenerator),
+                    "fixture admits the generator"
+                );
+                let default = role("default").ok_or("missing Default method")?;
+                assert_ne!(
+                    default,
+                    crate::analysis::facts::FunctionSourceRole::TestInputGenerator
+                );
+                Ok(())
+            })();
+            std::fs::remove_dir_all(root).map_err(|e| e.to_string())?;
+            result
         },
     )
 }

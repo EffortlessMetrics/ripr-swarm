@@ -68,6 +68,59 @@ pub(crate) fn placement_for(
         })
 }
 
+/// Where a card's gap really is, when GitHub could only place the card on a
+/// different changed line (#14303). `owner_function_changed_line` and
+/// `same_file_changed_line` cards sit on the nearest changed line of the
+/// seam's owner, so a reader at that line would otherwise read a missing
+/// check for an expression that is not there. Returns the gap's own line and
+/// expression from a `comments.json` card; `None` for an exact placement, an
+/// unknown mode, or a card that does not name a different line.
+pub(crate) fn displaced_seam_location(card: &Value) -> Option<(u64, &str)> {
+    let placement = card.get("placement")?;
+    let mode = placement.get("mode").and_then(Value::as_str)?;
+    if !matches!(
+        mode,
+        "owner_function_changed_line" | "same_file_changed_line"
+    ) {
+        return None;
+    }
+    let placed_line = placement.get("line").and_then(Value::as_u64)?;
+    let seam_line = card
+        .pointer("/source_location/line")
+        .and_then(Value::as_u64)
+        .or_else(|| card.pointer("/seam/line").and_then(Value::as_u64))?;
+    if seam_line == placed_line || seam_line == 0 {
+        return None;
+    }
+    let expression = card
+        .pointer("/seam/expression")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    Some((seam_line, expression))
+}
+
+/// The workflow-annotation prefix naming a displaced card's gap line
+/// (#14303), for both annotation renderers. The expression is user source;
+/// it is workflow-command data only, which the caller's `escape_data`
+/// encodes, and it is capped so one long expression cannot crowd out the
+/// reason.
+pub(crate) fn displaced_seam_prefix(card: &Value) -> Option<String> {
+    const EXPRESSION_CHARS: usize = 120;
+    let (line, expression) = displaced_seam_location(card)?;
+    let expression = if expression.chars().count() > EXPRESSION_CHARS {
+        let kept: String = expression.chars().take(EXPRESSION_CHARS).collect();
+        format!("{kept}…")
+    } else {
+        expression.to_string()
+    };
+    Some(if expression.is_empty() {
+        format!("Gap at line {line} of this function: ")
+    } else {
+        format!("Gap at line {line} (`{expression}`) of this function: ")
+    })
+}
+
 pub(crate) fn placement_json(placement: &ReviewPlacement) -> Value {
     json!({
         "path": placement.path,

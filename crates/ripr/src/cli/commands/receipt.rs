@@ -41,6 +41,11 @@ fn run_receipt_write(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_write_options(args)?;
+    // #15249: an explicit `--root` that is not a directory is the shared root
+    // refusal, before the git HEAD lookup or any receipt write.
+    if let Some(root) = opts.root.as_deref() {
+        crate::cli::commands_context::ensure_command_root_dir(root, "receipt write")?;
+    }
     // Receipts land under `target/ripr/receipts`, never the cache, so an
     // explicit `RIPR_CACHE_DIR` must not waive the link check, and the default
     // path is cwd-relative when `--root` is omitted (#11477).
@@ -90,7 +95,18 @@ fn run_receipt_check(args: &[String]) -> Result<(), String> {
     }
 
     let opts = parse_receipt_check_options(args)?;
-    let (msg, cross_ref) = check_receipt(&opts)?;
+    // #15260: under `--json` a receipt or ledger that cannot be used is the
+    // shared refusal document on stdout, not an empty stdout plus prose.
+    // The missing-selector refusal is a required-flag error, not an unusable
+    // input, and stays with the required-flag owner.
+    let names_a_receipt = opts.path.is_some() || opts.gap.is_some();
+    let (msg, cross_ref) = check_receipt(&opts).map_err(|message| {
+        if names_a_receipt {
+            crate::cli::usage_refusal::input_unusable(None, &message)
+        } else {
+            message
+        }
+    })?;
     if opts.json {
         // Machine-readable mode: one JSON document carrying the typed
         // cross-reference verdict. The human sentence stays the default.
@@ -150,9 +166,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--gap")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)".to_string(),
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap",
+                        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)",
+                    ));
                 }
                 canonical_gap_id = Some(value.to_string());
             }
@@ -160,7 +177,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--packet")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write --packet requires a non-empty packet ID; pass a value right after --packet".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--packet",
+                        "receipt write --packet requires a non-empty packet ID; pass a value right after --packet",
+                    ));
                 }
                 packet_id = Some(value.to_string());
             }
@@ -168,7 +188,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--verify-command")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write requires --verify-command; add `--verify-command` to the command".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--verify-command",
+                        "receipt write requires --verify-command; add `--verify-command` to the command",
+                    ));
                 }
                 verify_command = Some(value.to_string());
             }
@@ -187,7 +210,10 @@ pub(in crate::cli) fn parse_receipt_write_options(
                 i += 1;
                 let value = expect_value(args, i, "--out")?;
                 if value.trim().is_empty() {
-                    return Err("receipt write --out requires a non-empty path; pass a value right after --out".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--out",
+                        "receipt write --out requires a non-empty path; pass a value right after --out",
+                    ));
                 }
                 out = Some(PathBuf::from(value));
             }
@@ -209,13 +235,19 @@ pub(in crate::cli) fn parse_receipt_write_options(
     }
 
     let canonical_gap_id = canonical_gap_id.ok_or_else(|| {
-        "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--gap",
+            "receipt write requires a canonical_gap_id; re-run with `--gap <canonical_gap_id>` (`ripr receipt --help` shows the full command)",
+        )
     })?;
     let verify_command = verify_command.ok_or_else(|| {
-        "receipt write requires --verify-command; add `--verify-command` to the command".to_string()
+        crate::cli::usage_refusal::missing_required(
+            "--verify-command",
+            "receipt write requires --verify-command; add `--verify-command` to the command",
+        )
     })?;
     let verify_status = verify_status
-        .ok_or_else(|| "receipt requires --status (passed|failed|not_run|unknown); pass one of those values, such as `--status passed`".to_string())?;
+        .ok_or_else(|| crate::cli::usage_refusal::missing_required("--status", "receipt requires --status (passed|failed|not_run|unknown); pass one of those values, such as `--status passed`"))?;
 
     Ok(ReceiptWriteOptions {
         canonical_gap_id,
@@ -244,9 +276,10 @@ pub(in crate::cli) fn parse_receipt_check_options(
                 i += 1;
                 let value = expect_value(args, i, "--gap")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "receipt check --gap requires a non-empty canonical_gap_id; pass a value right after --gap".to_string()
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--gap",
+                        "receipt check --gap requires a non-empty canonical_gap_id; pass a value right after --gap",
+                    ));
                 }
                 gap = Some(value.to_string());
             }
@@ -254,7 +287,10 @@ pub(in crate::cli) fn parse_receipt_check_options(
                 i += 1;
                 let value = expect_value(args, i, "--path")?;
                 if value.trim().is_empty() {
-                    return Err("receipt check --path requires a non-empty path; pass a value right after --path".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--path",
+                        "receipt check --path requires a non-empty path; pass a value right after --path",
+                    ));
                 }
                 path = Some(PathBuf::from(value));
             }
@@ -262,9 +298,10 @@ pub(in crate::cli) fn parse_receipt_check_options(
                 i += 1;
                 let value = expect_value(args, i, "--ledger")?;
                 if value.trim().is_empty() {
-                    return Err(
-                        "receipt check --ledger requires a non-empty path to a gap-decision-ledger JSON file; pass a value right after --ledger".to_string()
-                    );
+                    return Err(crate::cli::usage_refusal::empty_value(
+                        "--ledger",
+                        "receipt check --ledger requires a non-empty path to a gap-decision-ledger JSON file; pass a value right after --ledger",
+                    ));
                 }
                 ledger = Some(PathBuf::from(value));
             }
@@ -347,7 +384,8 @@ Options:
                         alongside --current-head, the writer resolves the actual
                         git rev-parse HEAD and rejects if the caller-provided
                         sha does not match. Without --root, --current-head is
-                        format-checked only.
+                        compared against the HEAD of the repository in the
+                        current directory.
   --out PATH            Write receipt JSON to this path. When omitted, writes to
                         target/ripr/receipts/<canonical_gap_id>.json with
                         filename-unsafe characters (`:`, etc.) percent-encoded

@@ -16,10 +16,14 @@ mod executable_files;
 mod file_policy;
 pub(crate) mod file_policy_retained_evidence;
 mod fold_changelog;
+pub(crate) mod freeze_readiness;
 mod install_receipt;
+mod library_selector;
+mod lint_ledger;
 mod local_context;
 mod network;
 mod no_panic;
+mod package_content;
 mod packaged_readme;
 mod positioning_language;
 mod process;
@@ -27,6 +31,7 @@ mod product_copy;
 pub(crate) mod proof_packs;
 mod release_selection;
 mod release_targets;
+#[path = "user_text_frontdoor.rs"]
 mod user_text;
 
 pub(crate) use release_targets::{CandidateAuthoritySnapshot, capture_candidate_authority};
@@ -56,17 +61,23 @@ pub(crate) use droid_review::check_droid_review_config;
 pub(crate) use executable_files::check_executable_files;
 #[cfg(all(test, windows))]
 pub(crate) use file_policy::FILE_POLICY_COVERED_BY_BUILD_BUDGET;
-pub(crate) use file_policy::{check_file_policy, is_covered_by_instrument_failure};
+pub(crate) use file_policy::{
+    CoverageEnumeration, check_file_policy, check_file_policy_with,
+    is_covered_by_instrument_failure,
+};
 pub(crate) use fold_changelog::fold_changelog;
 pub(crate) use install_receipt::install_receipt;
+pub(crate) use lint_ledger::parse_clippy_lints_ledger;
 pub(crate) use local_context::check_local_context;
 pub(crate) use network::check_network_policy;
 pub(crate) use no_panic::check_no_panic_family;
+pub(crate) use package_content::check_package_content;
 pub(crate) use packaged_readme::{check_packaged_readme, workspace_package_version};
 pub(crate) use positioning_language::check_positioning_language;
 pub(crate) use process::check_process_policy;
 pub(crate) use product_copy::check_product_copy;
 pub(crate) use proof_packs::check_proof_packs;
+pub(crate) use release_targets::milestone_parity::check_fixture as check_release_milestone_fixture;
 pub(crate) use static_language::check_static_language;
 pub(crate) use text_encoding::check_text_encoding;
 pub(crate) use user_text::{check_user_text, check_user_text_full, check_user_text_with_args};

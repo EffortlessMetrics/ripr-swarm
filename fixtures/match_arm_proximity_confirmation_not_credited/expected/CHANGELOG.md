@@ -365,3 +365,88 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (29)
+
+Reason:
+RIPR-SPEC-0001: head-only match-arm rows and their propagation sink name the arm's same-line result (#14420)
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (30)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (31)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (32)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm and field_construction exact-oracle steps add an if-it-does branch naming the unconfirmed observation link; static class unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (33)
+
+Reason:
+RIPR-SPEC-0259: #13037 review repair, the match_arm exact-oracle step names an arm whose result is replaced before the assertion; static class unchanged
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (34)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — match_arm_proximity_confirmation_not_credited (35)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless match_arm_proximity_confirmation_not_credited --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -16,12 +16,12 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-const SEAM_CACHE_SOURCE: &str = "crates/ripr/src/analysis/seam_cache.rs";
+pub(super) const SEAM_CACHE_SOURCE: &str = "crates/ripr/src/analysis/seam_cache.rs";
 const CONSTANT_PREFIX: &str = "pub(crate) const CACHE_SCHEMA_VERSION: &str = \"";
 
 /// Read the analyzer's current full-cache generation from its source, so the
 /// gate follows the constant instead of a copy that could itself go stale.
-fn current_cache_schema_version(seam_cache_source: &str) -> Result<String, String> {
+pub(super) fn current_cache_schema_version(seam_cache_source: &str) -> Result<String, String> {
     seam_cache_source
         .lines()
         .find_map(|line| line.trim().strip_prefix(CONSTANT_PREFIX))
@@ -45,15 +45,39 @@ fn is_older(version: &str, current: &str) -> bool {
     }
 }
 
-fn recorded_version(report: &Value) -> Option<&str> {
+/// The generation the analyzer is at now, read from its source in this tree.
+/// One reader, so the currentness guard and the summary comparison can never
+/// disagree about which generation is current.
+pub(super) fn current_generation() -> Result<String, String> {
+    current_cache_schema_version(
+        &std::fs::read_to_string(SEAM_CACHE_SOURCE)
+            .map_err(|error| format!("failed to read {SEAM_CACHE_SOURCE}: {error}"))?,
+    )
+}
+
+pub(super) fn recorded_version(report: &Value) -> Option<&str> {
     report
         .pointer("/source_subject/corpus/cache_schema_version")
         .and_then(Value::as_str)
 }
 
+/// Whether a capture's per-stage `evidence_path` summaries are judged. Only a
+/// capture recorded at the analyzer's current generation is compared: a pin
+/// holds an older capture at its recorded generation, so judging it would test
+/// a claim the pin does not make and leave the pin's own reason unverified
+/// (#14555).
+pub(super) fn judges_evidence_path(report: &Value, current: &str) -> Result<bool, &'static str> {
+    recorded_version(report)
+        .map(|recorded| recorded == current)
+        .ok_or("regenerable capture requires `source_subject.corpus.cache_schema_version` to check currentness")
+}
+
 /// The pins as `report path -> (version, reason)`. A pin without a version or
 /// a non-empty reason is itself a violation.
-fn read_pins(corpus: &Value, violations: &mut Vec<String>) -> BTreeMap<String, (String, String)> {
+pub(super) fn read_pins(
+    corpus: &Value,
+    violations: &mut Vec<String>,
+) -> BTreeMap<String, (String, String)> {
     let mut pins = BTreeMap::new();
     let Some(entries) = corpus
         .get("report_cache_schema_pins")
@@ -95,7 +119,7 @@ fn read_pins(corpus: &Value, violations: &mut Vec<String>) -> BTreeMap<String, (
 /// Judge each `(path, parsed report)` against the current generation and the
 /// pins. Reports without `source_subject.corpus` are not repo-exposure
 /// captures and are not judged; one that has `corpus` but no version fails.
-fn check_reports(
+pub(super) fn check_reports(
     reports: &[(String, Value)],
     current: &str,
     pins: &BTreeMap<String, (String, String)>,
@@ -180,10 +204,7 @@ pub(super) fn check_report_cache_schemas(violations: &mut Vec<String>) -> Result
     if reports.is_empty() && pins.is_empty() {
         return Ok(());
     }
-    let current = current_cache_schema_version(
-        &std::fs::read_to_string(SEAM_CACHE_SOURCE)
-            .map_err(|error| format!("failed to read {SEAM_CACHE_SOURCE}: {error}"))?,
-    )?;
+    let current = current_generation()?;
     check_reports(&reports, &current, &pins, violations);
     Ok(())
 }

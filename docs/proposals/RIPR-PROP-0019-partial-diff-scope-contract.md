@@ -119,7 +119,8 @@ Three distinct limits, never conflated:
   changed-line guards — `DIFF_CHANGED_RUST_LINE_LIMIT` and the preview
   Python/TypeScript limits of RIPR-SPEC-0361 — measure the files the run
   analyzes, so a diff over them degrades into the partition below (whose line
-  budget is clamped to the smallest enabled language limit) instead of
+  budget is clamped to the smallest limit among the enabled languages the diff
+  contains) instead of
   refusing. They remain a
   backstop: since files are never split, a file that alone exceeds its own
   language's changed-line limit is left out of the partition (named on the scope
@@ -153,7 +154,8 @@ Budget validity and stop precedence are defined, never implicit:
   Revision (#13641): a file that also exceeds its own language's
   changed-line limit is never selected, even first: selection skips it and
   continues, and with no selectable file there is no partition and the run
-  refuses. The line budget is clamped to the smallest enabled language limit,
+  refuses. The line budget is clamped to the smallest limit among the enabled
+  languages the diff contains,
   so a widen instruction that asks for a line budget above that limit also
   names the limit to raise with it.
 - A later whole file that would exceed the remaining line budget is

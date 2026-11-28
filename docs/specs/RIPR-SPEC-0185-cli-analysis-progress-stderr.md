@@ -69,7 +69,15 @@ second stage vocabulary.
    progress line, and stays silent below a 250ms minimum-duration threshold.
    A TTY stage that remains active past that threshold becomes visible even
    if the producer event arrived during the silence window.
-4. Heartbeats repeat only the current producer stage, start after 2s, and are
+   A non-TTY stream holds its stage lines and the `completed` terminal for the
+   first 2s (`non_tty_hold`), so a run that finishes sooner prints nothing; a
+   longer run prints the current stage once, then heartbeats as below. A failed
+   or cancelled terminal still prints, preceded by the stage in flight.
+   `RIPR_PROGRESS` removes the hold (immediate lines); `--quiet` and
+   `RIPR_QUIET` still win.
+4. Heartbeats repeat only the current producer stage, start after 2s (on a
+   held non-TTY stream, one `heartbeat_every` after the disclosed stage line,
+   about 10s into the run), and are
    time-throttled to at most one line every 8 seconds of stage activity for as
    long as the stage stays active (#4957). There is no per-run count ceiling on
    the STANDARD policy, so a minutes-long repo walk never goes silent; line
@@ -142,7 +150,9 @@ second stage vocabulary.
 - A long-running `ripr pilot` fixture emits stage and heartbeat evidence on
   stderr while `pilot-summary.json` stays byte-identical with `--quiet`;
   a pilot deadline closes the progress run as `cancelled`, never
-  `completed` (#5019).
+  `completed` (#5019). The controller projects that line itself, so a
+  timed-out run ends with exactly one `cancelled [repo]` even when the
+  worker is stuck past its cancel grace (#5444).
 - `ripr pilot -v` on a fixture prints the stage table on stderr, prints no
   table without `-v`, and leaves stdout and `pilot-summary.json` bytes
   unchanged (#10727).
@@ -180,6 +190,7 @@ second stage vocabulary.
    `ripr explain` selector miss (#9244, #13239); genuine internal failures
    still project `ripr progress: failed`.
 5. A TTY run that finishes under 250ms emits no stage spray.
+5a. A non-TTY human-format run that finishes under 2s emits no progress; one past 2s prints its stage and `completed`; `RIPR_PROGRESS` forces immediate lines.
 6. A blocked analyzing stage keeps emitting heartbeats at most one per 8
    seconds of stage time; no 10s window of a minutes-long stage is silent.
    The STANDARD policy places no per-run count ceiling, so the former
@@ -209,8 +220,16 @@ second stage vocabulary.
 - `crates/ripr/src/cli/progress.rs::tests::tty_and_non_tty_share_stage_tokens`
 - `crates/ripr/src/cli/progress.rs::tests::failure_terminal_never_emits_completed`
 - `crates/ripr/src/cli/progress.rs::tests::cancelled_terminal_never_emits_completed`
+- `crates/ripr/src/cli/progress.rs::tests::abandon_with_scope_closes_a_run_the_worker_never_started`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::a_worker_stuck_past_the_grace_still_ends_with_one_cancelled_line`
 - `crates/ripr/src/cli/progress.rs::tests::projection_tokens_cover_the_closed_producer_vocabulary`
 - `crates/ripr/src/cli/progress.rs::tests::rendering_failure_is_isolated`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_fast_run_prints_no_progress_including_completed`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_run_past_the_hold_still_prints_stage_and_completed`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_held_stream_heartbeats_one_interval_after_disclosure`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_success_past_the_hold_between_ticks_discloses_the_stage`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_fast_failure_keeps_stage_context_before_failed`
+- `crates/ripr/src/cli/progress.rs::tests::progress_env_zeroes_the_non_tty_hold_and_only_there`
 - `crates/ripr/src/cli/progress.rs::tests::heartbeat_is_throttled_and_bounded`
 - `crates/ripr/src/cli/progress.rs::tests::standard_heartbeat_spans_long_repo_walks_without_a_ten_second_gap`
 - `crates/ripr/src/cli/progress.rs::tests::tty_suppressed_stage_becomes_visible_once_min_visible_elapses`

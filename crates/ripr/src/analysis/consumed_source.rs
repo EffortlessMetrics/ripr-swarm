@@ -78,6 +78,16 @@ impl ConsumedRustSources {
         }
     }
 
+    /// Whether any captured commitment lies strictly below the relative
+    /// directory `dir` (#14099: a deleted directory took its files with it).
+    /// Component-wise, so `src/nest` does not cover `src/nested/a.rs`.
+    pub(crate) fn any_captured_below(&self, dir: &Path) -> bool {
+        is_normal_relative_path(dir)
+            && self.paths.iter().any(|(path, observed)| {
+                matches!(observed, Commitment::Captured(_)) && path != dir && path.starts_with(dir)
+            })
+    }
+
     /// Re-verify, at request time, that the bytes behind `paths` still match
     /// what this carrier captured while the producer ran (#7357 card
     /// currentness). `read` returns the path's current raw bytes, or `None`

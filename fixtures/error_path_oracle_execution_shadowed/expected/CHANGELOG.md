@@ -554,3 +554,49 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_shadowed (42)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — error_path_oracle_execution_shadowed (43)
+
+Reason:
+RIPR-SPEC-0001: #7807 a removed line read as static_unknown only for lack of context is not reported again when its block replacement's modeled probe carries the whole removed text as before
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — error_path_oracle_execution_shadowed (44)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — error_path_oracle_execution_shadowed (45)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless error_path_oracle_execution_shadowed --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

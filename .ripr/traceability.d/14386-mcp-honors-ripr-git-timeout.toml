@@ -1,0 +1,10 @@
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/tests/mcp_workspace_config.rs::refresh_honors_ripr_git_timeout_from_the_server_environment",
+  "crates/ripr/src/app/tests/mode_and_selector.rs::env_or_default_git_timeout_matches_the_cli_contract",
+]
+code = [
+  "crates/ripr/src/mcp/workspace.rs",
+  "crates/ripr/src/app.rs",
+]

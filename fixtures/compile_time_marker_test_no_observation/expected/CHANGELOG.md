@@ -160,3 +160,83 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (13)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — compile_time_marker_test_no_observation (14)
+
+Reason:
+RIPR-SPEC-0224: report no established path for an assertion-free file-proximity row (#14808).
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (15)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — compile_time_marker_test_no_observation (16)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — compile_time_marker_test_no_observation (17)
+
+Reason:
+RIPR-SPEC-0008: SARIF message keeps weak reach uncertain (#15374)
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — compile_time_marker_test_no_observation (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — compile_time_marker_test_no_observation (19)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless compile_time_marker_test_no_observation --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

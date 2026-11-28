@@ -4,11 +4,12 @@ root: fixtures/typescript_adversarial_owner_identity_after_insertion/input
 config: <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input/ripr.toml
 
 Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Changed file(s) by language: typescript = 1
 
@@ -22,9 +23,9 @@ Changed
   after:  export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };
 
 Change type
-  a condition or comparison changed
-  family: predicate
-  delta:  control (changes which code path runs)
+  a returned value changed
+  family: return_value
+  delta:  value (changes a computed value)
   owner:  typescript:src/pricing.ts::DEFAULT_FEE_RULE
 
 Language
@@ -67,9 +68,9 @@ TypeScript preview card (advisory)
   authority: preview_advisory_only (typescript/preview)
   owner: DEFAULT_FEE_RULE
   owner kind: module_function
-  changed behavior: predicate changed at src/pricing.ts:6: `export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };`
+  changed behavior: return_value changed at src/pricing.ts:6: `export const DEFAULT_FEE_RULE: FeeRule = { bps: 300, cap: 50 };`
   oracle: unknown (none)
-  suggested assertion shape: Add an exact boundary assertion for the changed predicate.
+  suggested assertion shape: Add an exact return-value assertion for the changed output.
   repair packet ready: false
   why not actionable: no trusted related Jest/Vitest test or observer is available for a bounded TypeScript repair route
   repair route: add trusted related-test matching for this owner shape before emitting a repair packet
@@ -163,7 +164,6 @@ Drill in:
   (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
   ripr context --root <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/input --diff <cwd>/fixtures/typescript_adversarial_owner_identity_after_insertion/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8
-
 
 Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
   analyzed: 2 changed expression(s) and 0 statically linked related test(s). This is not a coverage

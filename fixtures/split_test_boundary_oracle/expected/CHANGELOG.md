@@ -430,3 +430,59 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (36)
+
+Reason:
+RIPR-SPEC-0122: the check digest states each fact once (no Why hint the Analyzer limit line repeats; no stage detail that repeats the missing-evidence line)
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (37)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (38)
+
+Reason:
+RIPR-SPEC-0186: the repair explanation identifies the missing exact boundary assertion when the fixture has no paired oracle (#15664).
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (39)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — split_test_boundary_oracle (40)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless split_test_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

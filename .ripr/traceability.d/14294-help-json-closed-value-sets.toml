@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0190"
+tests = [
+  "crates/ripr/tests/cli_help_json_values.rs::a_closed_value_set_is_exactly_what_the_parser_accepts",
+  "crates/ripr/tests/cli_help_json_values.rs::agent_repair_phase_and_init_presets_carry_their_values",
+]
+code = [
+  "crates/ripr/src/cli/help_flags.rs::flags_for",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0190-help-json-machine-discovery.md",
+]

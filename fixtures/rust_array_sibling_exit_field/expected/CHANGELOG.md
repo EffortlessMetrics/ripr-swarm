@@ -294,3 +294,58 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_array_sibling_exit_field (22)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_array_sibling_exit_field --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_array_sibling_exit_field (23)
+
+Reason:
+RIPR-SPEC-0122: the repair-start note names the spots tied on the changed line instead of claiming none ties (#15157)
+
+Command:
+`cargo xtask goldens bless rust_array_sibling_exit_field --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_array_sibling_exit_field (24)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_array_sibling_exit_field --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_array_sibling_exit_field (25)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_array_sibling_exit_field --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_array_sibling_exit_field (26)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_array_sibling_exit_field --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -552,3 +552,49 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — constant_declaration_probe_reconciliation (43)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless constant_declaration_probe_reconciliation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — constant_declaration_probe_reconciliation (44)
+
+Reason:
+RIPR-SPEC-0003: the no-changed-Rust-line next step says ripr cannot trace the change and points at the tests that use the macro, attribute or item instead of asking to move the line (#15412)
+
+Command:
+`cargo xtask goldens bless constant_declaration_probe_reconciliation --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — constant_declaration_probe_reconciliation (45)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless constant_declaration_probe_reconciliation --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — constant_declaration_probe_reconciliation (46)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless constant_declaration_probe_reconciliation --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -370,6 +370,9 @@ jobs:
             version = $version
             archive_file = [IO.Path]::GetFileName($archivePath)
             archive_sha256 = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
+            archive_size_bytes = [long](Get-Item $archivePath).Length
+            executable_size_bytes = [long]$payloadExecutable[0].size_bytes
+            payload_total_size_bytes = [long](($payloadIdentity.files | Measure-Object -Property size_bytes -Sum).Sum)
             archive_readback_verified = $true
             cargo_lock_sha256 = (Get-FileHash -Algorithm SHA256 Cargo.lock).Hash.ToLowerInvariant()
             qualification_workflow_sha256 = (Get-FileHash -Algorithm SHA256 .github/workflows/server-archive-qualification.yml).Hash.ToLowerInvariant()
@@ -509,6 +512,10 @@ jobs:
           version="${QUALIFICATION_VERSION#v}"
           candidate_sha="${CANDIDATE_SHA,,}"
           candidate_tree="$(git rev-parse 'HEAD^{tree}')"
+          jq -c '.[]' build-identities.json | while IFS= read -r build; do
+            archive_file="$(jq -r '.archive_file' <<< "${build}")"
+            test "$(stat -c%s "dist/${archive_file}")" = "$(jq -r '.archive_size_bytes' <<< "${build}")"
+          done
           jq -e \
             --arg sha "${candidate_sha}" \
             --arg tree "${candidate_tree}" \
@@ -533,6 +540,9 @@ jobs:
                (.rustc_verbose_version | length > 0) and
                (.cargo_verbose_version | length > 0) and
                (.archive_sha256 == $manifest[0].assets[.target].sha256) and
+               (.archive_size_bytes > 0) and
+               (.executable_size_bytes == ($payload.files | map(select(.role == "executable")) | .[0].size_bytes)) and
+               (.payload_total_size_bytes == ($payload.files | map(.size_bytes) | add)) and
                (.archive_readback_verified == true) and
                (.payload_identity_sha256 == $payload.identity_sha256) and
                (.producer_build_sha256 == $producer.producer_build_sha256) and
@@ -581,6 +591,7 @@ jobs:
             echo "- version: ${version}"
             echo "- targets selected/executed/failed/not run: 5/5/0/0"
             echo "- per-target build inputs, producer receipts, payload identities and archive digests: recorded in JSON receipt"
+            echo "- per-target archive, executable and payload-total bytes: recorded as archive_size_bytes, executable_size_bytes and payload_total_size_bytes in JSON receipt build identities"
             echo "- extracted archives: rehashed through the production payload verifier"
             echo "- manifest SHA256: ${manifest_sha256}"
             echo "- SHA256SUMS SHA256: ${checksums_sha256}"

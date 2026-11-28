@@ -33,8 +33,13 @@ use crate::analysis::facts::TestFact as TestSummary;
 use crate::analysis::facts::{FunctionSummary, SourceText};
 use crate::analysis::rust_index::RustIndex;
 use crate::analysis::syntax::parse_clean_source_file;
-use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
+use crate::analysis::syntax::run_memo::{self, Product};
+use ra_ap_syntax::{
+    AstNode, ast, ast::HasArgList, ast::HasAttrs, ast::HasGenericArgs, ast::HasGenericParams,
+    ast::HasName, ast::RangeItem,
+};
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 /// The fixed disclosure a contradicted oracle carries in every evidence
@@ -395,7 +400,12 @@ impl PointerReturnChange {
     pub(in crate::analysis) fn is_invisible_at_call(&self, call: &str) -> bool {
         let Some(baseline) = self.baseline.get_or_init(|| {
             let baseline = self.current.replacen(&self.after, &self.before, 1);
-            versions_differ_on_small_inputs(&self.current, &baseline).then_some(baseline)
+            OwnerFold::read(&self.current)
+                .zip(OwnerFold::read(&baseline))
+                .is_some_and(|(current, baseline)| {
+                    versions_differ_on_small_inputs(&current, &baseline)
+                })
+                .then_some(baseline)
         }) else {
             return false;
         };
@@ -459,11 +469,21 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         return None;
     }
     let baseline = current.replacen(after, before, 1);
+    // An owner whose whole body is one shared constructor around the changed
+    // payload (`Ok(x * 2)` to `Ok(x * 3)`) returns equal values exactly when
+    // the payloads are equal, so the equality reading folds the payloads
+    // (#15414). Relational assertions keep the unpeeled bodies.
+    let (current_value, baseline_value) = shared_constructor_payloads(current, &baseline)
+        .unwrap_or_else(|| (current.to_string(), baseline.clone()));
     // An equivalent rewrite (`x * 3` to `3 * x`) is invisible to every test
     // too, but "no input reaches a difference" would send the reader after a
     // test that cannot exist. The change must differ somewhere: a small input
     // grid has to find a call at which the two bodies fold to different values.
-    if !versions_differ_on_small_inputs(current, &baseline) {
+    // #15272: a method called on a record literal of its self type is read
+    // through the receiver's fields, and a tuple tail per component.
+    let (current_fold, baseline_fold) =
+        OwnerFold::read(&current_value).zip(OwnerFold::read(&baseline_value))?;
+    if !versions_differ_on_small_inputs(&current_fold, &baseline_fold) {
         return None;
     }
     // A related test that never names the owner exercises it through no call
@@ -479,6 +499,10 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
     // "no input reaches a difference" does not survive a relational
     // assertion that calls the owner at two different inputs.
     let mut relational_seen = false;
+    let self_type = match &owner.impl_context {
+        crate::analysis::facts::FunctionImplContext::Impl { self_type } => Some(self_type.as_str()),
+        _ => None,
+    };
     for test in naming_tests {
         if case_row_bindings(test).is_some()
             || test
@@ -514,7 +538,7 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         }
         let resolved: Vec<Vec<ResolvedOperand>> = equality_assertions
             .iter()
-            .map(|oracle| assertion_operands(&oracle.text, test.body.as_str()))
+            .map(|oracle| invisibility_operands(&oracle.text, test.body.as_str()))
             .collect();
         // A `let` read by several assertions is one call in the body, so each
         // binding's initializer counts once however many assertions use it.
@@ -548,9 +572,15 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
             // give equal results through any one-argument wrapper
             // (`block_on(owner(..))`), so reading through it can only
             // withhold credit, never grant it.
-            let Some(call_arguments) = owner_call_arguments(actual, &owner.name)
-                .or_else(|| wrapped_owner_call_arguments(actual, &owner.name))
-            else {
+            let read = match self_type.filter(|_| current_fold.has_receiver()) {
+                Some(self_type) => literal_receiver_call(actual, self_type, &owner.name)
+                    .map(|(receiver, arguments)| (Some(receiver), arguments)),
+                None => owner_call_arguments(actual, &owner.name)
+                    .or_else(|| wrapped_owner_call_arguments(actual, &owner.name))
+                    .or_else(|| qualified_owner_call_arguments(actual, &owner.name))
+                    .map(|arguments| (None, arguments)),
+            };
+            let Some((receiver, call_arguments)) = read else {
                 return false;
             };
             let environment = BTreeMap::new();
@@ -562,9 +592,11 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
                 values.push(value);
             }
             match (
-                fold_function_text(current, &values),
-                fold_function_text(&baseline, &values),
+                current_fold.at(receiver.as_ref(), &values),
+                baseline_fold.at(receiver.as_ref(), &values),
             ) {
+                // A bare boolean result stays unread here, as before.
+                (Some(Folded::Scalar(Value::Bool(_))), _) => false,
                 (Some(changed), Some(unchanged)) => changed == unchanged,
                 _ => false,
             }
@@ -577,6 +609,472 @@ pub(in crate::analysis) fn change_is_invisible_to_every_assertion(
         InvisibilityReason::RelationalTruthUnchanged
     } else {
         InvisibilityReason::SameValueAtEveryAssertedInput
+    })
+}
+
+/// What the related tests' asserted inputs say about a changed range bound
+/// (#14419). A range bound only changes the owner's result at inputs where
+/// the old and new ranges yield different values (`0..n` and `0..=n` both
+/// sum to 0 at `n = 0`), so a reachable call alone is no evidence that a test
+/// reaches the change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::analysis) enum RangeChangeVisibility {
+    /// An `assert_eq!`-family or bare boolean `assert!` assertion holds one
+    /// bare owner call with literal arguments, and the owner folds to
+    /// different values there on the baseline and the change. Carries the
+    /// call text.
+    ExactInputSeparates(String),
+    /// Only a relational or `assert_ne!` assertion holds a call at which the
+    /// two versions fold differently. Carries the call text.
+    InexactInputSeparates(String),
+    /// Every mention of the owner in every related test is an asserted call
+    /// that folds to the same value on both versions. Carries one such call.
+    EveryAssertedInputAgrees(String),
+    /// Nothing above could be shown: a fold did not complete, a call shape
+    /// is not read, or the owner is mentioned outside a read assertion.
+    NotEstablished,
+}
+
+/// One asserted owner call, read against both versions. A separating call
+/// carries its value on the current version.
+enum CallReading {
+    Separates(String, Value),
+    Agrees(String),
+    Unread,
+}
+
+impl CallReading {
+    /// An exact assertion separates only when it pins the current value
+    /// (`expected`): a literal neither version returns fails on both, and
+    /// one only the old version returns fails now.
+    fn pinned_to(self, expected: Option<Value>) -> Self {
+        match self {
+            Self::Separates(call, changed) if expected == Some(changed) => {
+                Self::Separates(call, changed)
+            }
+            Self::Separates(..) => Self::Unread,
+            reading => reading,
+        }
+    }
+}
+
+/// [`RangeChangeVisibility`] for the related `tests` of `owner`, whose body
+/// holds `after` exactly once in place of `before`. When another function
+/// calls the owner (`owner_has_other_callers`), a helper may feed it inputs
+/// no test names, so "every asserted input agrees" is not claimed.
+pub(in crate::analysis) fn range_change_visibility(
+    owner: &FunctionSummary,
+    before: &str,
+    after: &str,
+    tests: &[&TestSummary],
+    owner_has_other_callers: bool,
+) -> RangeChangeVisibility {
+    let current = owner.body.as_str();
+    if before == after || current.matches(after).count() != 1 {
+        return RangeChangeVisibility::NotEstablished;
+    }
+    let baseline = current.replacen(after, before, 1);
+    owner_change_visibility(owner, &baseline, tests, owner_has_other_callers)
+}
+
+/// [`range_change_visibility`] for an owner whose whole base-side text is
+/// `baseline` (#14815: the unary-tail reading establishes it from the diff rather
+/// than locating changed text in the body). The answer reads the owner's
+/// current body against `baseline` at the related tests' asserted literal
+/// calls; nothing here depends on what changed between them.
+pub(in crate::analysis) fn owner_change_visibility(
+    owner: &FunctionSummary,
+    baseline: &str,
+    tests: &[&TestSummary],
+    owner_has_other_callers: bool,
+) -> RangeChangeVisibility {
+    let current = owner.body.as_str();
+    if current == baseline {
+        return RangeChangeVisibility::NotEstablished;
+    }
+    // #15272: a method owner is read through its receiver's fields when the
+    // test calls it on a record literal of its self type; a tuple tail is
+    // read per component. Either version unread leaves every call unread.
+    let folds = OwnerFold::read(current).zip(OwnerFold::read(baseline));
+    let self_type = match &owner.impl_context {
+        crate::analysis::facts::FunctionImplContext::Impl { self_type } => Some(self_type.as_str()),
+        _ => None,
+    };
+    let read_call = |operand: &str| -> CallReading {
+        let read = || {
+            if count_name_tokens(operand, &owner.name) != 1 {
+                return None;
+            }
+            let (current_fold, baseline_fold) = folds.as_ref()?;
+            // Only the bare call, or the same call awaited: a wrapper
+            // (`is_positive(owner(3))`) may map both results to one value,
+            // so it never grants credit here.
+            let trimmed = operand.trim();
+            let called = trimmed.strip_suffix(".await").unwrap_or(trimmed);
+            let (receiver, arguments) = match self_type.filter(|_| current_fold.has_receiver()) {
+                Some(self_type) => {
+                    let (receiver, arguments) =
+                        literal_receiver_call(called, self_type, &owner.name)?;
+                    (Some(receiver), arguments)
+                }
+                None => (None, owner_call_arguments(called, &owner.name)?),
+            };
+            let environment = BTreeMap::new();
+            let mut values = Vec::with_capacity(arguments.len());
+            for argument in &arguments {
+                values.push(fold_expression(argument, &environment)?);
+            }
+            let changed = current_fold.at(receiver.as_ref(), &values)?;
+            let unchanged = baseline_fold.at(receiver.as_ref(), &values)?;
+            let call = operand.trim().to_string();
+            Some(if changed == unchanged {
+                CallReading::Agrees(call)
+            } else {
+                // Only a bare call's scalar is read as separating. A
+                // receiver call or a tuple that differs stays unread, so the
+                // #15272 readings grant nothing.
+                match (changed, &receiver) {
+                    (Folded::Scalar(changed), None) => CallReading::Separates(call, changed),
+                    _ => return None,
+                }
+            })
+        };
+        read().unwrap_or(CallReading::Unread)
+    };
+    let mut inexact = None;
+    let mut agreeing = None;
+    let mut every_mention_agrees = true;
+    for test in tests {
+        let mentions = count_name_tokens(test.body.as_str(), &owner.name);
+        if mentions == 0 {
+            continue;
+        }
+        // A case table, a shadowing binding or a same-name local fn makes the
+        // written call name something the fold does not evaluate. An
+        // ignored test never runs, so its assertions notice nothing; a
+        // `should_panic` test can pass on the old version by panicking
+        // later, so a pinned assertion does not decide its outcome.
+        if case_row_bindings(test).is_some()
+            || crate::analysis::classify::is_ignored(test)
+            || super::is_should_panic(test)
+            || test
+                .let_bindings
+                .iter()
+                .any(|binding| binding.name == owner.name)
+            || body_declares_same_name_fn(test, &owner.name)
+            || body_imports_same_name(test, &owner.name)
+        {
+            every_mention_agrees = false;
+            continue;
+        }
+        // An assertion in a literal-false block, an uncalled closure or
+        // after a `return` stays in `assertions` for execution admission
+        // to refuse; it never runs, so it reads nothing here. A line with
+        // any dead code (`return; assert_eq!(..)`) reads nothing too, and an
+        // unbalanced body reads nothing at all.
+        let unreached = crate::analysis::extract::lines_touching_unreached(test.body.as_str())
+            .zip(deferred_lines(test))
+            .map(|(mut unreached, deferred)| {
+                unreached.extend(deferred);
+                unreached
+            });
+        let mut agreed_mentions = 0usize;
+        let mut note = |reading: CallReading, exact: bool| -> Option<String> {
+            match reading {
+                CallReading::Separates(call, _) if exact => return Some(call),
+                CallReading::Separates(call, _) => {
+                    inexact.get_or_insert(call);
+                    every_mention_agrees = false;
+                }
+                CallReading::Agrees(call) => {
+                    agreed_mentions += 1;
+                    agreeing.get_or_insert(call);
+                }
+                CallReading::Unread => every_mention_agrees = false,
+            }
+            None
+        };
+        for oracle in &test.assertions {
+            if oracle
+                .line
+                .checked_sub(test.start_line)
+                .zip(unreached.as_ref())
+                .is_none_or(|(offset, unreached)| unreached.contains(&offset))
+            {
+                note(CallReading::Unread, false);
+                continue;
+            }
+            if let Some(relational) = relational_assertion(&oracle.text, &owner.name) {
+                for side in [&relational.left, &relational.right] {
+                    if count_name_tokens(side, &owner.name) > 0 {
+                        note(read_call(side), false);
+                    }
+                }
+                continue;
+            }
+            if let Some((asserts_inequality, _)) = equality_assertion_shape(&oracle.text) {
+                let operands = assertion_operands(&oracle.text, test.body.as_str());
+                let owner_mentions: usize = operands
+                    .iter()
+                    .map(|operand| count_name_tokens(&operand.text, &owner.name))
+                    .sum();
+                if owner_mentions > 1 {
+                    // `assert_eq!(owner(5), owner(5))` changes on both sides
+                    // at once; it pins nothing about either version.
+                    note(CallReading::Unread, false);
+                    continue;
+                }
+                // The other side must pin a constant: a helper or binding
+                // (`reference(4)` calling the owner) can move in lockstep
+                // with the owner call and hold on both versions. A `let`
+                // operand counts only when its name appears nowhere but the
+                // binding and this assertion (`expected |= owner(4)` or a
+                // destructuring assignment would rewrite it).
+                if operands.iter().any(|operand| {
+                    (count_name_tokens(&operand.text, &owner.name) == 0
+                        && !is_pinned_literal(&operand.text))
+                        || operand
+                            .binding
+                            .as_ref()
+                            .is_some_and(|name| count_name_tokens(test.body.as_str(), name) != 2)
+                }) {
+                    note(CallReading::Unread, false);
+                    continue;
+                }
+                let expected = operands
+                    .iter()
+                    .filter(|operand| count_name_tokens(&operand.text, &owner.name) == 0)
+                    .find_map(|operand| literal_value(&operand.text));
+                for operand in operands {
+                    if count_name_tokens(&operand.text, &owner.name) == 0 {
+                        continue;
+                    }
+                    let reading = read_call(&operand.text);
+                    let reading = if asserts_inequality {
+                        reading
+                    } else {
+                        reading.pinned_to(expected)
+                    };
+                    if let Some(call) = note(reading, !asserts_inequality) {
+                        return RangeChangeVisibility::ExactInputSeparates(call);
+                    }
+                }
+                continue;
+            }
+            // `assert!(owner(..))` or `assert!(!owner(..))` pins a boolean
+            // result exactly.
+            if let Some((condition, negated)) = boolean_assertion_call(&oracle.text)
+                && count_name_tokens(&condition, &owner.name) > 0
+                && let Some(call) = note(
+                    read_call(&condition).pinned_to(Some(Value::Bool(!negated))),
+                    true,
+                )
+            {
+                return RangeChangeVisibility::ExactInputSeparates(call);
+            }
+        }
+        // A mention outside the read assertions (a `let` read twice, a call
+        // in a loop, a helper argument) may run at an input the fold never
+        // saw.
+        if agreed_mentions != mentions {
+            every_mention_agrees = false;
+        }
+    }
+    match (inexact, agreeing) {
+        (Some(call), _) => RangeChangeVisibility::InexactInputSeparates(call),
+        // An equivalent rewrite (`(1..n).sum()` to `(0..n).sum()`) agrees
+        // at every input, so "no test input reaches the change" would send
+        // the reader after a test that cannot exist.
+        (None, Some(call))
+            if every_mention_agrees
+                && !owner_has_other_callers
+                && folds.as_ref().is_some_and(|(current, baseline)| {
+                    versions_differ_on_small_inputs(current, baseline)
+                }) =>
+        {
+            RangeChangeVisibility::EveryAssertedInputAgrees(call)
+        }
+        _ => RangeChangeVisibility::NotEstablished,
+    }
+}
+
+/// #14815: one owner call that separates the current owner from `baseline`
+/// when every mention of the owner in every related test that names it is a
+/// bare call with literal arguments at which the two fold to different
+/// values; `None` otherwise. Whatever such a test does with the results, each
+/// result it computes differs between the versions, so the inputs reach the
+/// change even where no assertion pins them (`let _ = owner(5);`). A test
+/// that rebinds the owner's name, a case table, another caller that may feed
+/// the owner other inputs, or any argument the fold cannot read gives `None`.
+pub(in crate::analysis) fn every_owner_call_separates(
+    owner: &FunctionSummary,
+    baseline: &str,
+    tests: &[&TestSummary],
+    owner_has_other_callers: bool,
+) -> Option<String> {
+    let current = owner.body.as_str();
+    if owner_has_other_callers || current == baseline || owner.name.is_empty() {
+        return None;
+    }
+    let mut first = None;
+    for test in tests {
+        let body = test.body.as_str();
+        let mentions = count_name_tokens(body, &owner.name);
+        if mentions == 0 {
+            continue;
+        }
+        // As in `owner_change_visibility`: an ignored test never runs, so its
+        // calls reach nothing, and a `should_panic` test passes on either
+        // version by panicking, so neither supplies a reaching call.
+        if crate::analysis::classify::is_ignored(test) || super::is_should_panic(test) {
+            continue;
+        }
+        if case_row_bindings(test).is_some()
+            || test
+                .let_bindings
+                .iter()
+                .any(|binding| binding.name == owner.name)
+            || body_declares_same_name_fn(test, &owner.name)
+            || body_imports_same_name(test, &owner.name)
+        {
+            return None;
+        }
+        let masked = crate::analysis::extract::mask_comments_and_strings(body);
+        if masked.len() != body.len() {
+            return None;
+        }
+        // A call in an uncalled closure or fn, a loop, a branch, an unpolled
+        // `async` block, or after a `return` may never run, so it does not
+        // show the input reached the owner (#14961 review). An unbalanced or
+        // unparsed body reads nothing.
+        // An attribute in the body can gate a statement or hide a dead one
+        // from the reach scan (`return;` then `#[allow(..)] let _ = f(5);`).
+        if masked.contains('#') {
+            return None;
+        }
+        let unreached = crate::analysis::extract::lines_touching_unreached(body)?;
+        let deferred = deferred_lines(test)?;
+        let unevaluated = unevaluated_spans(test, &masked)?;
+        let mut separating = 0usize;
+        for (start, _) in masked.match_indices(owner.name.as_str()) {
+            let end = start + owner.name.len();
+            let bytes = masked.as_bytes();
+            let ident = |at: usize| bytes.get(at).is_some_and(|byte| is_ident_byte(*byte));
+            if (start > 0 && ident(start - 1)) || ident(end) {
+                continue;
+            }
+            let line = masked[..start]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count();
+            if unreached.contains(&line)
+                || deferred.contains(&line)
+                || unevaluated.iter().any(|span| span.contains(&start))
+            {
+                return None;
+            }
+            // A method receiver or a qualified path names another entity.
+            let before = masked[..start].trim_end();
+            if before.ends_with('.') || before.ends_with("::") || bytes.get(end) != Some(&b'(') {
+                return None;
+            }
+            let inside = super::delimited_contents_at(&masked, end)?;
+            let environment = BTreeMap::new();
+            let mut values = Vec::new();
+            for argument in super::split_top_level_commas(&inside) {
+                values.push(fold_expression(&argument, &environment)?);
+            }
+            let changed = fold_function_value(current, &values)?;
+            let unchanged = fold_function_value(baseline, &values)?;
+            if changed == unchanged {
+                return None;
+            }
+            separating += 1;
+            first.get_or_insert_with(|| format!("{}({inside})", owner.name));
+        }
+        if separating != mentions {
+            return None;
+        }
+    }
+    first
+}
+
+fn is_ident_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// An operand that names one constant no owner change can move: an integer
+/// literal expression, `true`/`false`, a plain string literal, or a tuple of
+/// those (#15272: `(5, true)`).
+fn is_pinned_literal(text: &str) -> bool {
+    let text = text.trim();
+    if let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+    {
+        let masked = crate::analysis::extract::mask_comments_and_strings(inner);
+        let parts = super::split_top_level_commas(inner);
+        // The parentheses must be one pair around the whole operand, and no
+        // string may hide a comma the split would read.
+        if masked == inner
+            && parts.len() > 1
+            && matching_paren_closes_at_end(text)
+            && parts.iter().all(|part| is_pinned_literal(part))
+        {
+            return true;
+        }
+    }
+    matches!(text, "true" | "false")
+        || fold_expression(text, &BTreeMap::new()).is_some()
+        || text
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .is_some_and(|inner| !inner.contains(['"', '\\']))
+}
+
+/// Whether the `(` that opens `text` is closed by its last byte.
+fn matching_paren_closes_at_end(text: &str) -> bool {
+    let mut depth = 0i32;
+    for (offset, byte) in text.bytes().enumerate() {
+        match byte {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return offset + 1 == text.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// The folded value of a pinned literal operand; `None` for a string
+/// literal, which the integer fold never produces.
+fn literal_value(text: &str) -> Option<Value> {
+    match text.trim() {
+        "true" => Some(Value::Bool(true)),
+        "false" => Some(Value::Bool(false)),
+        text => fold_expression(text, &BTreeMap::new()).map(Value::Int),
+    }
+}
+
+/// The condition of `assert!(cond)` or `debug_assert!(cond)` (an optional
+/// message aside) with one leading `!` removed, and whether it was removed;
+/// `None` for any other macro.
+fn boolean_assertion_call(oracle_text: &str) -> Option<(String, bool)> {
+    let trimmed = oracle_text.trim_start();
+    let body = trimmed
+        .strip_prefix("assert!")
+        .or_else(|| trimmed.strip_prefix("debug_assert!"))?
+        .trim_start();
+    let inside = super::delimited_contents_at(body, body.find(['(', '['])?)?;
+    let condition = super::split_top_level_commas(&inside).into_iter().next()?;
+    let condition = condition.trim();
+    Some(match condition.strip_prefix('!') {
+        Some(inner) => (inner.trim().to_string(), true),
+        None => (condition.to_string(), false),
     })
 }
 
@@ -705,11 +1203,21 @@ fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand
             .map(Vec::from)
             .unwrap_or_default(),
     };
+    resolve_operands(operands, oracle_text, test_body)
+}
+
+/// Each operand with a bare identifier replaced by the one `let` initializer
+/// that binds it in `test_body` (see [`assertion_operands`]).
+fn resolve_operands(
+    operands: Vec<String>,
+    oracle_text: &str,
+    test_body: &str,
+) -> Vec<ResolvedOperand> {
     operands
         .into_iter()
         .map(|operand| {
             let name = operand.trim().to_string();
-            match let_initializer(test_body, &name) {
+            match let_initializer(test_body, &name, oracle_text) {
                 Some(text) => ResolvedOperand {
                     text,
                     binding: Some(name),
@@ -723,6 +1231,111 @@ fn assertion_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand
         .collect()
 }
 
+/// [`assertion_operands`], plus the scrutinee and pinned value of a literal
+/// `matches!` assertion (#15414). Invisibility only: `matches!(owner(0),
+/// Ok(0))` passes on both versions when the owner folds to the same value
+/// there, so reading it can only withhold credit; the credit-granting callers
+/// of [`assertion_operands`] keep their equality-only reading.
+fn invisibility_operands(oracle_text: &str, test_body: &str) -> Vec<ResolvedOperand> {
+    let operands = assertion_operands(oracle_text, test_body);
+    if !operands.is_empty() {
+        return operands;
+    }
+    crate::analysis::classify::literal_matches_assertion_operands(oracle_text)
+        .map(|pair| resolve_operands(Vec::from(pair), oracle_text, test_body))
+        .unwrap_or_default()
+}
+
+/// The body texts with one shared one-argument constructor (`Ok`, `Some` or
+/// `Err`) peeled off when each owner body is exactly that constructor around
+/// its tail payload and nothing else, rebuilt as a function of the same
+/// parameters returning the payload. Equal payloads give equal values, and
+/// a different constructor on either side (`Ok(x)` to `Err(x)`) or any
+/// statement, generic or receiver refuses, so a peeled fold can only say two
+/// values are equal when the real ones are (#15414). The rebuilt function
+/// returns the payload's declared type, so the fold keeps its width guard;
+/// a return type that does not spell it (an alias) refuses.
+fn shared_constructor_payloads(current: &str, baseline: &str) -> Option<(String, String)> {
+    let (current_constructor, current_payload) = constructor_payload_function(current)?;
+    let (baseline_constructor, baseline_payload) = constructor_payload_function(baseline)?;
+    (current_constructor == baseline_constructor).then_some((current_payload, baseline_payload))
+}
+
+/// One function text's constructor name and its payload-returning rewrite;
+/// see [`shared_constructor_payloads`].
+fn constructor_payload_function(body: &str) -> Option<(String, String)> {
+    let parse = parse_clean_source_file(body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    if function.generic_param_list().is_some() {
+        return None;
+    }
+    let param_list = function.param_list()?;
+    if param_list.self_param().is_some() {
+        return None;
+    }
+    let block = function.body()?;
+    let statements = block.stmt_list()?;
+    if statements.statements().next().is_some() {
+        return None;
+    }
+    let ast::Expr::CallExpr(call) = statements.tail_expr()? else {
+        return None;
+    };
+    let ast::Expr::PathExpr(callee) = call.expr()? else {
+        return None;
+    };
+    let constructor = callee.syntax().text().to_string();
+    if !matches!(constructor.as_str(), "Ok" | "Some" | "Err") {
+        return None;
+    }
+    let mut arguments = call.arg_list()?.args();
+    let (Some(payload), None) = (arguments.next(), arguments.next()) else {
+        return None;
+    };
+    let name = function.name()?;
+    // Keep the payload's declared type so the fold still refuses a result
+    // outside that integer width.
+    let payload_type = function
+        .ret_type()
+        .and_then(|ret| ret.ty())
+        .and_then(|ty| match ty {
+            ast::Type::PathType(path) => path.path()?.segment(),
+            _ => None,
+        })
+        .and_then(|segment| {
+            let wrapper = segment.name_ref()?.text().to_string();
+            // `Ok` carries `T` and `Err` carries `E` of `Result<T, E>`;
+            // `Some` carries `T` of `Option<T>`.
+            let position = match (wrapper.as_str(), constructor.as_str()) {
+                ("Result", "Ok") | ("Option", "Some") => 0,
+                ("Result", "Err") => 1,
+                _ => return None,
+            };
+            match segment.generic_arg_list()?.generic_args().nth(position)? {
+                ast::GenericArg::TypeArg(arg) => Some(arg.ty()?.syntax().text().to_string()),
+                _ => None,
+            }
+        });
+    // An alias (`-> Fee`) or any return type whose payload type is not
+    // spelled refuses the peel: folding without the payload's width could
+    // call a baseline that overflows equal to a current version that does not.
+    let return_type = format!(" -> {}", payload_type?);
+    Some((
+        constructor,
+        format!(
+            "fn {}{}{} {{\n    {}\n}}\n",
+            name.text(),
+            param_list.syntax().text(),
+            return_type,
+            payload.syntax().text()
+        ),
+    ))
+}
+
 /// A compared operand after `let` resolution; `binding` names the `let` it
 /// was read through so a shared binding is counted once.
 struct ResolvedOperand {
@@ -730,8 +1343,17 @@ struct ResolvedOperand {
     binding: Option<String>,
 }
 
-/// The initializer of the single `let [mut] name = init;` in `body`.
-fn let_initializer(body: &str, name: &str) -> Option<String> {
+/// The initializer of the `let [mut] name = init;` in `body` that binds the
+/// `name` the assertion reads.
+///
+/// When `assertion` occurs once in `body`, that is the last plain `let` of
+/// `name` before it whose block is still open there, so a later rebind
+/// (`let got = owner(1); let got = owner(2); assert_eq!(got, ..)`) resolves to
+/// the call the assertion actually pins and a rebind inside a closed nested
+/// block does not (#14569). An initializer that reads `name` itself
+/// (`let got = got.unwrap();`) is not resolved. Without a single anchor, only
+/// a sole plain binding resolves, as before.
+fn let_initializer(body: &str, name: &str, assertion: &str) -> Option<String> {
     if name.is_empty()
         || !name
             .chars()
@@ -755,13 +1377,28 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
                 || after.starts_with("+=")
                 || after.starts_with("-=")
                 || after.starts_with("*=")
-                || after.starts_with("/="))
+                || after.starts_with("/=")
+                || after.starts_with("%=")
+                || after.starts_with("|=")
+                || after.starts_with("&=")
+                || after.starts_with("^=")
+                || after.starts_with("<<=")
+                || after.starts_with(">>="))
     });
     if mutated {
         return None;
     }
+    let anchor = single_occurrence(body, assertion.trim());
+    // Braces inside comments, strings and char literals (`'{'`, `// }`) do
+    // not open or close a block; the mask keeps byte offsets.
+    let masked = anchor.map(|_| crate::analysis::mask_comments_and_strings(body));
     let mut found = None;
-    for (at, _) in body.match_indices("let ") {
+    let mut reaching = None;
+    // With an anchor, a `let` inside a comment or string is not a binding
+    // (`// let got = owner(2);`), so candidates come from the masked body;
+    // the initializer text is still read from `body` at the same offsets.
+    let scan = masked.as_deref().unwrap_or(body);
+    for (at, _) in scan.match_indices("let ") {
         if body[..at]
             .chars()
             .next_back()
@@ -771,6 +1408,12 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
         }
         let rest = body[at + 4..].trim_start();
         let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
+        // A non-plain pattern (`let (got,) = ..`, `if let Some(got) = ..`)
+        // binds `name` to a different value, so an earlier plain initializer
+        // is stale (#14496 review).
+        if let_pattern_binds_name(rest, name) {
+            return None;
+        }
         let Some(after) = rest.strip_prefix(name) else {
             continue;
         };
@@ -787,11 +1430,88 @@ fn let_initializer(body: &str, name: &str) -> Option<String> {
             continue;
         };
         let end = init.find(';')?;
-        if found.replace(init[..end].trim().to_string()).is_some() {
-            return None;
+        let initializer = init[..end].trim().to_string();
+        match anchor {
+            Some(anchor) => {
+                if at < anchor
+                    && masked
+                        .as_deref()
+                        .and_then(|masked| masked.get(at..anchor))
+                        .is_some_and(block_stays_open)
+                {
+                    reaching = Some(initializer);
+                }
+            }
+            // Without an anchor, a second plain binding is ambiguous.
+            None => {
+                if found.replace(initializer).is_some() {
+                    return None;
+                }
+            }
         }
     }
-    found
+    match anchor {
+        Some(_) => reaching.filter(|initializer| count_name_tokens(initializer, name) == 0),
+        None => found,
+    }
+}
+
+/// The byte offset of the only occurrence of `needle` in `haystack`.
+fn single_occurrence(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return None;
+    }
+    let mut occurrences = haystack.match_indices(needle).map(|(at, _)| at);
+    let first = occurrences.next()?;
+    occurrences.next().is_none().then_some(first)
+}
+
+/// Whether the block open at the start of `text` is still open at its end:
+/// no `}` closes it. `text` is already masked, so every brace is code. A
+/// `let` in a nested block that ends before the assertion does not bind what
+/// it reads.
+fn block_stays_open(text: &str) -> bool {
+    let mut depth = 0i64;
+    for ch in text.chars() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Whether a `let` pattern other than the plain `[mut] name[: type]` form
+/// binds `name`. `rest` is the text after `let `, past an optional `mut `.
+/// The pattern ends at the first top-level `=` or `;`.
+fn let_pattern_binds_name(rest: &str, name: &str) -> bool {
+    let plain = rest.strip_prefix(name).is_some_and(|after| {
+        let after = after.trim_start();
+        after.starts_with('=') || after.starts_with(':')
+    });
+    if plain {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut end = rest.len();
+    for (at, ch) in rest.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            '=' | ';' if depth == 0 => {
+                end = at;
+                break;
+            }
+            _ => {}
+        }
+    }
+    count_name_tokens(&rest[..end], name) > 0
 }
 
 /// How many whole-identifier occurrences of `name` the `text` holds.
@@ -807,26 +1527,28 @@ fn count_name_tokens(text: &str, name: &str) -> usize {
 /// [`SEPARATION_WIDE_GRID`], so a change a divisor or a saturation hides below
 /// the small values still counts as a real difference). More than
 /// [`SEPARATION_MAX_PARAMETERS`] parameters are not searched.
-fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
+fn versions_differ_on_small_inputs(current: &OwnerFold, baseline: &OwnerFold) -> bool {
     const SEPARATION_SMALL_GRID: [i128; 8] = [0, 1, 2, 3, 5, 6, 7, 10];
     const SEPARATION_WIDE_GRID: [i128; 16] = [
         0, 1, 2, 3, 5, 6, 7, 10, 16, 31, 64, 100, 255, 1000, 4096, 65536,
     ];
     const SEPARATION_MAX_PARAMETERS: usize = 3;
-    let Some(parameters) = parse_clean_source_file(current)
-        .and_then(|parse| {
-            parse
-                .tree()
-                .syntax()
-                .descendants()
-                .find_map(ast::Fn::cast)
-                .and_then(|function| function.param_list())
-        })
-        .map(|list| list.params().count())
-    else {
-        return false;
-    };
-    if parameters == 0 || parameters > SEPARATION_MAX_PARAMETERS {
+    // #15272: a receiver field either version reads is an input like a
+    // parameter. The fields lead, in sorted order, and the owner's own
+    // parameters follow.
+    let fields: Vec<&String> = current
+        .receiver_fields()
+        .iter()
+        .chain(baseline.receiver_fields())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let has_receiver = current.has_receiver();
+    let parameters = fields.len() + current.parameters();
+    if parameters == 0
+        || parameters > SEPARATION_MAX_PARAMETERS
+        || has_receiver != baseline.has_receiver()
+    {
         return false;
     }
     let grid: &[i128] = if parameters == 1 {
@@ -840,9 +1562,17 @@ fn versions_differ_on_small_inputs(current: &str, baseline: &str) -> bool {
         for (argument, counter) in arguments.iter_mut().zip(&counters) {
             *argument = grid[*counter];
         }
+        let (field_values, own_arguments) = arguments.split_at(fields.len());
+        let receiver: Option<BTreeMap<String, i128>> = has_receiver.then(|| {
+            fields
+                .iter()
+                .map(|field| (*field).clone())
+                .zip(field_values.iter().copied())
+                .collect()
+        });
         if let (Some(changed), Some(unchanged)) = (
-            fold_function_text(current, &arguments),
-            fold_function_text(baseline, &arguments),
+            current.at(receiver.as_ref(), own_arguments),
+            baseline.at(receiver.as_ref(), own_arguments),
         ) && changed != unchanged
         {
             return true;
@@ -896,6 +1626,245 @@ pub(super) fn bare_owner_call_is_shadowed(
     oracle_owner_call_is_shadowed(test.body.as_str(), oracle_text, owner, test, index) == Some(true)
 }
 
+/// #14538: zero-based line offsets of `test.body` inside code that may run
+/// zero times or not at all: a nested `fn` or `macro_rules!`, a closure, an
+/// `async` block, an `if` or `match`, a `for`, `while` or `loop` body, the
+/// lines of a `let`-`else` block (its first line only when a statement starts
+/// there), or a `#[cfg]`-gated
+/// statement (`for _ in 0..0 { .. }`, an unpolled
+/// `async { .. }`, an uncalled `fn check() { .. }`). An assertion there does
+/// not show that its input ran, so it supplies no separating input. `None`
+/// when the body does not parse.
+fn deferred_lines(test: &TestSummary) -> Option<std::collections::BTreeSet<usize>> {
+    let body = test.body.as_str();
+    let parse = crate::analysis::syntax::parse_clean_source_file_memoized(body)?;
+    let root = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let line_of = |offset: usize| {
+        body.get(..offset)
+            .map_or(0, |head| head.bytes().filter(|byte| *byte == b'\n').count())
+    };
+    let mut lines = std::collections::BTreeSet::new();
+    for node in root.syntax().descendants() {
+        let deferred = (ast::Fn::can_cast(node.kind()) && node != *root.syntax())
+            || ast::ClosureExpr::can_cast(node.kind())
+            || ast::BlockExpr::cast(node.clone())
+                .is_some_and(|block| block.async_token().is_some())
+            || ast::ForExpr::can_cast(node.kind())
+            || ast::WhileExpr::can_cast(node.kind())
+            || ast::LoopExpr::can_cast(node.kind())
+            || ast::IfExpr::can_cast(node.kind())
+            || ast::MatchExpr::can_cast(node.kind())
+            || ast::MacroRules::can_cast(node.kind())
+            || (node != *root.syntax()
+                && node.children().any(|child| {
+                    ast::Attr::cast(child).is_some_and(|attr| {
+                        matches!(attr.simple_name().as_deref(), Some("cfg" | "cfg_attr"))
+                    })
+                }));
+        if deferred {
+            let range = node.text_range();
+            lines.extend(line_of(usize::from(range.start()))..=line_of(usize::from(range.end())));
+        }
+        // The `else` block of a `let`-`else` runs only when the pattern does
+        // not match (#14968 review). Its first line also holds the
+        // initializer, which always runs, so only the lines after it are
+        // deferred here; `unevaluated_spans` refuses the block by byte span.
+        if let Some(block) = ast::LetElse::cast(node).and_then(|let_else| let_else.block_expr()) {
+            let range = block.syntax().text_range();
+            let first = line_of(usize::from(range.start()));
+            // A statement that starts on the `else {` line (a one-line block)
+            // shares that line with the initializer; refuse it too.
+            let shares_first_line = block.stmt_list().is_some_and(|list| {
+                list.statements()
+                    .map(|stmt| stmt.syntax().text_range().start())
+                    .chain(
+                        list.tail_expr()
+                            .map(|tail| tail.syntax().text_range().start()),
+                    )
+                    .any(|start| line_of(usize::from(start)) == first)
+            });
+            let from = if shares_first_line { first } else { first + 1 };
+            lines.extend(from..=line_of(usize::from(range.end())));
+        }
+    }
+    Some(lines)
+}
+
+/// #14968: byte spans of `test.body` where an owner call may not run or is
+/// not a call at all, so it does not show the input reached the owner:
+///
+/// - the right operand of `&&` or `||`, unless the left operand is the
+///   literal that always evaluates it (`true &&`, `false ||`);
+/// - the input of a macro other than `vec!`, `dbg!`, the `assert*` /
+///   `debug_assert*` family and the `format!` / `print!` / `write!` family
+///   (`stringify!(f(5))` is token text);
+/// - the `else` block of a `let`-`else`, which runs only on a mismatch;
+/// - the message arguments of an assertion macro past its evaluated
+///   operands, which are formatted only when the assertion fails
+///   (`assert!(true, "{}", f(5))`);
+/// - the whole input of one of those evaluating macros when its token text
+///   holds anything the parser does not read inside a macro input and that
+///   may skip a call: `&&`, `|` (`||`, a closure), `?`, a nested macro, or a
+///   control-flow or `async` keyword. This refuses some calls that do run
+///   (`assert!(true && f(5) == 5)`); refusing keeps the reading fail-closed.
+///
+/// `masked` is `test.body` with comments and strings masked, byte for byte.
+/// `None` when the body does not parse.
+fn unevaluated_spans(test: &TestSummary, masked: &str) -> Option<Vec<std::ops::Range<usize>>> {
+    let parse = crate::analysis::syntax::parse_clean_source_file_memoized(test.body.as_str())?;
+    let span =
+        |range: ra_ap_syntax::TextRange| usize::from(range.start())..usize::from(range.end());
+    let mut spans = Vec::new();
+    for node in parse.tree().syntax().descendants() {
+        if let Some(binary) = ast::BinExpr::cast(node.clone()) {
+            let guaranteed = match binary.op_kind() {
+                Some(ast::BinaryOp::LogicOp(op)) => match binary.lhs() {
+                    Some(ast::Expr::Literal(literal)) => matches!(
+                        (op, literal.kind()),
+                        (ast::LogicOp::And, ast::LiteralKind::Bool(true))
+                            | (ast::LogicOp::Or, ast::LiteralKind::Bool(false))
+                    ),
+                    _ => false,
+                },
+                _ => continue,
+            };
+            if !guaranteed && let Some(rhs) = binary.rhs() {
+                spans.push(span(rhs.syntax().text_range()));
+            }
+            continue;
+        }
+        if let Some(block) =
+            ast::LetElse::cast(node.clone()).and_then(|let_else| let_else.block_expr())
+        {
+            spans.push(span(block.syntax().text_range()));
+            continue;
+        }
+        let Some(call) = ast::MacroCall::cast(node) else {
+            continue;
+        };
+        let Some(input) = call.token_tree() else {
+            continue;
+        };
+        let name = call
+            .path()
+            .and_then(|path| path.segment())
+            .and_then(|segment| segment.name_ref())
+            .map(|name| name.text().to_string())
+            .unwrap_or_default();
+        let range = span(input.syntax().text_range());
+        let text = masked.get(range.clone())?;
+        if !is_evaluating_macro(&name) || macro_input_may_skip(text) {
+            spans.push(range);
+        } else if let Some(offset) = lazy_message_offset(&name, text) {
+            spans.push(range.start + offset..range.end);
+        }
+    }
+    Some(spans)
+}
+
+/// A macro that evaluates each argument expression once, in order.
+fn is_evaluating_macro(name: &str) -> bool {
+    matches!(
+        name,
+        "vec"
+            | "assert"
+            | "assert_eq"
+            | "assert_ne"
+            | "debug_assert"
+            | "debug_assert_eq"
+            | "debug_assert_ne"
+            | "format"
+            | "format_args"
+            | "print"
+            | "println"
+            | "eprint"
+            | "eprintln"
+            | "write"
+            | "writeln"
+            | "dbg"
+    )
+}
+
+/// Where an assertion macro's lazily formatted message starts in its masked
+/// input `text` (delimiters included): the byte offset just past the
+/// top-level comma that ends its evaluated operands, one for `assert!` /
+/// `debug_assert!` and two for the `*_eq!` / `*_ne!` forms. Only that tail is
+/// formatted when the assertion fails, so a call there may never run
+/// (`assert!(true, "{}", f(5))`); the operands before it always run. `None`
+/// when the macro is not an assertion or carries no argument past its
+/// operands (a trailing comma alone is not a message).
+fn lazy_message_offset(name: &str, text: &str) -> Option<usize> {
+    let operands = match name {
+        "assert" | "debug_assert" => 1,
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => 2,
+        _ => return None,
+    };
+    let inner_end = text.len().saturating_sub(1);
+    let mut depth = 0i32;
+    let mut commas = 0usize;
+    for (at, byte) in text.bytes().enumerate().take(inner_end).skip(1) {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                commas += 1;
+                if commas == operands {
+                    let rest = text.get(at + 1..inner_end)?;
+                    return (!rest.trim().is_empty()).then_some(at + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Whether masked macro input text holds a token that may skip or defer a
+/// call: `&&`, `|`, `?`, a nested `name!` macro, or a control-flow, closure
+/// or `async` keyword.
+fn macro_input_may_skip(text: &str) -> bool {
+    if text.contains("&&") || text.contains(['|', '?']) {
+        return true;
+    }
+    let bytes = text.as_bytes();
+    let mut at = 0usize;
+    while at < bytes.len() {
+        if !is_ident_byte(bytes[at]) || (at > 0 && is_ident_byte(bytes[at - 1])) {
+            at += 1;
+            continue;
+        }
+        let mut end = at;
+        while bytes.get(end).copied().is_some_and(is_ident_byte) {
+            end += 1;
+        }
+        let word = &text[at..end];
+        let next = text[end..].trim_start();
+        if matches!(
+            word,
+            "if" | "match"
+                | "loop"
+                | "while"
+                | "for"
+                | "async"
+                | "return"
+                | "break"
+                | "continue"
+                | "move"
+                | "fn"
+                | "let"
+        ) || (next.starts_with('!') && !next.starts_with("!="))
+        {
+            return true;
+        }
+        at = end;
+    }
+    false
+}
+
 /// Whether the test body itself declares a same-name `fn` item: by definition
 /// another item, wherever its block sits. Read through the shared parser this
 /// crate already trusts for item scope (#10162).
@@ -909,6 +1878,35 @@ fn body_declares_same_name_fn(test: &TestSummary, owner_name: &str) -> bool {
         ast::Fn::cast(node)
             .and_then(|function| function.name())
             .is_some_and(|declared| declared.text() == owner_name)
+    })
+}
+
+/// Whether the test body holds a `use` item naming `owner_name`
+/// (`use crate::rival::f;` in a nested block) or a glob import: the bare
+/// call may then name the imported function, not the owner.
+fn body_imports_same_name(test: &TestSummary, owner_name: &str) -> bool {
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file_memoized(test.body.as_str())
+    else {
+        // An unparsed body cannot show that no import rebinds the name.
+        return true;
+    };
+    let names_owner = |name: Option<ast::Name>| name.is_some_and(|name| name.text() == owner_name);
+    parse.tree().syntax().descendants().any(|node| {
+        if let Some(item) = ast::Use::cast(node.clone()) {
+            let text = item.syntax().text().to_string();
+            // A glob (`use crate::rival::*;`) may bring in the name too.
+            return text.contains('*') || count_name_tokens(&text, owner_name) > 0;
+        }
+        // Any other local binding of the name (`const f: fn(u32) -> u32 =
+        // ..`, a `static`, a closure parameter or a pattern) makes a later
+        // `f(..)` call something the fold does not evaluate.
+        if let Some(item) = ast::Const::cast(node.clone()) {
+            return names_owner(item.name());
+        }
+        if let Some(item) = ast::Static::cast(node.clone()) {
+            return names_owner(item.name());
+        }
+        ast::IdentPat::cast(node).is_some_and(|pat| names_owner(pat.name()))
     })
 }
 
@@ -966,8 +1964,8 @@ fn equality_assertion_shape_uncached(oracle_text: &str) -> Option<(bool, Vec<Str
 /// qualified paths stay not evaluable.
 fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
     let trimmed = operand.trim();
-    let open = super::named_call_open_paren_index(trimmed, owner_name)?;
-    let before = trimmed[..open - owner_name.len()].trim_end();
+    let (name_start, open) = super::named_call_span(trimmed, owner_name)?;
+    let before = trimmed[..name_start].trim_end();
     // A bare name only: a method receiver names a different entity than the
     // free function the seam owns, and a qualified path cannot be resolved
     // to the owner's module from the assertion alone, so both stay not
@@ -1005,7 +2003,7 @@ fn owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> 
 }
 
 /// The owner call's arguments when `operand` is `owner(..).await` or
-/// `wrapper(owner(..))` with a plain identifier wrapper and nothing else
+/// `wrapper(owner(..))` with a single-identifier wrapper and nothing else
 /// around the call.
 fn wrapped_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
     let trimmed = operand.trim();
@@ -1020,6 +2018,34 @@ fn wrapped_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<S
     let rest = trimmed[name_end..].trim_start();
     let inner = rest.strip_prefix('(')?.strip_suffix(')')?;
     owner_call_arguments(inner, owner_name)
+}
+
+/// The owner call's arguments when `operand` is a path-qualified call
+/// `crate_or_module::owner(..)`, optionally awaited (#15414). Invisibility
+/// only: equal values at every asserted input can only withhold credit, so
+/// reading a path the assertion alone cannot resolve to the owner's module
+/// risks a missed credit, never a false one. [`owner_call_arguments`] keeps
+/// refusing the path for its credit-granting callers (#6701 review).
+fn qualified_owner_call_arguments(operand: &str, owner_name: &str) -> Option<Vec<String>> {
+    let trimmed = operand.trim();
+    let call = trimmed.strip_suffix(".await").unwrap_or(trimmed).trim_end();
+    let open = super::named_call_open_paren_index(call, owner_name)?;
+    let name_start = open - owner_name.len();
+    let path = call[..name_start].strip_suffix("::")?;
+    let path = path.strip_prefix("::").unwrap_or(path);
+    // Plain identifier segments only (`billing::fees::`): a receiver, a
+    // generic or a turbofish names something the fold does not model.
+    let plain_segment = |segment: &str| {
+        !segment.is_empty()
+            && !segment.starts_with(|ch: char| ch.is_ascii_digit())
+            && segment
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    };
+    if !path.split("::").all(plain_segment) {
+        return None;
+    }
+    owner_call_arguments(&call[name_start..], owner_name)
 }
 
 /// Evaluate the owner's body as a pure integer function of `arguments`.
@@ -1045,73 +2071,477 @@ fn fold_function_text(body: &str, arguments: &[i128]) -> Option<i128> {
 
 /// Keep the parser's result type so the narrow boolean caller can inspect it.
 /// Existing integer callers still reject a boolean through `fold_function_text`.
+///
+/// Everything that does not depend on `arguments` (the parse, the parameter
+/// list, the range tail or the masked and tokenized block) is read once per
+/// body in a run scope: one owner is folded once per related assertion of
+/// every changed line it holds, and re-reading the body each time made a
+/// long owner cost its length squared (#11738).
 fn fold_function_value(body: &str, arguments: &[i128]) -> Option<Value> {
-    let parse = parse_clean_source_file(body)?;
-    let function = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .find_map(ast::Fn::cast)?;
-    for ancestor in function.syntax().ancestors().skip(1) {
-        if ast::Impl::can_cast(ancestor.kind())
-            || ast::Trait::can_cast(ancestor.kind())
-            || ast::Fn::can_cast(ancestor.kind())
-        {
+    let plan = run_memo::memoize(Product::OwnerFoldPlan, 0, body, || {
+        Rc::new(FoldPlan::read(body))
+    });
+    plan.as_ref().as_ref()?.fold(arguments)
+}
+
+/// The argument-independent reading of one function text for the fold.
+struct FoldPlan {
+    names: Vec<String>,
+    widths: Vec<Option<(i128, i128)>>,
+    fold_range: Option<(i128, i128)>,
+    block: FoldPlanBlock,
+}
+
+/// What the owner's block folds through: its range-shaped tail when it is
+/// one, else its tokens.
+enum FoldPlanBlock {
+    Tail(RangeTail),
+    Tokens(Vec<Token>),
+}
+
+impl FoldPlan {
+    fn read(body: &str) -> Option<Self> {
+        #[cfg(test)]
+        FOLD_PLAN_READS.with(|reads| reads.set(reads.get() + 1));
+        let parse = parse_clean_source_file(body)?;
+        let function = parse
+            .tree()
+            .syntax()
+            .descendants()
+            .find_map(ast::Fn::cast)?;
+        for ancestor in function.syntax().ancestors().skip(1) {
+            if ast::Impl::can_cast(ancestor.kind())
+                || ast::Trait::can_cast(ancestor.kind())
+                || ast::Fn::can_cast(ancestor.kind())
+            {
+                return None;
+            }
+        }
+        let param_list = function.param_list()?;
+        if param_list.self_param().is_some() {
             return None;
         }
+        let mut names = Vec::new();
+        let mut widths = Vec::new();
+        for param in param_list.params() {
+            let ast::Pat::IdentPat(ident) = param.pat()? else {
+                return None;
+            };
+            // A subpattern (`x @ (a, b)`) does not bind the written name alone.
+            if ident.pat().is_some() {
+                return None;
+            }
+            names.push(ident.name()?.text().to_string());
+            // A declared-width parameter bounds the inputs the real function
+            // accepts; an argument outside it names a call that cannot compile.
+            let width = param
+                .ty()
+                .and_then(|ty| declared_integer_range(&ty.syntax().text().to_string()));
+            widths.push(width);
+        }
+        // The fold uses the return type's declared width when it is a
+        // recognized integer type: release builds wrap at that width, so a
+        // mathematical result outside it does not describe a value the owner
+        // can return and the pair stays not evaluable instead of contradicting
+        // a passing wrapping assertion (#6701 review).
+        // No recognized return type: the fold keeps exact i128 arithmetic,
+        // which can only withhold credit.
+        let fold_range = function
+            .ret_type()
+            .and_then(|ret| declared_integer_range(&ret.syntax().text().to_string()));
+        let block = function.body()?;
+        let block = match RangeTail::of_block(&block) {
+            Some(tail) => FoldPlanBlock::Tail(tail),
+            None => {
+                // Comments and strings carry no arithmetic; masking them first
+                // keeps the tokenizer away from brace-bearing content inside
+                // either.
+                let masked = crate::analysis::extract::mask_comments_and_strings(
+                    &block.syntax().text().to_string(),
+                );
+                FoldPlanBlock::Tokens(tokenize(&masked)?)
+            }
+        };
+        Some(Self {
+            names,
+            widths,
+            fold_range,
+            block,
+        })
     }
-    let param_list = function.param_list()?;
-    if param_list.self_param().is_some() {
+
+    fn fold(&self, arguments: &[i128]) -> Option<Value> {
+        if self.names.len() != arguments.len() {
+            return None;
+        }
+        for (width, value) in self.widths.iter().zip(arguments.iter().copied()) {
+            if let Some((low, high)) = width
+                && !(*low..=*high).contains(&value)
+            {
+                return None;
+            }
+        }
+        let environment: BTreeMap<String, i128> = self
+            .names
+            .iter()
+            .cloned()
+            .zip(arguments.iter().copied())
+            .collect();
+        match &self.block {
+            FoldPlanBlock::Tail(tail) => tail.fold(&environment, self.fold_range),
+            FoldPlanBlock::Tokens(tokens) => {
+                let uniform = self
+                    .fold_range
+                    .filter(|range| self.widths.iter().all(|width| *width == Some(*range)));
+                fold_block(tokens, &environment, self.fold_range, uniform)
+            }
+        }
+    }
+}
+
+mod branch_index;
+mod owner_fold;
+mod tuple_guard;
+use owner_fold::{Folded, OwnerFold, literal_receiver_call};
+pub(in crate::analysis) use tuple_guard::tuple_branch_reached;
+
+#[cfg(test)]
+mod fold_plan;
+
+#[cfg(test)]
+thread_local! {
+    /// How many function texts this thread has read for the fold.
+    pub(in crate::analysis::test_grip_evidence) static FOLD_PLAN_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// #14419: an owner whose whole body is one range-shaped tail the token fold
+/// cannot read: an integer range consumed by a closed reduction
+/// (`(lo..hi).sum()`, `.count()`, `.product()`), a membership test
+/// (`(lo..=hi).contains(&x)`), either optionally cast `as` a recognized
+/// integer type, or a `match` on one parameter whose arms are integer
+/// literals, literal range patterns, `|` alternatives of those, or `_`.
+/// Endpoints and arm values must each be one integer literal or one owner
+/// parameter ([`plain_operand`]: no typed intermediate arithmetic); the block holds no statement; reductions take no arguments or
+/// turbofish; match arms carry no guard. Any other shape is `None` and the
+/// token fold decides as before.
+enum RangeTail {
+    Reduction {
+        range: TailRange,
+        reduction: Reduction,
+        cast: Option<(i128, i128)>,
+    },
+    Contains {
+        range: TailRange,
+        subject: String,
+    },
+    Match {
+        subject: String,
+        arms: Vec<(Vec<ArmPattern>, String)>,
+    },
+}
+
+/// A range's endpoint texts (`None` for an open side) and inclusivity.
+struct TailRange {
+    start: Option<String>,
+    end: Option<String>,
+    inclusive: bool,
+}
+
+enum ArmPattern {
+    Wildcard,
+    Literal(String),
+    Range(TailRange),
+}
+
+#[derive(Clone, Copy)]
+enum Reduction {
+    Sum,
+    Count,
+    Product,
+}
+
+/// The expression text when it carries no comment or string the fold would
+/// have to read past.
+fn plain_text(node: &impl AstNode) -> Option<String> {
+    let text = node.syntax().text().to_string();
+    (crate::analysis::extract::mask_comments_and_strings(&text) == text).then_some(text)
+}
+
+/// [`plain_text`] restricted to one integer literal (optionally negated) or
+/// one bare name. The range-tail fold has no typed intermediate arithmetic:
+/// `(n + 1) / 2` at `n: u8 = 255` wraps to 0 in unchecked Rust while an
+/// untyped fold reads 128, so an operand that computes anything is not read.
+fn plain_operand(node: &impl AstNode) -> Option<String> {
+    let text = plain_text(node)?;
+    let trimmed = text.trim();
+    let digits = trimmed.strip_prefix('-').unwrap_or(trimmed).trim_start();
+    let literal = digits.starts_with(|ch: char| ch.is_ascii_digit())
+        && digits
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    let name = trimmed.starts_with(|ch: char| ch.is_ascii_alphabetic() || ch == '_')
+        && trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+    (literal || name).then_some(text)
+}
+
+/// An optional range endpoint's text: an open side is `Some(None)`, an
+/// endpoint the fold cannot read is `None`.
+fn endpoint_text(endpoint: Option<impl AstNode>) -> Option<Option<String>> {
+    match endpoint {
+        Some(endpoint) => plain_operand(&endpoint).map(Some),
+        None => Some(None),
+    }
+}
+
+fn strip_parens(mut expr: ast::Expr) -> Option<ast::Expr> {
+    while let ast::Expr::ParenExpr(paren) = expr {
+        expr = paren.expr()?;
+    }
+    Some(expr)
+}
+
+fn plain_name(expr: &ast::Expr) -> Option<String> {
+    let ast::Expr::PathExpr(path) = expr else {
+        return None;
+    };
+    let path = path.path()?;
+    if path.qualifier().is_some() {
         return None;
     }
-    let mut names = Vec::new();
-    let mut widths = Vec::new();
-    for param in param_list.params() {
-        let ast::Pat::IdentPat(ident) = param.pat()? else {
+    let segment = path.segment()?;
+    if segment.generic_arg_list().is_some() {
+        return None;
+    }
+    Some(segment.name_ref()?.text().to_string())
+}
+
+impl TailRange {
+    fn of_expr(range: &ast::RangeExpr) -> Option<Self> {
+        Some(Self {
+            start: endpoint_text(range.start())?,
+            end: endpoint_text(range.end())?,
+            inclusive: matches!(range.op_kind()?, ast::RangeOp::Inclusive),
+        })
+    }
+
+    fn of_pat(range: &ast::RangePat) -> Option<Self> {
+        Some(Self {
+            start: endpoint_text(range.start())?,
+            end: endpoint_text(range.end())?,
+            inclusive: matches!(range.op_kind()?, ast::RangeOp::Inclusive),
+        })
+    }
+
+    /// The half-open integer interval `[start, stop)` the range covers, with
+    /// open sides as `None`.
+    fn bounds(&self, environment: &BTreeMap<String, i128>) -> Option<(Option<i128>, Option<i128>)> {
+        let start = match &self.start {
+            Some(text) => Some(fold_expression(text, environment)?),
+            None => None,
+        };
+        let stop = match &self.end {
+            Some(text) => {
+                let end = fold_expression(text, environment)?;
+                Some(if self.inclusive {
+                    end.checked_add(1)?
+                } else {
+                    end
+                })
+            }
+            None if self.inclusive => return None,
+            None => None,
+        };
+        Some((start, stop))
+    }
+
+    fn contains(&self, value: i128, environment: &BTreeMap<String, i128>) -> Option<bool> {
+        let (start, stop) = self.bounds(environment)?;
+        Some(start.is_none_or(|start| start <= value) && stop.is_none_or(|stop| value < stop))
+    }
+}
+
+impl RangeTail {
+    fn of_block(block: &ast::BlockExpr) -> Option<Self> {
+        let list = block.stmt_list()?;
+        if list.statements().next().is_some() {
+            return None;
+        }
+        let mut tail = strip_parens(list.tail_expr()?)?;
+        let mut cast = None;
+        if let ast::Expr::CastExpr(cast_expr) = &tail {
+            let ty = cast_expr.ty()?.syntax().text().to_string();
+            cast = Some(declared_integer_range(&ty)?);
+            tail = strip_parens(cast_expr.expr()?)?;
+        }
+        match tail {
+            ast::Expr::MethodCallExpr(call) => Self::of_method_call(&call, cast),
+            ast::Expr::MatchExpr(matched) if cast.is_none() => Self::of_match(&matched),
+            _ => None,
+        }
+    }
+
+    fn of_method_call(call: &ast::MethodCallExpr, cast: Option<(i128, i128)>) -> Option<Self> {
+        if call.generic_arg_list().is_some() {
+            return None;
+        }
+        let ast::Expr::RangeExpr(range_expr) = strip_parens(call.receiver()?)? else {
             return None;
         };
-        // A subpattern (`x @ (a, b)`) does not bind the written name alone.
-        if ident.pat().is_some() {
+        let range = TailRange::of_expr(&range_expr)?;
+        let name = call.name_ref()?.text().to_string();
+        let mut arguments = call.arg_list()?.args();
+        let reduction = match name.as_str() {
+            "contains" if cast.is_none() => {
+                let argument = strip_parens(arguments.next()?)?;
+                if arguments.next().is_some() {
+                    return None;
+                }
+                let ast::Expr::RefExpr(reference) = argument else {
+                    return None;
+                };
+                if reference.mut_token().is_some() {
+                    return None;
+                }
+                let subject = plain_name(&strip_parens(reference.expr()?)?)?;
+                return Some(Self::Contains { range, subject });
+            }
+            "sum" => Reduction::Sum,
+            "count" => Reduction::Count,
+            "product" => Reduction::Product,
+            _ => return None,
+        };
+        if arguments.next().is_some() || range.start.is_none() || range.end.is_none() {
             return None;
         }
-        names.push(ident.name()?.text().to_string());
-        // A declared-width parameter bounds the inputs the real function
-        // accepts; an argument outside it names a call that cannot compile.
-        let width = param
-            .ty()
-            .and_then(|ty| declared_integer_range(&ty.syntax().text().to_string()));
-        widths.push(width);
+        Some(Self::Reduction {
+            range,
+            reduction,
+            cast,
+        })
     }
-    if names.len() != arguments.len() {
+
+    fn of_match(matched: &ast::MatchExpr) -> Option<Self> {
+        let subject = plain_name(&strip_parens(matched.expr()?)?)?;
+        let mut arms = Vec::new();
+        for arm in matched.match_arm_list()?.arms() {
+            // A `#[cfg]` arm may be compiled out before matching.
+            if arm.guard().is_some() || arm.attrs().next().is_some() {
+                return None;
+            }
+            let patterns = match arm.pat()? {
+                ast::Pat::OrPat(alternatives) => alternatives
+                    .pats()
+                    .map(|pat| ArmPattern::of(&pat))
+                    .collect::<Option<Vec<_>>>()?,
+                pat => vec![ArmPattern::of(&pat)?],
+            };
+            arms.push((patterns, plain_operand(&arm.expr()?)?));
+        }
+        Some(Self::Match { subject, arms })
+    }
+
+    /// The tail's value at `environment`. A negative reduction start, a
+    /// range too long to multiply out, a value outside the cast or declared
+    /// return width (the real owner would overflow or wrap), or a match no
+    /// arm covers is `None`.
+    fn fold(
+        &self,
+        environment: &BTreeMap<String, i128>,
+        fold_range: Option<(i128, i128)>,
+    ) -> Option<Value> {
+        let within = |value: i128, range: Option<(i128, i128)>| match range {
+            Some((low, high)) if !(low..=high).contains(&value) => None,
+            _ => Some(value),
+        };
+        match self {
+            Self::Reduction {
+                range,
+                reduction,
+                cast,
+            } => {
+                let (Some(start), Some(stop)) = range.bounds(environment)? else {
+                    return None;
+                };
+                // A sum or product accumulates in the owner's return type,
+                // so its width must be known: an unresolved alias (`Byte`)
+                // or a cast (whose source width is the inferred element
+                // type) could wrap where the fold sees an unequal value.
+                // `count()` accumulates in `usize`.
+                if !matches!(reduction, Reduction::Count)
+                    && (cast.is_some() || fold_range.is_none())
+                {
+                    return None;
+                }
+                let value = reduce(*reduction, start, stop)?;
+                let value = within(value, *cast)?;
+                within(value, fold_range).map(Value::Int)
+            }
+            Self::Contains { range, subject } => {
+                let value = *environment.get(subject)?;
+                range.contains(value, environment).map(Value::Bool)
+            }
+            Self::Match { subject, arms } => {
+                let value = *environment.get(subject)?;
+                for (patterns, result) in arms {
+                    let mut hit = false;
+                    for pattern in patterns {
+                        hit |= match pattern {
+                            ArmPattern::Wildcard => true,
+                            ArmPattern::Literal(text) => {
+                                fold_expression(text, environment)? == value
+                            }
+                            ArmPattern::Range(range) => range.contains(value, environment)?,
+                        };
+                    }
+                    if hit {
+                        let value = fold_expression(result, environment)?;
+                        return within(value, fold_range).map(Value::Int);
+                    }
+                }
+                None
+            }
+        }
+    }
+}
+
+impl ArmPattern {
+    fn of(pat: &ast::Pat) -> Option<Self> {
+        match pat {
+            ast::Pat::WildcardPat(_) => Some(Self::Wildcard),
+            ast::Pat::LiteralPat(literal) => Some(Self::Literal(plain_operand(literal)?)),
+            ast::Pat::RangePat(range) => Some(Self::Range(TailRange::of_pat(range)?)),
+            _ => None,
+        }
+    }
+}
+
+/// One closed reduction over the integers `[start, stop)`. A negative start
+/// (partial sums or products could overflow while the total fits) or a
+/// product of more than 64 terms is `None`.
+fn reduce(reduction: Reduction, start: i128, stop: i128) -> Option<i128> {
+    const MAX_PRODUCT_TERMS: i128 = 64;
+    if start < 0 {
         return None;
     }
-    for (width, value) in widths.iter().zip(arguments.iter().copied()) {
-        if let Some((low, high)) = width
-            && !(*low..=*high).contains(&value)
-        {
-            return None;
+    let length = stop.checked_sub(start)?.max(0);
+    match reduction {
+        Reduction::Count => Some(length),
+        Reduction::Sum if length == 0 => Some(0),
+        Reduction::Sum => start
+            .checked_add(stop.checked_sub(1)?)?
+            .checked_mul(length)?
+            .checked_div(2),
+        Reduction::Product if length > MAX_PRODUCT_TERMS => None,
+        Reduction::Product => {
+            let mut product = 1i128;
+            for factor in start..stop {
+                product = product.checked_mul(factor)?;
+            }
+            Some(product)
         }
     }
-    // The fold uses the return type's declared width when it is a
-    // recognized integer type: release builds wrap at that width, so a
-    // mathematical result outside it does not describe a value the owner
-    // can return and the pair stays not evaluable instead of contradicting
-    // a passing wrapping assertion (#6701 review).
-    // No recognized return type: the fold keeps exact i128 arithmetic,
-    // which can only withhold credit.
-    let fold_range = function
-        .ret_type()
-        .and_then(|ret| declared_integer_range(&ret.syntax().text().to_string()));
-    let block = function.body()?;
-    let environment: BTreeMap<String, i128> =
-        names.into_iter().zip(arguments.iter().copied()).collect();
-    // Comments and strings carry no arithmetic; masking them first keeps the
-    // tokenizer away from brace-bearing content inside either.
-    let masked =
-        crate::analysis::extract::mask_comments_and_strings(&block.syntax().text().to_string());
-    let tokens = tokenize(&masked)?;
-    let uniform = fold_range.filter(|range| widths.iter().all(|width| *width == Some(*range)));
-    fold_block(&tokens, &environment, fold_range, uniform)
 }
 
 /// The inclusive value range a recognized Rust integer type admits, or
@@ -1284,6 +2714,9 @@ struct Parser<'a> {
     tokens: &'a [Token],
     position: usize,
     environment: &'a BTreeMap<String, i128>,
+    /// #13037: `bool` bindings, read only by the strict return-seam reach
+    /// fold. Every other fold binds integers alone and leaves this empty.
+    bools: Option<&'a BTreeMap<String, bool>>,
     /// The owner return type's declared width, when recognized. Every
     /// integer produced inside the body must fit it: release builds wrap at
     /// the declared width, so a mathematical value outside the range does
@@ -1395,7 +2828,11 @@ impl<'a> Parser<'a> {
         let mut left = self.parse_comparison()?;
         while self.eat_symbol("&&") {
             if !bool_value(left)? {
-                self.skip_expression()?;
+                // Only the `&&` right operand is short-circuited. Skipping at
+                // the `||` level would also eat a following `||` chain, so
+                // `a < 0 && b > 100 || c >= t` folded `false` where it is
+                // `true` (#14496 review).
+                self.skip_and()?;
                 left = Value::Bool(false);
             } else {
                 left = Value::Bool(bool_value(self.parse_comparison()?)?);
@@ -1656,11 +3093,17 @@ impl<'a> Parser<'a> {
             let Value::Int(right_value) = right else {
                 return None;
             };
-            left = Value::Int(self.check_range(match op {
-                "*" => left_value.checked_mul(right_value)?,
-                "/" => left_value.checked_div(right_value)?,
-                _ => left_value.checked_rem(right_value)?,
-            })?);
+            left = Value::Int(
+                self.check_range(match op {
+                    "*" => left_value.checked_mul(right_value)?,
+                    "/" => left_value.checked_div(right_value)?,
+                    // `MIN % -1` overflows (and panics) in the operand's own
+                    // width even though it folds to `0` here (#14950 review).
+                    _ => left_value
+                        .checked_rem(right_value)
+                        .filter(|_| right_value != -1)?,
+                })?,
+            );
         }
     }
 
@@ -1766,7 +3209,16 @@ impl<'a> Parser<'a> {
                 // the fold's scope; only bound parameters evaluate.
                 match self.peek_symbol() {
                     Some("(" | "::") => None,
-                    _ => self.environment.get(&name).copied().map(Value::Int),
+                    _ => self
+                        .environment
+                        .get(&name)
+                        .copied()
+                        .map(Value::Int)
+                        .or_else(|| {
+                            self.bools
+                                .and_then(|bools| bools.get(&name).copied())
+                                .map(Value::Bool)
+                        }),
                 }
             }
             _ => None,
@@ -1843,6 +3295,7 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
         tokens: &tokens,
         position: 0,
         environment,
+        bools: None,
         range: None,
         uniform: None,
     };
@@ -1854,6 +3307,610 @@ fn fold_expression(text: &str, environment: &BTreeMap<String, i128>) -> Option<i
         Value::Int(value) => Some(value),
         Value::Bool(_) => None,
     }
+}
+
+/// Whether a branch-local return-value seam is statically reached by the
+/// oracle's call (#14496). `None` when the seam is not the tail expression or
+/// `return` statement of a single `if` branch of the owner, the oracle does not
+/// name a bare owner call with literal arguments, the owner rebinds or mutates
+/// a parameter, or a condition does not fold. `Some(false)` only when every
+/// condition on the path folds and one of them is not the taken branch, so a
+/// caller can withhold credit without guessing.
+///
+/// The call shape is the bare `owner(..)` form, read through a `let` the
+/// assertion pins when there is one, or through a single-identifier wrapper
+/// (`wrapper(owner(..))`, `owner(..).await`), matching the sibling
+/// invisibility path. A wrapper that changes the arguments is not modelled
+/// and keeps today's credit.
+pub(super) fn seam_branch_reached_by_call(
+    owner: &FunctionSummary,
+    seam_expression: &str,
+    seam_line: usize,
+    oracle_text: &str,
+    test: &TestSummary,
+) -> Option<bool> {
+    // The assertion may pin a local the call was bound to
+    // (`let got = owner(..); assert_eq!(got, 50)`), so resolve the compared
+    // operands through their `let` initializers before looking for the call.
+    let call_arguments = single_compared_owner_call(owner, oracle_text, test, true)?;
+    let mut values = Vec::with_capacity(call_arguments.len());
+    for argument in &call_arguments {
+        values.push(fold_expression(argument, &BTreeMap::new())?);
+    }
+    // #11738: the owner's branch structure is read once per owner text.
+    let index = branch_index::owner_branch_index(owner.body.as_str());
+    // The seam's own line, in the coordinates of the parsed body. `body` starts
+    // at the owner's `fn` token, so body line 1 is `owner.start_line`. Matching
+    // the seam's line is what tells two same-text occurrences apart: a sibling
+    // `return` after the `if` is a different line, so it can neither stand in
+    // for the seam's branch nor make the branch scan ambiguous (#14496 review).
+    let seam_body_line = seam_line.checked_sub(owner.start_line)? + 1;
+    index
+        .as_ref()
+        .as_ref()?
+        .reached(values, seam_expression, seam_body_line)
+}
+
+/// The arguments of the one owner call among the assertion's compared
+/// operands, read through a `let` the assertion pins when there is one.
+/// `None` when no operand or more than one operand calls the owner, or when
+/// an operand names an owner call neither parser resolves (`owner(50, 100) /
+/// 2`), which leaves one compared value unknown (#14496 review). With
+/// `through_wrapper`, a value-transparent single-identifier wrapper
+/// (`wrapper(owner(..))`) counts too.
+fn single_compared_owner_call(
+    owner: &FunctionSummary,
+    oracle_text: &str,
+    test: &TestSummary,
+    through_wrapper: bool,
+) -> Option<Vec<String>> {
+    single_compared_owner_call_in(owner, oracle_text, test.body.as_str(), through_wrapper)
+}
+
+/// [`single_compared_owner_call`] over a test body given as text.
+fn single_compared_owner_call_in(
+    owner: &FunctionSummary,
+    oracle_text: &str,
+    test_body: &str,
+    through_wrapper: bool,
+) -> Option<Vec<String>> {
+    let operands = assertion_operands(oracle_text, test_body);
+    let mut calls = Vec::new();
+    for operand in &operands {
+        let arguments = owner_call_arguments(&operand.text, &owner.name).or_else(|| {
+            through_wrapper
+                .then(|| wrapped_owner_call_arguments(&operand.text, &owner.name))
+                .flatten()
+        });
+        match arguments {
+            Some(arguments) => calls.push(arguments),
+            None => {
+                if super::named_call_open_paren_index(operand.text.trim(), &owner.name).is_some() {
+                    return None;
+                }
+            }
+        }
+    }
+    let [call_arguments] = <[Vec<String>; 1]>::try_from(calls).ok()?;
+    Some(call_arguments)
+}
+
+/// #13037: whether the oracle's call statically runs the owner into the
+/// branch whose tail returns the changed expression, so an exact pin of the
+/// call's result is a pin of that expression's value. Strict where
+/// [`seam_branch_reached_by_call`] keeps today's credit: every unreadable
+/// shape is `false`.
+///
+/// It holds only when all of these do:
+/// - one compared operand is a bare `owner(..)` call (no wrapper) whose
+///   arguments are integer literals or `true`/`false`;
+/// - the owner is a free function with plain parameters it never rebinds or
+///   mutates;
+/// - the seam is the tail of exactly one `if` branch, and that `if` chain is
+///   the owner body's own tail, so the branch value is the returned value;
+/// - every body statement before the tail is either an `if COND { .. }`
+///   without `else` whose condition folds false, or `let NAME = EXPR;` whose
+///   initializer folds (so it calls nothing and cannot exit), which binds
+///   `NAME` for later conditions;
+/// - every condition on the path folds, reading parameters, those bindings
+///   and same-file integer constants (`constant` gives a declaration's
+///   initializer text and its declared type), and selects the seam's branch;
+/// - every folded integer fits every integer width the owner names (its
+///   parameters, return type, annotations and literal suffixes), each read
+///   constant's declared width, and `i32` (an unconstrained literal's type):
+///   with overflow checks off the runtime wraps where the fold would not.
+pub(in crate::analysis) fn return_seam_tail_reached_by_call(
+    owner: &FunctionSummary,
+    seam_expression: &str,
+    seam_line: usize,
+    oracle_text: &str,
+    qualified_owner_path: Option<&str>,
+    test: &TestSummary,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
+) -> bool {
+    // `qualified_owner_path` is the one path the caller established as the
+    // owner's own-crate spelling (`pkg::owner`). The assertion and the test
+    // body are read with that path spelled bare, together, so a `let` the
+    // assertion names is still found by the assertion's own position.
+    let spelled = qualified_owner_path.and_then(|path| {
+        let oracle = spell_path_bare(oracle_text, path, &owner.name);
+        let body = spell_path_bare(test.body.as_str(), path, &owner.name);
+        (oracle.is_some() || body.is_some()).then(|| {
+            (
+                oracle.unwrap_or_else(|| oracle_text.to_string()),
+                body.unwrap_or_else(|| test.body.as_str().to_string()),
+            )
+        })
+    });
+    let (oracle_text, test_body) = match &spelled {
+        Some((oracle, body)) => (oracle.as_str(), body.as_str()),
+        None => (oracle_text, test.body.as_str()),
+    };
+    tail_reach(
+        owner,
+        seam_expression,
+        seam_line,
+        oracle_text,
+        test_body,
+        constant,
+    )
+    .unwrap_or(false)
+}
+
+/// `text` with every occurrence of `path` that is a whole path (not the tail
+/// of a longer one such as `other::pkg::owner`, nor the head of another item
+/// such as `pkg::owner_v2`) replaced by `name`. `None` when there is none.
+fn spell_path_bare(text: &str, path: &str, name: &str) -> Option<String> {
+    let continues_a_path = |ch: char| ch == ':' || ch == '_' || ch.is_alphanumeric();
+    let mut bare = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut rewrote = false;
+    while let Some(at) = rest.find(path) {
+        let after = &rest[at + path.len()..];
+        let whole = !rest[..at].chars().next_back().is_some_and(continues_a_path)
+            && !after.chars().next().is_some_and(continues_a_path);
+        bare.push_str(&rest[..at]);
+        bare.push_str(if whole { name } else { path });
+        rewrote |= whole;
+        rest = after;
+    }
+    bare.push_str(rest);
+    rewrote.then_some(bare)
+}
+
+fn tail_reach(
+    owner: &FunctionSummary,
+    seam_expression: &str,
+    seam_line: usize,
+    oracle_text: &str,
+    test_body: &str,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
+) -> Option<bool> {
+    // Only an equality pins the value; `assert_ne!` excludes one value, and a
+    // `debug_assert_eq!` is compiled out of a release test run.
+    if equality_assertion_shape(oracle_text)?.0
+        || oracle_text
+            .trim_start()
+            .trim_start_matches("::")
+            .starts_with("debug_")
+    {
+        return None;
+    }
+    let call_arguments = single_compared_owner_call_in(owner, oracle_text, test_body, false)?;
+    // The expected side must be a value the test fixes itself: an expected
+    // value computed by calling code (`let expected = helper(..)`, where the
+    // helper may call the owner) moves with the mutant (#14950 review).
+    for operand in assertion_operands(oracle_text, test_body) {
+        let text = operand.text.trim();
+        if owner_call_arguments(text, &owner.name).is_none()
+            && !matches!(text, "true" | "false")
+            && fold_expression(text, &BTreeMap::new()).is_none()
+        {
+            return None;
+        }
+    }
+    let parse = parse_clean_source_file(owner.body.as_str())?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    for ancestor in function.syntax().ancestors().skip(1) {
+        if ast::Impl::can_cast(ancestor.kind())
+            || ast::Trait::can_cast(ancestor.kind())
+            || ast::Fn::can_cast(ancestor.kind())
+        {
+            return None;
+        }
+    }
+    let param_list = function.param_list()?;
+    if param_list.self_param().is_some() {
+        return None;
+    }
+    let mut names = Vec::new();
+    let mut types = Vec::new();
+    for param in param_list.params() {
+        let ast::Pat::IdentPat(ident) = param.pat()? else {
+            return None;
+        };
+        if ident.pat().is_some() || ident.ref_token().is_some() || ident.mut_token().is_some() {
+            return None;
+        }
+        names.push(ident.name()?.text().to_string());
+        types.push(param.ty()?.syntax().text().to_string());
+    }
+    if names.len() != call_arguments.len() {
+        return None;
+    }
+    let block = function.body()?;
+    // A `#[cfg]` (or any attribute) in the body can drop or swap a statement
+    // the fold would read, so an attributed body is not read. (A cfg twin of
+    // the owner itself fails `callee_is_unique` upstream.)
+    if block.syntax().text().to_string().contains("#[")
+        || parameter_is_rebound_or_mutated(&block, &names, None)
+    {
+        return None;
+    }
+    let mut ints = BTreeMap::new();
+    let mut bools = BTreeMap::new();
+    // Every intermediate value must fit the narrowest integer width the
+    // owner names anywhere, and `i32`: with overflow checks off the runtime
+    // wraps where the fold would not (#14950 review).
+    let range = named_integer_range(&function.syntax().text().to_string())?;
+    // A type alias (`type Byte = u8;`) or any other named type could hide a
+    // narrower width the scan above cannot see, so every type the owner
+    // spells must be a primitive.
+    if function
+        .syntax()
+        .descendants()
+        .filter_map(ast::PathType::cast)
+        .any(|path| {
+            !matches!(
+                path.syntax().text().to_string().trim(),
+                "bool" | "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64"
+            )
+        })
+    {
+        return None;
+    }
+    for ((name, ty), argument) in names.into_iter().zip(&types).zip(&call_arguments) {
+        match (ty.trim(), argument.trim()) {
+            ("bool", "true") => {
+                bools.insert(name, true);
+            }
+            ("bool", "false") => {
+                bools.insert(name, false);
+            }
+            (ty, text) => {
+                let (low, high) = declared_integer_range(ty)?;
+                let value = fold_expression(text, &BTreeMap::new())?;
+                if !(low..=high).contains(&value) {
+                    return None;
+                }
+                ints.insert(name, value);
+            }
+        }
+    }
+    let fold = |text: &str, ints: &BTreeMap<String, i128>, bools: &BTreeMap<String, bool>| {
+        fold_typed(text, ints, bools, constant, Some(range))
+    };
+    // The seam is the tail of one branch of the `if` chain that is itself the
+    // body's tail expression.
+    let ast::Expr::IfExpr(tail_if) = block.tail_expr()? else {
+        return None;
+    };
+    let target = normalized_expression(seam_expression);
+    let body = owner.body.as_str();
+    let seam_body_line = seam_line.checked_sub(owner.start_line)? + 1;
+    let mut chain = Vec::new();
+    let mut current = Some(tail_if);
+    while let Some(if_expr) = current.take() {
+        chain.push(if_expr.clone());
+        if let Some(ast::ElseBranch::IfExpr(inner)) = if_expr.else_branch() {
+            current = Some(inner);
+        }
+    }
+    let branch_tail_is_seam = |block: &ast::BlockExpr| {
+        block.statements().next().is_none()
+            && block.tail_expr().is_some_and(|tail| {
+                normalized_expression(&tail.syntax().text().to_string()) == target
+                    && line_of_offset(body, usize::from(tail.syntax().text_range().start()))
+                        == seam_body_line
+            })
+    };
+    // (index in the chain, taken through `then`) for the seam's branch.
+    let mut seam_branch = None;
+    for (position, if_expr) in chain.iter().enumerate() {
+        if if_expr
+            .then_branch()
+            .is_some_and(|then| branch_tail_is_seam(&then))
+            && seam_branch.replace((position, true)).is_some()
+        {
+            return None;
+        }
+        if let Some(ast::ElseBranch::Block(else_block)) = if_expr.else_branch()
+            && branch_tail_is_seam(&else_block)
+            && seam_branch.replace((position, false)).is_some()
+        {
+            return None;
+        }
+    }
+    let (seam_position, through_then) = seam_branch?;
+    // Statements before the tail: folded in order, each binding what it lets.
+    for statement in block.statements() {
+        match statement {
+            ast::Stmt::LetStmt(let_stmt) => {
+                let ast::Pat::IdentPat(ident) = let_stmt.pat()? else {
+                    return None;
+                };
+                if ident.pat().is_some()
+                    || ident.mut_token().is_some()
+                    || let_stmt.let_else().is_some()
+                {
+                    return None;
+                }
+                let name = ident.name()?.text().to_string();
+                let text = let_stmt.initializer()?.syntax().text().to_string();
+                match fold(&text, &ints, &bools)? {
+                    Value::Int(value) => {
+                        bools.remove(&name);
+                        ints.insert(name, value);
+                    }
+                    Value::Bool(value) => {
+                        ints.remove(&name);
+                        bools.insert(name, value);
+                    }
+                }
+            }
+            ast::Stmt::ExprStmt(expr_stmt) => {
+                let ast::Expr::IfExpr(guard) = expr_stmt.expr()? else {
+                    return None;
+                };
+                if guard.else_branch().is_some() {
+                    return None;
+                }
+                let condition = guard.condition()?.syntax().text().to_string();
+                if bool_value(fold(&condition, &ints, &bools)?)? {
+                    return None;
+                }
+            }
+            ast::Stmt::Item(_) => return None,
+        }
+    }
+    // The chain's conditions before the seam's branch are not taken; its own
+    // is taken (`then`) or not taken (the final `else`).
+    for (position, if_expr) in chain.iter().enumerate().take(seam_position + 1) {
+        let condition = if_expr.condition()?.syntax().text().to_string();
+        let value = bool_value(fold(&condition, &ints, &bools)?)?;
+        let expected = position == seam_position && through_then;
+        if value != expected {
+            return Some(false);
+        }
+    }
+    Some(true)
+}
+
+/// Fold `text` with integer and `bool` bindings, resolving any other
+/// SCREAMING_CASE name through `constant`, with every integer held to
+/// `range`.
+fn fold_typed(
+    text: &str,
+    ints: &BTreeMap<String, i128>,
+    bools: &BTreeMap<String, bool>,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
+    range: Option<(i128, i128)>,
+) -> Option<Value> {
+    let mut environment = ints.clone();
+    let range = bind_constants(text, ints, bools, constant, &mut environment, range)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let tokens = tokenize(&masked)?;
+    let mut parser = Parser {
+        tokens: &tokens,
+        position: 0,
+        environment: &environment,
+        bools: Some(bools),
+        range,
+        uniform: None,
+    };
+    let value = parser.parse_expression()?;
+    (parser.position == tokens.len()).then_some(value)
+}
+
+/// Bind each unbound SCREAMING_CASE identifier in `text` to its constant
+/// value, narrowing `range` to each constant's declared width. `None` when
+/// one does not resolve or its type is not a known integer width.
+fn bind_constants(
+    text: &str,
+    ints: &BTreeMap<String, i128>,
+    bools: &BTreeMap<String, bool>,
+    constant: &dyn Fn(&str) -> Option<(String, String)>,
+    environment: &mut BTreeMap<String, i128>,
+    mut range: Option<(i128, i128)>,
+) -> Option<Option<(i128, i128)>> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    for word in masked.split(|ch: char| !(ch.is_alphanumeric() || ch == '_')) {
+        let screaming = word
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+            && word
+                .chars()
+                .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_');
+        if screaming && !ints.contains_key(word) && !bools.contains_key(word) {
+            let (initializer, ty) = constant(word)?;
+            let (low, high) = declared_integer_range(&ty)?;
+            let value = fold_expression(&initializer, &BTreeMap::new())?;
+            if !(low..=high).contains(&value) {
+                return None;
+            }
+            range = range.map(|(lo, hi)| (lo.max(low), hi.min(high)));
+            environment.insert(word.to_string(), value);
+        }
+    }
+    Some(range)
+}
+
+/// The intersection of `i32` (an unconstrained integer literal's type) with
+/// every integer width `function_text` names, as a type or a literal suffix.
+/// `None` when it names a width the fold cannot bound (`usize`, `isize`,
+/// `u128`, `i128`).
+fn named_integer_range(function_text: &str) -> Option<(i128, i128)> {
+    const WIDTHS: [&str; 12] = [
+        "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
+    ];
+    let masked = crate::analysis::extract::mask_comments_and_strings(function_text);
+    let mut range = (i128::from(i32::MIN), i128::from(i32::MAX));
+    for word in masked.split(|ch: char| !(ch.is_alphanumeric() || ch == '_')) {
+        for width in WIDTHS {
+            let names_width = word == width
+                || (word.starts_with(|ch: char| ch.is_ascii_digit()) && word.ends_with(width));
+            if names_width {
+                let (low, high) = declared_integer_range(width)?;
+                range = (range.0.max(low), range.1.min(high));
+            }
+        }
+    }
+    Some(range)
+}
+
+/// Whether the owner body rebinds or mutates one of `names` anywhere, which
+/// makes the call-argument environment stale for the condition fold.
+///
+/// With `seam`, a `let` statement whose enclosing block neither holds the
+/// seam's `if` nor sits inside a condition on its path is out of scope for
+/// every condition the fold reads, so it does not count (#14569). Assignments
+/// and mutable borrows count wherever they are: they outlive their block.
+fn parameter_is_rebound_or_mutated(
+    block: &ast::BlockExpr,
+    names: &[String],
+    seam: Option<&ast::IfExpr>,
+) -> bool {
+    let targets = |name: &str| names.iter().any(|candidate| candidate == name);
+    let seam_range = seam.map(|if_expr| if_expr.syntax().text_range());
+    let path_conditions: Vec<_> = seam
+        .map(|if_expr| {
+            if_expr
+                .syntax()
+                .ancestors()
+                .filter_map(ast::IfExpr::cast)
+                .filter_map(|ancestor| ancestor.condition())
+                .map(|condition| condition.syntax().text_range())
+                .collect()
+        })
+        .unwrap_or_default();
+    let out_of_seam_scope = |let_stmt: &ast::LetStmt| {
+        let Some(seam_range) = seam_range else {
+            return false;
+        };
+        let Some(scope) = let_stmt
+            .syntax()
+            .ancestors()
+            .skip(1)
+            .find_map(ast::BlockExpr::cast)
+        else {
+            return false;
+        };
+        let scope = scope.syntax().text_range();
+        // Touching ranges do not overlap: a block that ends where the seam's
+        // `if` starts holds none of it.
+        let overlaps = |left: ra_ap_syntax::TextRange, right: ra_ap_syntax::TextRange| {
+            left.start() < right.end() && right.start() < left.end()
+        };
+        !overlaps(scope, seam_range)
+            && !path_conditions
+                .iter()
+                .any(|condition| overlaps(*condition, scope))
+    };
+    // Every identifier a pattern binds, not only a top-level `IdentPat`:
+    // `let (amount,) = (-amount,);` and `for (amount, _) in ..` rebind the
+    // parameter too (#14496 review).
+    let pattern_binds_target = |pattern: Option<ast::Pat>| {
+        pattern.is_some_and(|pattern| {
+            pattern
+                .syntax()
+                .descendants()
+                .filter_map(ast::IdentPat::cast)
+                .filter_map(|ident| ident.name())
+                .any(|name| targets(name.text()))
+        })
+    };
+    block.syntax().descendants().any(|node| {
+        if let Some(let_stmt) = ast::LetStmt::cast(node.clone()) {
+            return !out_of_seam_scope(&let_stmt) && pattern_binds_target(let_stmt.pat());
+        }
+        if let Some(for_expr) = ast::ForExpr::cast(node.clone()) {
+            return pattern_binds_target(for_expr.pat());
+        }
+        // An `if let` / `while let` binding shadows the parameter for the
+        // block it guards, so the call-argument environment is stale there
+        // (#14496 review).
+        if let Some(let_expr) = ast::LetExpr::cast(node.clone()) {
+            return pattern_binds_target(let_expr.pat());
+        }
+        // A mutable borrow hands out an alias the assignment scan cannot see,
+        // so `let slot = &mut amount; *slot = -*slot;` changed the value the
+        // condition reads (#14496 review).
+        if let Some(ref_expr) = ast::RefExpr::cast(node.clone())
+            && ref_expr.mut_token().is_some()
+        {
+            return ref_expr.expr().is_some_and(|expr| {
+                expr.syntax()
+                    .descendants()
+                    .filter_map(ast::NameRef::cast)
+                    .any(|name| targets(name.text()))
+            });
+        }
+        if let Some(binary) = ast::BinExpr::cast(node)
+            && matches!(binary.op_kind(), Some(ast::BinaryOp::Assignment { .. }))
+            && let Some(lhs) = binary.lhs()
+        {
+            return lhs
+                .syntax()
+                .descendants()
+                .filter_map(ast::NameRef::cast)
+                .any(|name| targets(name.text()));
+        }
+        false
+    })
+}
+
+/// 1-based line of `offset` in `text`, the same coordinates the parsed body
+/// uses. The body is a fresh parse of `owner.body`, so its offsets are not the
+/// file's; counting newlines in the body text is what maps a seam's file line
+/// onto a node in that parse.
+fn line_of_offset(text: &str, offset: usize) -> usize {
+    text.as_bytes().get(..offset).map_or(1, |prefix| {
+        prefix.iter().filter(|byte| **byte == b'\n').count() + 1
+    })
+}
+
+/// Whitespace- and trailing-semicolon-insensitive spelling of one expression,
+/// so a seam's recorded text matches the parser's statement or tail text.
+fn normalized_expression(text: &str) -> String {
+    text.chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .trim_end_matches(';')
+        .to_string()
+}
+
+/// Fold one `if` condition with the call's literal argument bindings.
+fn fold_condition(text: &str, environment: &BTreeMap<String, i128>) -> Option<bool> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let tokens = tokenize(&masked)?;
+    let mut parser = Parser {
+        tokens: &tokens,
+        position: 0,
+        environment,
+        bools: None,
+        range: None,
+        uniform: None,
+    };
+    let value = parser.parse_expression()?;
+    if parser.position != tokens.len() {
+        return None;
+    }
+    bool_value(value)
 }
 
 /// Fold a `{ .. }` block with `environment` as the parameter bindings and
@@ -1868,6 +3925,7 @@ fn fold_block(
         tokens,
         position: 0,
         environment,
+        bools: None,
         range,
         uniform,
     };
@@ -1963,6 +4021,31 @@ pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64
                 evaluated: 3_500,
             }
         );
+        Ok(())
+    }
+
+    /// #15277 review: a turbofish call is the same owner call, so a wrong
+    /// literal through it is contradicted, not left not evaluable (which
+    /// kept a statically wrong pin at full strength).
+    #[test]
+    fn wrongval_assertion_through_a_turbofish_call_is_contradicted() -> Result<(), String> {
+        let generic_owner = BOUNDARY_OWNER.replace("discounted_total(", "discounted_total<T>(");
+        let verdict = verdict_for_owner(
+            &generic_owner,
+            "assert_eq!(discounted_total::<u8>(5_000, 5_000), 5_000);",
+        );
+        assert_eq!(
+            verdict?,
+            ExactValueVerdict::Contradicted {
+                expected: "5_000".to_string(),
+                evaluated: 3_500,
+            }
+        );
+        let consistent = verdict_for_owner(
+            &generic_owner,
+            "assert_eq!(discounted_total::<u8>(5_000, 5_000), 3_500);",
+        );
+        assert_eq!(consistent?, ExactValueVerdict::Consistent);
         Ok(())
     }
 

@@ -74,6 +74,11 @@ fn one_line_diff(line: usize, before: &str, after: &str) -> String {
     )
 }
 
+/// The tested `ripr` binary.
+fn ripr_binary() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+}
+
 struct Repo {
     base: PathBuf,
     root: PathBuf,
@@ -97,18 +102,23 @@ impl Repo {
     }
 
     fn run(&self, extra: &[&str]) -> Result<String, String> {
-        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .args(["check", "--mode", "draft", "--root"])
+        self.ripr("check", extra)
+    }
+
+    /// `ripr <command> --mode draft --root <root> --diff <diff> <extra..>`.
+    fn ripr(&self, command: &str, extra: &[&str]) -> Result<String, String> {
+        let output = ripr_binary()
+            .args([command, "--mode", "draft", "--root"])
             .arg(&self.root)
             .arg("--diff")
             .arg(self.base.join("change.diff"))
             .args(extra)
             .env("RIPR_CACHE_DIR", self.base.join("cache"))
             .output()
-            .map_err(|e| format!("run ripr check: {e}"))?;
+            .map_err(|e| format!("run ripr {command}: {e}"))?;
         if !output.status.success() {
             return Err(format!(
-                "ripr check failed: {}\n{}",
+                "ripr {command} failed: {}\n{}",
                 output.status,
                 String::from_utf8_lossy(&output.stderr)
             ));
@@ -123,6 +133,11 @@ impl Repo {
 
     fn human_full(&self) -> Result<String, String> {
         self.run(&["--format", "human-full"])
+    }
+
+    /// `ripr explain <selector>` over the same root and diff.
+    fn explain(&self, selector: &str) -> Result<String, String> {
+        self.ripr("explain", &[selector])
     }
 }
 
@@ -286,7 +301,7 @@ fn mutants_skip_on_changed_owner_withholds_and_discloses() -> Result<(), String>
         "human output must disclose the count and reason:\n{human}"
     );
     assert!(
-        human.contains(&format!("owner: limit, reason: {REASON}")),
+        human.contains(&format!("owner: limit, scope: fn, reason: {REASON}")),
         "human output must name the owner:\n{human}"
     );
     assert!(
@@ -376,6 +391,22 @@ fn policy_suppression_wins_without_double_counting() -> Result<(), String> {
         "a policy-suppressed finding is not also withheld: {rows:?}"
     );
     assert!(report.get("owner_opt_outs").is_none(), "{report}");
+    let selected = first_id_on_line(&report, 3)?;
+    let explanation = repo.ripr(
+        "explain",
+        &[
+            &selected,
+            "--format",
+            "agent",
+            "--suppression-policy",
+            &policy_arg,
+        ],
+    )?;
+    assert!(
+        explanation.contains("stop=this finding is suppressed by policy"),
+        "{explanation}"
+    );
+    assert!(!explanation.contains(REASON), "{explanation}");
     let summary = &report["summary"];
     let suppressed = summary["suppressed_by_policy"].as_u64().unwrap_or(0);
     assert_eq!(suppressed, rows.len() as u64, "{summary}");
@@ -554,7 +585,7 @@ fn github_skips_withheld_annotations_and_discloses_them() -> Result<(), String> 
     );
     assert!(
         github.contains(&format!(
-            "{limit_count} withheld by owner opt-out ({REASON}: the changed function carries #[mutants::skip])"
+            "{limit_count} withheld by owner opt-out ({REASON}: the changed function or an enclosing scope carries #[mutants::skip])"
         )),
         "the denominator notice names the count and reason:\n{github}"
     );
@@ -593,7 +624,7 @@ fn missed_txt_skips_withheld_lines_and_discloses_them() -> Result<(), String> {
     );
     assert!(
         text.contains(&format!(
-            "{limit_count} withheld by owner opt-out ({REASON}: the changed function carries #[mutants::skip])"
+            "{limit_count} withheld by owner opt-out ({REASON}: the changed function or an enclosing scope carries #[mutants::skip])"
         )),
         "the leading comment names the count and reason:\n{text}"
     );
@@ -684,5 +715,655 @@ fn badge_does_not_count_withheld_findings() -> Result<(), String> {
     )?)?;
     assert_eq!(gaps, 0, "a withheld finding is not an unsuppressed gap");
     assert_eq!(message, 0, "the badge headline drops the withheld gap");
+    Ok(())
+}
+
+// #13910: cargo-mutants also skips every method of a `#[mutants::skip]`
+// `impl` block, every item of a `#[mutants::skip]` module and every item of a
+// file that carries `#![mutants::skip]`. ripr withholds a finding whose owner
+// sits inside such a scope exactly like a fn-level skip, and names the scope
+// that carried the attribute.
+
+/// `withheld_scope` of every finding on `line`.
+fn line_scopes(report: &serde_json::Value, line: u64) -> Result<Vec<Option<String>>, String> {
+    Ok(findings(report)?
+        .iter()
+        .filter(|finding| finding["probe"]["line"].as_u64() == Some(line))
+        .map(|finding| finding["withheld_scope"].as_str().map(str::to_string))
+        .collect())
+}
+
+/// Classes of the findings on `line`.
+fn line_classes(report: &serde_json::Value, line: u64) -> Result<Vec<String>, String> {
+    Ok(line_findings(report, line)?
+        .into_iter()
+        .map(|(class, _)| class)
+        .collect())
+}
+
+/// Two inherent `impl Cart` blocks; the attribute slot sits on the first.
+/// `Cart::limit` changes on line 5 and `Cart::other` on line 9.
+fn two_impl_lib(first_impl_attr: &str) -> String {
+    format!(
+        "pub struct Cart;
+
+{first_impl_attr}
+impl Cart {{
+    pub fn limit(&self, x: u32) -> u32 {{ if x > 100 {{ 100 }} else {{ x }} }}
+}}
+
+impl Cart {{
+    pub fn other(&self, x: u32) -> u32 {{ if x > 50 {{ 50 }} else {{ x }} }}
+}}
+"
+    )
+}
+
+fn two_impl_diff() -> String {
+    "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,1 +5,1 @@
+-    pub fn limit(&self, x: u32) -> u32 { if x >= 100 { 100 } else { x } }
++    pub fn limit(&self, x: u32) -> u32 { if x > 100 { 100 } else { x } }
+@@ -9,1 +9,1 @@
+-    pub fn other(&self, x: u32) -> u32 { if x >= 50 { 50 } else { x } }
++    pub fn other(&self, x: u32) -> u32 { if x > 50 { 50 } else { x } }
+"
+    .to_string()
+}
+
+/// Asserts `line`'s findings are withheld under `owner_mutants_skip` with
+/// `scope`, keep their baseline classes, and none is reclassified.
+fn assert_line_withheld_in_scope(
+    report: &serde_json::Value,
+    line: u64,
+    baseline: &[String],
+    scope: &str,
+) -> Result<(), String> {
+    let rows = line_findings(report, line)?;
+    assert!(
+        !rows.is_empty(),
+        "premise: findings on line {line}: {report}"
+    );
+    assert!(
+        rows.iter()
+            .all(|(_, withheld)| withheld.as_deref() == Some(REASON)),
+        "line {line} must be withheld: {rows:?}"
+    );
+    let scopes = line_scopes(report, line)?;
+    assert!(
+        scopes.iter().all(|found| found.as_deref() == Some(scope)),
+        "line {line} must name the {scope} scope: {scopes:?}"
+    );
+    let mut classes = line_classes(report, line)?;
+    classes.sort();
+    let mut expected = baseline.to_vec();
+    expected.sort();
+    assert_eq!(classes, expected, "withholding must not change any class");
+    assert_eq!(report["owner_opt_outs"]["reason"].as_str(), Some(REASON));
+    Ok(())
+}
+
+/// Asserts `line`'s findings report as ordinary findings, unchanged from
+/// `baseline`.
+fn assert_line_reported(
+    report: &serde_json::Value,
+    line: u64,
+    baseline: &[(String, Option<String>)],
+) -> Result<(), String> {
+    let rows = line_findings(report, line)?;
+    assert!(
+        !rows.is_empty(),
+        "premise: findings on line {line}: {report}"
+    );
+    assert_eq!(rows, baseline, "line {line} must keep reporting");
+    assert!(
+        line_scopes(report, line)?.iter().all(Option::is_none),
+        "line {line} carries no withheld scope"
+    );
+    Ok(())
+}
+
+#[test]
+fn impl_level_mutants_skip_withholds_its_method_but_not_another_impl() -> Result<(), String> {
+    let plain = Repo::new(&two_impl_lib("//"), &two_impl_diff())?;
+    let plain_report = plain.report()?;
+    assert_reported(&plain_report, 5)?;
+    let limit_baseline = line_classes(&plain_report, 5)?;
+    let other_baseline = line_findings(&plain_report, 9)?;
+
+    let repo = Repo::new(&two_impl_lib("#[mutants::skip]"), &two_impl_diff())?;
+    let report = repo.report()?;
+    assert_line_withheld_in_scope(&report, 5, &limit_baseline, "impl")?;
+    assert_line_reported(&report, 9, &other_baseline)?;
+    assert_eq!(
+        report["owner_opt_outs"]["withheld"].as_u64(),
+        Some(limit_baseline.len() as u64),
+        "only the skipped impl's method is counted: {report}"
+    );
+    let summary = &report["summary"];
+    assert_eq!(
+        class_bucket_total(summary) + limit_baseline.len() as u64,
+        summary["findings"].as_u64().unwrap_or(0),
+        "{summary}"
+    );
+
+    let human = repo.human_full()?;
+    assert!(
+        human.contains(&format!("owner: limit, scope: impl Cart, reason: {REASON}")),
+        "human output must name the impl scope:\n{human}"
+    );
+    Ok(())
+}
+
+#[test]
+fn cfg_attr_impl_level_mutants_skip_withholds() -> Result<(), String> {
+    let plain = Repo::new(&two_impl_lib("//"), &two_impl_diff())?;
+    let limit_baseline = line_classes(&plain.report()?, 5)?;
+    let repo = Repo::new(
+        &two_impl_lib("#[cfg_attr(test, mutants::skip)]"),
+        &two_impl_diff(),
+    )?;
+    assert_line_withheld_in_scope(&repo.report()?, 5, &limit_baseline, "impl")
+}
+
+/// The raw-string trap on the enclosing scope: a `doc` raw string that spells
+/// `mutants::skip` between quote characters opts nothing out.
+#[test]
+fn raw_string_doc_on_impl_mentioning_mutants_skip_does_not_withhold() -> Result<(), String> {
+    let repo = Repo::new(
+        &two_impl_lib(r##"#[cfg_attr(test, doc = r#"mutants::skip"#)]"##),
+        &two_impl_diff(),
+    )?;
+    let report = repo.report()?;
+    assert_reported(&report, 5)?;
+    assert_reported(&report, 9)
+}
+
+/// `a::inner::limit` changes on line 5 and `b::limit` on line 12; the
+/// attribute slot sits on the outer module `a`, two levels above `limit`.
+fn two_module_lib(module_attr: &str) -> String {
+    format!(
+        "{module_attr}
+pub mod a {{
+    pub mod inner {{
+        pub fn limit(x: u32) -> u32 {{
+            if x > 100 {{ 100 }} else {{ x }}
+        }}
+    }}
+}}
+
+pub mod b {{
+    pub fn limit(x: u32) -> u32 {{
+        if x > 100 {{ 100 }} else {{ x }}
+    }}
+}}
+"
+    )
+}
+
+fn two_module_diff() -> String {
+    "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,1 +5,1 @@
+-            if x >= 100 { 100 } else { x }
++            if x > 100 { 100 } else { x }
+@@ -12,1 +12,1 @@
+-        if x >= 100 { 100 } else { x }
++        if x > 100 { 100 } else { x }
+"
+    .to_string()
+}
+
+#[test]
+fn module_level_mutants_skip_withholds_nested_fn_but_not_same_name_elsewhere() -> Result<(), String>
+{
+    let plain = Repo::new(&two_module_lib("//"), &two_module_diff())?;
+    let plain_report = plain.report()?;
+    assert_reported(&plain_report, 5)?;
+    let limit_baseline = line_classes(&plain_report, 5)?;
+    let other_baseline = line_findings(&plain_report, 12)?;
+
+    let repo = Repo::new(&two_module_lib("#[mutants::skip]"), &two_module_diff())?;
+    let report = repo.report()?;
+    assert_line_withheld_in_scope(&report, 5, &limit_baseline, "module")?;
+    assert_line_reported(&report, 12, &other_baseline)?;
+
+    let human = repo.human_full()?;
+    assert!(
+        human.contains(&format!("owner: limit, scope: module a, reason: {REASON}")),
+        "human output must name the module scope:\n{human}"
+    );
+    Ok(())
+}
+
+/// An inner `#![mutants::skip]` at the top of the file skips every item in
+/// it. The attribute slot is line 1 of `free_fn_lib`, so the diff is fixed.
+#[test]
+fn file_level_inner_mutants_skip_withholds() -> Result<(), String> {
+    let baseline = baseline_classes(3)?;
+    let repo = Repo::new(&free_fn_lib("#![mutants::skip]", "//"), &free_fn_diff())?;
+    assert_line_withheld_in_scope(&repo.report()?, 3, &baseline, "file")
+}
+
+/// The fn-level form names the `fn` scope.
+#[test]
+fn fn_level_mutants_skip_names_the_fn_scope() -> Result<(), String> {
+    let baseline = baseline_classes(3)?;
+    let repo = Repo::new(&free_fn_lib("#[mutants::skip]", "//"), &free_fn_diff())?;
+    assert_line_withheld_in_scope(&repo.report()?, 3, &baseline, "fn")
+}
+
+/// The first finding id on `line` of `report`.
+fn first_id_on_line(report: &serde_json::Value, line: u64) -> Result<String, String> {
+    findings(report)?
+        .iter()
+        .find(|finding| finding["probe"]["line"].as_u64() == Some(line))
+        .and_then(|finding| finding["id"].as_str())
+        .map(str::to_string)
+        .ok_or_else(|| format!("no finding on line {line}: {report}"))
+}
+
+/// `ripr explain` states the withholding for a withheld finding, from the
+/// same decision `check` made, and says nothing of it for an ordinary one.
+#[test]
+fn explain_states_owner_opt_out_withholding() -> Result<(), String> {
+    let repo = Repo::new(&two_impl_lib("#[mutants::skip]"), &two_impl_diff())?;
+    let report = repo.report()?;
+    let withheld_id = first_id_on_line(&report, 5)?;
+    let ordinary_id = first_id_on_line(&report, 9)?;
+    assert!(
+        line_findings(&report, 9)?.iter().all(|row| row.1.is_none()),
+        "premise: line 9 is ordinary"
+    );
+
+    let withheld = repo.explain(&withheld_id)?;
+    assert!(
+        withheld.starts_with(
+            "Withheld: owner `limit` is inside impl `Cart` marked #[mutants::skip] (owner_mutants_skip)"
+        ),
+        "explain must state the withholding:\n{withheld}"
+    );
+    let ordinary = repo.explain(&ordinary_id)?;
+    assert!(
+        !ordinary.contains("Withheld:"),
+        "an ordinary finding names no withholding:\n{ordinary}"
+    );
+
+    let fn_level = Repo::new(&free_fn_lib("#[mutants::skip]", "//"), &free_fn_diff())?;
+    let fn_id = first_id_on_line(&fn_level.report()?, 3)?;
+    let text = fn_level.explain(&fn_id)?;
+    assert!(
+        text.contains("Withheld: owner `limit` is marked #[mutants::skip] (owner_mutants_skip)"),
+        "explain must state the fn-level withholding:\n{text}"
+    );
+    Ok(())
+}
+
+/// A trait default method changes on line 4 and an ordinary free fn on line
+/// 7; the attribute slot sits on the trait.
+fn trait_lib(trait_attr: &str) -> String {
+    format!(
+        "{trait_attr}
+pub trait Limit {{
+    fn limit(&self, x: u32) -> u32 {{
+        if x > 100 {{ 100 }} else {{ x }}
+    }}
+}}
+pub fn cap(x: u32) -> u32 {{ if x > 100 {{ 100 }} else {{ x }} }}
+"
+    )
+}
+
+fn trait_diff() -> String {
+    "diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,1 +4,1 @@
+-        if x >= 100 { 100 } else { x }
++        if x > 100 { 100 } else { x }
+@@ -7,1 +7,1 @@
+-pub fn cap(x: u32) -> u32 { if x >= 100 { 100 } else { x } }
++pub fn cap(x: u32) -> u32 { if x > 100 { 100 } else { x } }
+"
+    .to_string()
+}
+
+/// cargo-mutants skips every method body of a `#[mutants::skip]` trait,
+/// including default methods; a free fn outside it keeps reporting.
+#[test]
+fn trait_level_mutants_skip_withholds_default_method_only() -> Result<(), String> {
+    let plain = Repo::new(&trait_lib("//"), &trait_diff())?;
+    let plain_report = plain.report()?;
+    assert_reported(&plain_report, 4)?;
+    let limit_baseline = line_classes(&plain_report, 4)?;
+    let cap_baseline = line_findings(&plain_report, 7)?;
+
+    let repo = Repo::new(&trait_lib("#[mutants::skip]"), &trait_diff())?;
+    let report = repo.report()?;
+    assert_line_withheld_in_scope(&report, 4, &limit_baseline, "trait")?;
+    assert_line_reported(&report, 7, &cap_baseline)
+}
+
+/// A fn declared inside a skipped fn's body is skipped with it (cargo-mutants
+/// does not descend into a skipped fn); `inner` changes on line 4.
+fn nested_fn_lib(outer_attr: &str) -> String {
+    format!(
+        "{outer_attr}
+pub fn outer(x: u32) -> u32 {{
+    fn inner(x: u32) -> u32 {{
+        if x > 100 {{ 100 }} else {{ x }}
+    }}
+    inner(x)
+}}
+"
+    )
+}
+
+fn nested_fn_diff() -> String {
+    one_line_diff(
+        4,
+        "        if x >= 100 { 100 } else { x }",
+        "        if x > 100 { 100 } else { x }",
+    )
+}
+
+#[test]
+fn fn_nested_in_a_skipped_fn_is_withheld() -> Result<(), String> {
+    let plain = Repo::new(&nested_fn_lib("//"), &nested_fn_diff())?;
+    let plain_report = plain.report()?;
+    assert_reported(&plain_report, 4)?;
+    let baseline = line_classes(&plain_report, 4)?;
+
+    let repo = Repo::new(&nested_fn_lib("#[mutants::skip]"), &nested_fn_diff())?;
+    assert_line_withheld_in_scope(&repo.report()?, 4, &baseline, "fn")
+}
+
+#[test]
+fn agent_and_replay_explain_the_recorded_owner_opt_out() -> Result<(), String> {
+    let repo = Repo::new(&two_impl_lib("#[mutants::skip]"), &two_impl_diff())?;
+    let path = repo.base.join("check.json");
+    let artifact = path.to_str().ok_or("non-UTF8 artifact path")?;
+    let report: serde_json::Value =
+        serde_json::from_str(&repo.run(&["--json", "--write-artifact", artifact])?)
+            .map_err(|err| err.to_string())?;
+    let held = first_id_on_line(&report, 5)?;
+    let ordinary = first_id_on_line(&report, 9)?;
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).map_err(|err| err.to_string())?)
+            .map_err(|err| err.to_string())?;
+    let saved = record["owner_opt_outs"]
+        .as_array()
+        .and_then(|entries| entries.iter().find(|entry| entry["finding_id"] == held))
+        .ok_or("artifact must retain the selected finding's decision")?;
+    assert_eq!(saved["reason"], REASON);
+    assert_eq!(saved["owner"], "limit");
+    assert_eq!(saved["scope"], "impl");
+    assert_eq!(saved["scope_label"], "Cart");
+
+    let fresh_agent = repo.ripr("explain", &[&held, "--format", "agent"])?;
+    let ordinary_agent = repo.ripr("explain", &[&ordinary, "--format", "agent"])?;
+    // The supplied diff is identical, but the current attribute now only
+    // quotes the spelling. Replay must use the recorded decision.
+    write(
+        &repo.root.join("src/lib.rs"),
+        &two_impl_lib("#[doc = \"mutants::skip\"]"),
+    )?;
+    let replay_agent = repo.ripr("explain", &[&held, "--format", "agent", "--from", artifact])?;
+    for text in [&fresh_agent, &replay_agent] {
+        assert!(
+            text.lines()
+                .any(|line| line
+                    == "stop=owner_mutants_skip|owner=limit|scope=impl|scope_label=Cart"),
+            "{text}"
+        );
+        assert!(
+            !text
+                .lines()
+                .any(|line| line.starts_with("open=") || line.starts_with("done=")),
+            "{text}"
+        );
+        assert!(
+            text.contains("|missing=-|test=-|") && !text.contains("co-located test"),
+            "{text}"
+        );
+    }
+    let human = repo.ripr("explain", &[&held, "--from", artifact])?;
+    assert_eq!(
+        human.trim(),
+        "Withheld: owner `limit` is inside impl `Cart` marked #[mutants::skip] (owner_mutants_skip)"
+    );
+    let trap = repo.ripr("explain", &[&held, "--format", "agent"])?;
+    assert!(!trap.contains(REASON));
+    let ordinary_replay = repo.ripr(
+        "explain",
+        &[&ordinary, "--format", "agent", "--from", artifact],
+    )?;
+    for text in [&ordinary_agent, &ordinary_replay, &trap] {
+        assert!(!text.contains("stop=owner_mutants_skip"), "{text}");
+        assert!(
+            text.contains("co-located test") || text.lines().any(|line| line.starts_with("open=")),
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
+/// The single `next=` command an agent explanation prints.
+fn printed_next(text: &str) -> Result<String, String> {
+    let commands: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("next="))
+        .collect();
+    match commands.as_slice() {
+        [command] => Ok((*command).to_string()),
+        _ => Err(format!("expected exactly one next= command: {text}")),
+    }
+}
+
+/// Split a printed command into argv without a shell, inverting the two
+/// quoting forms `shell_arg` prints: POSIX single quotes (with backslash
+/// escapes outside them) and the Windows console form (`"..."`, interior
+/// `""` for `"`, the trailing backslash run doubled before the closing
+/// quote). Anything a shell would expand (`$`, a backtick, a glob or an
+/// operator) is refused rather than guessed.
+fn printed_argv(command: &str) -> Result<Vec<String>, String> {
+    let mut argv = Vec::new();
+    let mut word: Option<String> = None;
+    let mut chars = command.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            ' ' => {
+                if let Some(done) = word.take() {
+                    argv.push(done);
+                }
+            }
+            '\'' => {
+                let current = word.get_or_insert_with(String::new);
+                loop {
+                    match chars.next() {
+                        Some('\'') => break,
+                        Some(quoted) => current.push(quoted),
+                        None => return Err(format!("unterminated quote: {command}")),
+                    }
+                }
+            }
+            '"' => {
+                let current = word.get_or_insert_with(String::new);
+                let mut quoted = String::new();
+                loop {
+                    match chars.next() {
+                        Some('"') if chars.clone().next() == Some('"') => {
+                            chars.next();
+                            quoted.push('"');
+                        }
+                        Some('"') => break,
+                        Some('$' | '`') => {
+                            return Err(format!("printed command needs a shell: {command}"));
+                        }
+                        Some(inner) => quoted.push(inner),
+                        None => return Err(format!("unterminated quote: {command}")),
+                    }
+                }
+                let run = quoted.chars().rev().take_while(|ch| *ch == '\\').count();
+                if run % 2 != 0 {
+                    return Err(format!("odd trailing backslash run: {command}"));
+                }
+                quoted.truncate(quoted.len() - run / 2);
+                current.push_str(&quoted);
+            }
+            '\\' => {
+                let escaped = chars
+                    .next()
+                    .ok_or_else(|| format!("trailing backslash: {command}"))?;
+                word.get_or_insert_with(String::new).push(escaped);
+            }
+            '$' | '`' | '*' | '?' | '[' | ';' | '&' | '|' | '<' | '>' => {
+                return Err(format!("printed command needs a shell: {command}"));
+            }
+            other => word.get_or_insert_with(String::new).push(other),
+        }
+    }
+    if let Some(done) = word {
+        argv.push(done);
+    }
+    Ok(argv)
+}
+
+impl Repo {
+    /// Run the literal printed `ripr ...` command against the tested binary
+    /// from a directory outside the fixture root, and parse its JSON packet.
+    fn follow_context(&self, printed: &str) -> Result<(String, serde_json::Value), String> {
+        let argv = printed_argv(printed)?;
+        let (program, args) = argv
+            .split_first()
+            .ok_or_else(|| format!("empty printed command: {printed}"))?;
+        if program != "ripr" || args.first().map(String::as_str) != Some("context") {
+            return Err(format!("next= must be a ripr context command: {printed}"));
+        }
+        let foreign = self.base.join("elsewhere");
+        fs::create_dir_all(&foreign).map_err(|e| e.to_string())?;
+        let output = ripr_binary()
+            .args(args)
+            .current_dir(&foreign)
+            .env("RIPR_CACHE_DIR", self.base.join("cache"))
+            .output()
+            .map_err(|e| format!("run {printed}: {e}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{printed} failed: {}\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let text = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
+        let packet =
+            serde_json::from_str(&text).map_err(|e| format!("context is not JSON: {e}: {text}"))?;
+        Ok((text, packet))
+    }
+}
+
+fn packet_stops_for_owner(packet: &serde_json::Value) -> bool {
+    packet["stop_reasons"]
+        .as_array()
+        .is_some_and(|reasons| reasons.iter().any(|reason| reason == REASON))
+}
+
+/// #14133: an agent that follows the `next=` pointer of a withheld finding's
+/// explanation reaches a context packet that keeps the probe and evidence,
+/// states the `owner_mutants_skip` stop and offers no next step, on the fresh
+/// route and on artifact replay after the attribute is gone from the source.
+/// The ordinary sibling's packet is unchanged, and fresh analysis after the
+/// edit is actionable again.
+#[test]
+fn context_followed_from_explain_keeps_the_owner_opt_out_stop() -> Result<(), String> {
+    let repo = Repo::new(&two_impl_lib("#[mutants::skip]"), &two_impl_diff())?;
+    let path = repo.base.join("check.json");
+    let artifact = path.to_str().ok_or("non-UTF8 artifact path")?;
+    let report: serde_json::Value =
+        serde_json::from_str(&repo.run(&["--json", "--write-artifact", artifact])?)
+            .map_err(|err| err.to_string())?;
+    let held = first_id_on_line(&report, 5)?;
+    let ordinary = first_id_on_line(&report, 9)?;
+
+    let fresh_held = printed_next(&repo.ripr("explain", &[&held, "--format", "agent"])?)?;
+    // The ordinary gap's explanation omits `next=` (the packet adds nothing
+    // its record lacks), so the control takes the same route with its id.
+    assert_eq!(fresh_held.matches(held.as_str()).count(), 1, "{fresh_held}");
+    let fresh_ordinary = fresh_held.replace(held.as_str(), &ordinary);
+    let (_, held_packet) = repo.follow_context(&fresh_held)?;
+    let (ordinary_text, ordinary_packet) = repo.follow_context(&fresh_ordinary)?;
+
+    // The attribute now only quotes the spelling: fresh analysis no longer
+    // withholds, while replay must keep the recorded decision.
+    write(
+        &repo.root.join("src/lib.rs"),
+        &two_impl_lib("#[doc = \"mutants::skip\"]"),
+    )?;
+    let replay_held =
+        printed_next(&repo.ripr("explain", &[&held, "--format", "agent", "--from", artifact])?)?;
+    assert!(replay_held.contains("--from "), "{replay_held}");
+    let (_, replay_packet) = repo.follow_context(&replay_held)?;
+
+    for packet in [&held_packet, &replay_packet] {
+        assert_eq!(packet["probe"]["id"], held.as_str(), "{packet}");
+        assert!(packet_stops_for_owner(packet), "{packet}");
+        assert_eq!(packet["recommended_next_step"], "", "{packet}");
+        assert!(
+            packet["ripr"]["reach"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
+            "evidence stays visible: {packet}"
+        );
+    }
+
+    let (_, edited_held) = repo.follow_context(&fresh_held)?;
+    assert!(!packet_stops_for_owner(&edited_held), "{edited_held}");
+    assert!(
+        edited_held["recommended_next_step"]
+            .as_str()
+            .is_some_and(|step| !step.is_empty()),
+        "{edited_held}"
+    );
+
+    assert!(
+        !packet_stops_for_owner(&ordinary_packet),
+        "{ordinary_packet}"
+    );
+    assert!(
+        ordinary_packet["recommended_next_step"]
+            .as_str()
+            .is_some_and(|step| !step.is_empty()),
+        "{ordinary_packet}"
+    );
+    let (edited_ordinary_text, _) = repo.follow_context(&fresh_ordinary)?;
+    assert_eq!(ordinary_text, edited_ordinary_text);
+    Ok(())
+}
+
+/// The splitter inverts both `shell_arg` forms on any host, so the context
+/// journey above runs the literal printed command on Windows too.
+#[test]
+fn printed_argv_inverts_both_quoting_forms() -> Result<(), String> {
+    assert_eq!(
+        printed_argv(r#"ripr context id --root 'a b' --diff 'it'\''s'"#)?,
+        ["ripr", "context", "id", "--root", "a b", "--diff", "it's"]
+    );
+    assert_eq!(
+        printed_argv(r#"ripr context id --root "tmp\fx" --from "x\a b\\" --x "q""t""#)?,
+        [
+            "ripr", "context", "id", "--root", r"tmp\fx", "--from", r"x\a b\", "--x", "q\"t"
+        ]
+    );
+    for refused in [
+        r#"ripr context "$(printf '\001')""#,
+        "ripr context $HOME",
+        "ripr context a; rm",
+        "ripr context 'open",
+    ] {
+        assert!(printed_argv(refused).is_err(), "{refused}");
+    }
     Ok(())
 }

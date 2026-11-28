@@ -64,6 +64,49 @@ impl Lit {
     }
 }
 
+/// The final throw of a function that first returns its nonzero argument.
+/// The throw runs only when the early return is *not* taken. Its caller
+/// checks that the isolated diff changed just the thrown Error message.
+pub(crate) fn isolated_throw_after_return(
+    source: &str,
+    start_line: usize,
+    line: usize,
+    changed: &str,
+    name: &str,
+    params: &[String],
+) -> Option<GuardCondition> {
+    let [param] = params else { return None };
+    // The evaluator reads `undefined` as a literal before looking up bindings.
+    if param == "undefined" || line.checked_sub(start_line) != Some(2) {
+        return None;
+    }
+    let mut lines = source.lines().map(str::trim);
+    let header = lines.next()?;
+    let header = header.strip_prefix("export ").unwrap_or(header);
+    let signature = format!("function {name}({param}: number)");
+    let tail = header.strip_prefix(&signature)?.trim();
+    if !matches!(tail, "{" | ": number {") {
+        return None;
+    }
+    let guard = lines.next()?.strip_prefix("if")?.trim_start();
+    let (condition, statement) = guard.strip_prefix('(')?.split_once(')')?;
+    let (left, right) = condition.split_once("!==")?;
+    if left.trim() != param
+        || right.trim() != "0"
+        || statement.trim() != format!("return {param};")
+        || lines.next()? != changed.trim()
+        || !changed.trim_start().starts_with("throw new Error(")
+        || lines.next()? != "}"
+        || lines.next().is_some()
+    {
+        return None;
+    }
+    Some(GuardCondition {
+        text: condition.trim().to_owned(),
+        want: false,
+    })
+}
+
 /// The `if` / `else if` / `else` conditions enclosing the changed line, from
 /// the owner's own source, or `None` when the line is not exactly located or
 /// sits under no readable conditional arm.
@@ -1224,6 +1267,44 @@ fn has_top_level_comparison(text: &str) -> bool {
     false
 }
 
+/// How many word-bounded `name` references the masked test text holds.
+/// The call reader parses the raw text, so a call it cannot read (a comment
+/// between the name and `(`) or one it reads inside a literal makes the two
+/// counts differ, and the guard then keeps the ladder verdict (#16435 review).
+pub(crate) fn owner_reference_count(masked: &str, name: &str) -> usize {
+    if name.is_empty() {
+        return 0;
+    }
+    masked
+        .match_indices(name)
+        .filter(|(at, _)| {
+            !masked[..*at]
+                .chars()
+                .next_back()
+                .is_some_and(is_identifier_char)
+                && !masked[at + name.len()..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_identifier_char)
+        })
+        .count()
+}
+
+/// The registration text with its leading registration root spelled `test`
+/// (#16435). Extraction already proved that root is a known runner
+/// registration, so a renamed root (`import { test as t } from 'vitest'`) is
+/// read like the `test` it binds. Only the outer callee is rewritten: a
+/// nested call through the alias is still an unknown call.
+pub(crate) fn registration_root_as_test(registration: &str) -> String {
+    let end = registration
+        .find(|c: char| !is_identifier_char(c))
+        .unwrap_or(registration.len());
+    if end == 0 {
+        return registration.to_string();
+    }
+    format!("test{}", &registration[end..])
+}
+
 /// Whether every call-shaped identifier in the (masked) test text is one of
 /// `allowed`, and every member call hangs off an owner namespace receiver,
 /// a test-framework object, or an already-checked call result. Any other
@@ -2005,6 +2086,36 @@ mod tests {
             &allowed,
             &ns
         ));
+    }
+
+    #[test]
+    fn owner_references_count_only_code_words() {
+        let masked = ts_mask_literals_and_comments(
+            "expect(price(2)).toBe(20); price /* c */ (3); priced(1); \"price(9)\";",
+        );
+        assert_eq!(owner_reference_count(&masked, "price"), 2);
+        assert_eq!(owner_reference_count(&masked, ""), 0);
+    }
+
+    #[test]
+    fn only_the_outer_registration_root_reads_as_test() {
+        let allowed = ["price", "expect", "test"];
+        let ns: Vec<String> = Vec::new();
+        for (registration, readable) in [
+            ("t('p', () => { expect(price(2)).toBe(20); });", true),
+            ("t.only('p', () => { expect(price(2)).toBe(20); });", true),
+            ("t('p', () => { t('inner', () => {}); });", false),
+            ("t('p', () => { helper(2); });", false),
+        ] {
+            let rewritten = registration_root_as_test(registration);
+            assert!(rewritten.starts_with("test"), "{rewritten}");
+            assert_eq!(
+                calls_only_allowed(&rewritten, &allowed, &ns),
+                readable,
+                "{registration}"
+            );
+        }
+        assert_eq!(registration_root_as_test("(x)"), "(x)");
     }
 
     #[test]

@@ -54,8 +54,15 @@ pub struct SuppressionEntry {
     pub finding_id: Option<String>,
     /// Required when `kind == TestEfficiency`.
     pub test: Option<String>,
-    /// Optional path narrowing for `test_efficiency` selectors.
+    /// Optional path narrowing for `test_efficiency` selectors. For
+    /// `exposure_gap` it is a root-relative path glob, or the exact
+    /// root-relative file when `function` is set.
     pub path: Option<String>,
+    /// Owner-scoped `exposure_gap` selector (#13895): the owning function's
+    /// name exactly as the finding's owner symbol carries it after the file
+    /// (`retry_allowed`, `impl Retry::allowed`, `inner_mod::helper`). Requires
+    /// `path`. Survives expression edits because it ignores `finding_id`.
+    pub function: Option<String>,
     pub reason: String,
     pub owner: String,
     /// ISO-8601 `YYYY-MM-DD` date string, validated at parse time.
@@ -106,6 +113,7 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
     let mut violations = Vec::new();
     let mut schema_line = None;
     let mut current: Option<PendingSuppression> = None;
+    let mut in_unknown_table = false;
 
     for (index, line) in text.lines().enumerate() {
         let line_number = index + 1;
@@ -113,11 +121,24 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
         if trimmed.is_empty() || trimmed.starts_with('#') {
             continue;
         }
-        if trimmed == "[[suppressions]]" {
+        if trimmed.starts_with('[') {
             if let Some(pending) = current.take() {
                 finalize_suppression(pending, &mut entries, &mut violations);
             }
-            current = Some(PendingSuppression::new(line_number));
+            if is_suppressions_entry_header(trimmed) {
+                in_unknown_table = false;
+                current = Some(PendingSuppression::new(line_number));
+            } else {
+                // The header already fails the load. Its keys are not
+                // top-level (TOML scopes them to that table), so reporting
+                // each one as an unsupported top-level field would bury the
+                // one real mistake under a cascade (#15252).
+                in_unknown_table = true;
+                violations.push(format!(
+                    "{SUPPRESSIONS_PATH}:{line_number} unsupported table header `{trimmed}`; each entry starts with `[[suppressions]]`{}",
+                    entry_header_hint(trimmed)
+                ));
+            }
             continue;
         }
         let Some((key, raw)) = trimmed.split_once('=') else {
@@ -126,6 +147,9 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
             ));
             continue;
         };
+        if in_unknown_table {
+            continue;
+        }
         let key = key.trim();
         let raw = raw.trim();
         if let Some(pending) = current.as_mut() {
@@ -148,6 +172,9 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
                 }),
                 "path" => assign_field(raw, line_number, &mut violations, |parsed| {
                     pending.path = Some((parsed, line_number));
+                }),
+                "function" => assign_field(raw, line_number, &mut violations, |parsed| {
+                    pending.function = Some((parsed, line_number));
                 }),
                 "reason" => assign_field(raw, line_number, &mut violations, |parsed| {
                     pending.reason = Some((parsed, line_number));
@@ -185,7 +212,8 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
                     pending.language_status = Some((parsed, line_number));
                 }),
                 _ => violations.push(format!(
-                    "{SUPPRESSIONS_PATH}:{line_number} unsupported `[[suppressions]]` field `{key}`"
+                    "{SUPPRESSIONS_PATH}:{line_number} unsupported `[[suppressions]]` field `{key}`{}",
+                    spelling_hint(key, ENTRY_FIELDS)
                 )),
             }
         } else if key == "schema_version" {
@@ -207,7 +235,8 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
             }
         } else {
             violations.push(format!(
-                "{SUPPRESSIONS_PATH}:{line_number} unsupported top-level field `{key}`"
+                "{SUPPRESSIONS_PATH}:{line_number} unsupported top-level field `{key}`{}",
+                top_level_field_hint(key)
             ));
         }
     }
@@ -225,9 +254,19 @@ pub fn parse_suppressions_manifest(text: &str) -> (Vec<SuppressionEntry>, Vec<St
     let mut seen_exposure: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut seen_te: std::collections::BTreeSet<(String, Option<String>)> =
         std::collections::BTreeSet::new();
+    let mut seen_function: std::collections::BTreeSet<(String, String)> =
+        std::collections::BTreeSet::new();
     for entry in &entries {
         match entry.kind {
             SuppressionKind::ExposureGap => {
+                if let (Some(path), Some(function)) = (&entry.path, &entry.function)
+                    && !seen_function.insert((path.clone(), function.clone()))
+                {
+                    violations.push(format!(
+                        "{SUPPRESSIONS_PATH} duplicate selector function `{function}` at `{path}` (declared near line {})",
+                        entry.block_line
+                    ));
+                }
                 if let Some(id) = &entry.finding_id
                     && !seen_exposure.insert(id.clone())
                 {
@@ -267,6 +306,7 @@ struct PendingSuppression {
     finding_id: Option<(String, usize)>,
     test: Option<(String, usize)>,
     path: Option<(String, usize)>,
+    function: Option<(String, usize)>,
     reason: Option<(String, usize)>,
     owner: Option<(String, usize)>,
     expires: Option<(String, usize)>,
@@ -289,6 +329,7 @@ impl PendingSuppression {
             finding_id: None,
             test: None,
             path: None,
+            function: None,
             reason: None,
             owner: None,
             expires: None,
@@ -301,6 +342,78 @@ impl PendingSuppression {
             language: None,
             language_status: None,
         }
+    }
+}
+
+/// Every field a `[[suppressions]]` entry accepts, for near-miss hints only.
+/// The parser's match arms above are the authority; a test checks that each
+/// name listed here is accepted (an omitted one only loses its hint).
+const ENTRY_FIELDS: &[&str] = &[
+    "kind",
+    "finding_id",
+    "test",
+    "path",
+    "function",
+    "reason",
+    "owner",
+    "expires",
+    "scope",
+    "created_at",
+    "last_seen",
+    "review_by",
+    "expected_visibility",
+    "static_class",
+    "language",
+    "language_status",
+];
+
+/// `[[suppressions]]`, also with TOML's optional inner spaces
+/// (`[[ suppressions ]]`) or a trailing comment.
+fn is_suppressions_entry_header(trimmed: &str) -> bool {
+    table_header_parts(trimmed)
+        .is_some_and(|(array, name, rest)| array && name == "suppressions" && is_comment_tail(rest))
+}
+
+/// `(is_array_header, table_name, text_after_the_closing_brackets)`.
+fn table_header_parts(trimmed: &str) -> Option<(bool, &str, &str)> {
+    if let Some(inner) = trimmed.strip_prefix("[[") {
+        let (name, rest) = inner.split_once("]]")?;
+        return Some((true, name.trim(), rest.trim()));
+    }
+    let inner = trimmed.strip_prefix('[')?;
+    let (name, rest) = inner.split_once(']')?;
+    Some((false, name.trim(), rest.trim()))
+}
+
+fn is_comment_tail(rest: &str) -> bool {
+    rest.is_empty() || rest.starts_with('#')
+}
+
+/// Names the one valid header when the rejected one is a near miss of it:
+/// a single-bracket `[suppressions]`, or a misspelled table name.
+fn entry_header_hint(trimmed: &str) -> &'static str {
+    let near = table_header_parts(trimmed)
+        .is_some_and(|(_, name, _)| crate::config::did_you_mean(name, &["suppressions"]).is_some());
+    if near {
+        " (did you mean `[[suppressions]]`?)"
+    } else {
+        ""
+    }
+}
+
+fn spelling_hint(value: &str, candidates: &[&str]) -> String {
+    crate::config::did_you_mean(value, candidates)
+        .map(|nearest| format!(" (did you mean `{nearest}`?)"))
+        .unwrap_or_default()
+}
+
+/// An entry field written before any `[[suppressions]]` header is a missing
+/// header, not a misspelling.
+fn top_level_field_hint(key: &str) -> String {
+    if ENTRY_FIELDS.contains(&key) {
+        "; it belongs inside a `[[suppressions]]` entry".to_string()
+    } else {
+        spelling_hint(key, &["schema_version"])
     }
 }
 
@@ -336,8 +449,9 @@ fn finalize_suppression(
             Some(kind) => Some(kind),
             None => {
                 violations.push(format!(
-                    "{SUPPRESSIONS_PATH}:{line} unsupported kind `{value}`; supported: {}",
-                    SuppressionKind::supported().join(", ")
+                    "{SUPPRESSIONS_PATH}:{line} unsupported kind `{value}`; supported: {}{}",
+                    SuppressionKind::supported().join(", "),
+                    spelling_hint(&value, SuppressionKind::supported())
                 ));
                 None
             }
@@ -417,6 +531,7 @@ fn finalize_suppression(
 
     let finding_id = non_blank_selector("finding_id", pending.finding_id, violations);
     let test = non_blank_selector("test", pending.test, violations);
+    let function = non_blank_selector("function", pending.function, violations);
     let static_class = pending.static_class;
 
     if let Some(kind) = kind {
@@ -424,9 +539,48 @@ fn finalize_suppression(
             SuppressionKind::ExposureGap => {
                 if finding_id.is_none() && path.is_none() {
                     violations.push(format!(
-                        "{SUPPRESSIONS_PATH}:{block_line} `kind = \"exposure_gap\"` requires `finding_id` or a `path` glob"
+                        "{SUPPRESSIONS_PATH}:{block_line} `kind = \"exposure_gap\"` requires `finding_id`, a `path` glob, or `path` + `function`"
                     ));
                     return;
+                }
+                if let Some(function) = &function {
+                    let Some(path) = &path else {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` requires `path` (the exact root-relative file that declares it)"
+                        ));
+                        return;
+                    };
+                    if finding_id.is_some() {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` cannot be combined with `finding_id`; use `finding_id` alone, or `path` + `function`"
+                        ));
+                        return;
+                    }
+                    if path.contains(['*', '?', '[']) {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` selects by exact file, so `path` `{path}` must not be a glob"
+                        ));
+                        return;
+                    }
+                    // The owner match is an exact compare against the
+                    // normalized root-relative path, so a `./` or `..`
+                    // segment would silently match nothing.
+                    if path.starts_with("./")
+                        || path
+                            .split('/')
+                            .any(|segment| segment == "." || segment == "..")
+                    {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` selects by exact file, so `path` `{path}` must be a plain root-relative path without `.` or `..` segments, for example `src/retry.rs`. See the finding's `canonical_gap.file` in `ripr check --format json` and use the literal repository-relative filename if escaped. A filename containing a literal backslash cannot use `path` + `function`, even on Unix. To suppress the finding, use its current `finding_id`."
+                        ));
+                        return;
+                    }
+                    if is_ambiguous_owner_function(function) {
+                        violations.push(format!(
+                            "{SUPPRESSIONS_PATH}:{block_line} `function` `{function}` names a line-disambiguated duplicate owner; rename or merge the duplicate functions so the owner is unambiguous"
+                        ));
+                        return;
+                    }
                 }
                 if test.is_some() {
                     violations.push(format!(
@@ -455,6 +609,12 @@ fn finalize_suppression(
                     ));
                     return;
                 }
+                if function.is_some() {
+                    violations.push(format!(
+                        "{SUPPRESSIONS_PATH}:{block_line} `kind = \"test_efficiency\"` does not accept `function`"
+                    ));
+                    return;
+                }
                 if finding_id.is_some() {
                     violations.push(format!(
                         "{SUPPRESSIONS_PATH}:{block_line} `kind = \"test_efficiency\"` does not accept `finding_id`"
@@ -469,6 +629,7 @@ fn finalize_suppression(
                 finding_id,
                 test,
                 path,
+                function,
                 reason,
                 owner,
                 expires,
@@ -549,28 +710,46 @@ pub fn is_iso_date(value: &str) -> bool {
     (1..=12).contains(&m) && (1..=31).contains(&d)
 }
 
+/// Read a root-relative suppressions manifest that the checkout itself
+/// controls, shared by every loader of it (`check`, `config validate`,
+/// `policy suppression-health`). `Ok(None)` when nothing is there.
+///
+/// A link inside the checkout can point anywhere, and the parser echoes the
+/// keys of whatever it reads, so the manifest goes through the root-contained
+/// reader: a manifest that resolves outside the root (through the file or any
+/// parent directory) is refused before reading, naming only the configured
+/// path, and a FIFO cannot block the run (#15546).
+pub(crate) fn read_root_manifest(
+    root: &Path,
+    relative_path: &Path,
+) -> Result<Option<String>, String> {
+    crate::bounded_input::read_root_metadata_toml(root, relative_path, "suppressions manifest")
+}
+
 /// Loads suppressions relative to the analyzed workspace root. Returns
 /// an empty list when the file does not exist (the normal case for
 /// projects with no accepted debt). Parse violations are returned via
 /// `Err` so the orchestrator can surface them through the existing
 /// badge-rendering error path.
+///
+/// Production reads the repository-controlled policy through the confined
+/// wrapper in `suppressions_confined.rs`; this unconfined form is kept for
+/// the unix audit control that pins `read_root_manifest`'s refusal messages.
+#[cfg(all(test, unix))]
 pub fn load_suppressions_for_root_at(
     root: &Path,
     relative_path: &Path,
 ) -> Result<Vec<SuppressionEntry>, Vec<String>> {
-    let path = root.join(relative_path);
-    if !path.exists() {
+    let Some(text) = read_root_manifest(root, relative_path).map_err(|err| vec![err])? else {
         return Ok(Vec::new());
-    }
-    let text = std::fs::read_to_string(&path)
-        .map_err(|err| vec![format!("failed to read {}: {err}", path.display())])?;
+    };
     let (entries, violations) = parse_suppressions_manifest(&text);
     if violations.is_empty() {
         Ok(entries)
     } else {
         // Config may select another root-relative file. Rename only the
         // parser's location prefix, preserving values and declaration lines.
-        let display = relative_path.display().to_string();
+        let display = crate::output::path::human_path(relative_path);
         Err(violations
             .into_iter()
             .map(|violation| violation.replacen(SUPPRESSIONS_PATH, &display, 1))
@@ -639,13 +818,25 @@ pub struct SuppressionApplication {
 /// Root-relative `/`-separated finding path for suppression matching.
 /// Finding locations may be emitted root-joined (for example, `./src/lib.rs`
 /// for `--root .`); policy globs are written root-relative (`src/**`).
+/// Only the platform's own separator becomes `/` (#16271): on Unix a `\` is
+/// an ordinary filename character, so a file named `a\b.rs` must not match a
+/// `src/a/**` glob, matching the distinct URI SARIF publishes for it.
 pub(crate) fn root_relative_finding_path(root: &Path, file: &Path) -> String {
     let relative = file.strip_prefix(root).unwrap_or(file);
-    let display = relative.display().to_string();
-    display
-        .trim_start_matches("./")
-        .replace('\\', "/")
-        .to_string()
+    native_separators_to_slash(&relative.display().to_string(), std::path::MAIN_SEPARATOR)
+}
+
+/// `display` with `separator` rewritten to `/` (a no-op where the separator
+/// already is `/`), then any leading `./` dropped, so a Windows `.\src\x.rs`
+/// and a Unix `./src/x.rs` both become `src/x.rs`. Split out so both
+/// platforms' rules are testable anywhere.
+fn native_separators_to_slash(display: &str, separator: char) -> String {
+    let slashed = if separator == '/' {
+        display.to_string()
+    } else {
+        display.replace(separator, "/")
+    };
+    slashed.trim_start_matches("./").to_string()
 }
 
 /// Applies exact-ID exposure-gap suppressions against a slice of finding ids
@@ -753,6 +944,16 @@ pub struct CheckSuppressionCandidate {
     pub finding_id: String,
     pub path: String,
     pub class: String,
+    /// The owning function as the owner symbol carries it after the file
+    /// path (`retry_allowed`, `impl Retry::allowed`), for `function`
+    /// selectors (#13895). `None` when the owner is missing, does not start
+    /// with this finding's own file, or is a line-disambiguated duplicate:
+    /// an unknown or ambiguous owner never matches.
+    pub owner_function: Option<String>,
+    /// Other `finding_id` spellings that name this same candidate. Empty for
+    /// check findings; review-comments seams carry the policy ids that
+    /// uniquely name them (see [`CheckSuppressionCandidate::for_seams`]).
+    pub finding_aliases: Vec<String>,
     /// The id ripr 0.10 gave this finding, when it differs (#4736). Only
     /// names the replacement in a stale-selector warning; never matched.
     pub legacy_finding_id: Option<String>,
@@ -803,11 +1004,153 @@ impl CheckSuppressionCandidate {
                     finding_id: finding.id.clone(),
                     path: root_relative_finding_path(root, file),
                     class: finding.class.as_str().to_string(),
+                    owner_function: owner_function_of(
+                        &root_relative_finding_path(root, file),
+                        file,
+                        finding.probe.owner.as_ref().map(|owner| owner.0.as_str()),
+                    ),
                     legacy_finding_id,
+                    finding_aliases: Vec::new(),
                 }
             })
             .collect()
     }
+
+    /// One finding's candidate for matching alone: no 0.10 id, which only
+    /// names a replacement in an unmatched-selector warning. SARIF uses it
+    /// to mark a result (#15377).
+    pub(crate) fn for_finding(root: &Path, finding: &crate::domain::Finding) -> Self {
+        let file = finding.probe.location.file.as_path();
+        let path = root_relative_finding_path(root, file);
+        Self {
+            finding_id: finding.id.clone(),
+            owner_function: owner_function_of(
+                &path,
+                file,
+                finding.probe.owner.as_ref().map(|owner| owner.0.as_str()),
+            ),
+            path,
+            class: finding.class.as_str().to_string(),
+            legacy_finding_id: None,
+            finding_aliases: Vec::new(),
+        }
+    }
+
+    /// Builds matcher candidates for diff-scoped review-comments seams
+    /// (#13895), so `review-comments --suppression-policy` shares this
+    /// matcher with `ripr check`.
+    ///
+    /// A seam's `finding_id` is its own seam id. A `finding_id` selector
+    /// names a seam through the producer-id joins the repair paths use
+    /// (`producer_gap_id_names_seam`, and the bare `probe:` id re-mint); it applies only when it names exactly
+    /// one seam in `seams` and no other seam of the whole diff-scoped
+    /// inventory (`shared_ids`, `None` when that inventory is unavailable),
+    /// otherwise it is reported and not applied (fail
+    /// closed). `path` and `function` selectors match the seam's file and
+    /// owner symbol. `static_class` narrowing never matches a seam: seam grip
+    /// classes are a different vocabulary than the exposure class it names.
+    pub(crate) fn for_seams(
+        root: &Path,
+        seams: &[&crate::analysis::ClassifiedSeam],
+        entries: &[SuppressionEntry],
+        shared_ids: Option<&std::collections::BTreeSet<String>>,
+    ) -> (Vec<Self>, Vec<String>) {
+        let mut aliases: Vec<Vec<String>> = vec![Vec::new(); seams.len()];
+        let mut warnings = Vec::new();
+        let ids: std::collections::BTreeSet<&str> = entries
+            .iter()
+            .filter(|entry| entry.kind == SuppressionKind::ExposureGap)
+            .filter_map(|entry| entry.finding_id.as_deref())
+            .collect();
+        for id in ids {
+            if crate::analysis::canonical_gap::probe_id_carries_ordinal(id) {
+                warnings.push(format!(
+                    "exposure_gap suppression for `{id}` carries a collision ordinal, which cannot be bound to one review seam, so it was not applied; select the owner with `path` + `function` instead"
+                ));
+                continue;
+            }
+            let named: Vec<usize> = seams
+                .iter()
+                .enumerate()
+                .filter(|(_, seam)| {
+                    crate::analysis::canonical_gap::producer_gap_id_names_seam(id, seam)
+                        || crate::analysis::canonical_gap::bare_probe_id_names_seam(id, seam)
+                })
+                .map(|(index, _)| index)
+                .collect();
+            match named.as_slice() {
+                [] => {}
+                [_] if shared_ids.is_none() => warnings.push(format!(
+                    "exposure_gap suppression for `{id}` was not applied: the full diff-scoped seam inventory is unavailable, so the id cannot be shown to name exactly one seam; select the owner with `path` + `function` instead"
+                )),
+                [_] if shared_ids.is_some_and(|shared| shared.contains(id)) => {
+                    warnings.push(format!(
+                        "exposure_gap suppression for `{id}` was not applied: another seam in the diff-scoped inventory carries the same id (an ambiguous finding id fails closed); select the owner with `path` + `function` instead"
+                    ))
+                }
+                [only] => aliases[*only].push(id.to_string()),
+                many => warnings.push(format!(
+                    "exposure_gap suppression for `{id}` names {} review seams, so it was not applied (an ambiguous finding id fails closed); select the owner with `path` + `function` instead",
+                    many.len()
+                )),
+            }
+        }
+        let candidates = seams
+            .iter()
+            .zip(aliases)
+            .map(|(entry, finding_aliases)| Self {
+                finding_id: entry.seam.id().as_str().to_string(),
+                path: root_relative_finding_path(root, entry.seam.file()),
+                class: String::new(),
+                owner_function: owner_function_of(
+                    &root_relative_finding_path(root, entry.seam.file()),
+                    entry.seam.file(),
+                    Some(entry.seam.owner()),
+                ),
+                finding_aliases,
+                legacy_finding_id: None,
+            })
+            .collect();
+        (candidates, warnings)
+    }
+}
+
+/// The `[[suppressions]] function` identity of an owner symbol (#13895).
+///
+/// Rust owner symbols are `<file>::<module>::<impl ...>::<fn>`, where `<file>`
+/// is the root-relative file the index parsed (`src/retry.rs`; the finding's
+/// own location may be root-joined as `./src/retry.rs`). The function identity
+/// is what follows `<file>::`, whichever of the root-relative path or the
+/// location's own path text the owner starts with. Fails closed: a missing owner, an owner that does
+/// not start with its own file, an empty remainder, or a `#L<line>` suffix
+/// (the producer's marker for two same-named owners) yields `None`, which
+/// matches no `function` selector.
+pub(crate) fn owner_function_of(
+    relative_path: &str,
+    file: &Path,
+    owner: Option<&str>,
+) -> Option<String> {
+    let owner = owner?.replace('\\', "/");
+    let located = crate::analysis::stable_path_text(file);
+    // Owner symbols carry the stable (percent-escaped) spelling of the
+    // indexed relative file, so `src/rate%limit.rs` appears as
+    // `src/rate%25limit.rs::` in the owner.
+    let stable_relative = crate::analysis::stable_path_text(Path::new(relative_path));
+    let function = [relative_path, stable_relative.as_str(), located.as_str()]
+        .iter()
+        .find_map(|path| owner.strip_prefix(&format!("{path}::")))?;
+    if function.trim().is_empty() || is_ambiguous_owner_function(function) {
+        return None;
+    }
+    Some(function.to_string())
+}
+
+/// True when `function` ends in the `#L<digits>` suffix the syntax producer
+/// appends to disambiguate duplicate owner symbols.
+fn is_ambiguous_owner_function(function: &str) -> bool {
+    function.rsplit_once("#L").is_some_and(|(_, digits)| {
+        !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+    })
 }
 
 /// One check finding suppressed by an explicit `--suppression-policy` file.
@@ -856,6 +1199,9 @@ pub(crate) fn exposure_gap_suppression_entries(
 /// Matching rules, in entry order (the first matching entry names the
 /// selector for a finding):
 /// - an entry with `finding_id` matches exactly that finding id;
+/// - an entry with `path` + `function` matches every candidate in exactly that
+///   root-relative file whose owner function equals `function` (#13895),
+///   whatever its `finding_id`; an unknown or ambiguous owner never matches;
 /// - an entry with only a `path` glob matches every candidate whose
 ///   root-relative path matches the glob, narrowed by `static_class` when
 ///   the entry declares one.
@@ -893,8 +1239,11 @@ pub fn apply_check_suppressions(
             }
             SuppressionKind::ExposureGap => {}
         }
-        let Some(selector) = entry.finding_id.clone().or_else(|| entry.path.clone()) else {
-            continue;
+        let selector = match (&entry.finding_id, &entry.path, &entry.function) {
+            (Some(id), _, _) => id.clone(),
+            (None, Some(path), Some(function)) => function_selector_label(path, function),
+            (None, Some(path), None) => path.clone(),
+            (None, None, _) => continue,
         };
         if is_expired(entry.expires.as_deref(), today) {
             warnings.push(format!(
@@ -906,20 +1255,7 @@ pub fn apply_check_suppressions(
         }
         let mut hit = false;
         for candidate in candidates {
-            let entry_matches = match &entry.finding_id {
-                Some(id) => id == &candidate.finding_id,
-                None => {
-                    entry
-                        .path
-                        .as_deref()
-                        .is_some_and(|glob| path_glob_matches(glob, &candidate.path))
-                        && entry
-                            .static_class
-                            .as_deref()
-                            .map(|class| class == candidate.class)
-                            .unwrap_or(true)
-                }
-            };
+            let entry_matches = exposure_entry_matches(entry, candidate);
             if entry_matches {
                 hit = true;
                 matched
@@ -942,6 +1278,13 @@ pub fn apply_check_suppressions(
                     candidate.finding_id,
                     candidate.finding_id
                 )),
+                // #14129: an id-keyed entry lapses on any edit to the
+                // suppressed expression, so the warning names the selector
+                // that does not.
+                None if entry.finding_id.is_some() => warnings.push(format!(
+                    "{} suppression for `{selector}` did not match any current finding; {STALE_FINDING_ID_HINT}",
+                    entry.kind.as_str()
+                )),
                 None => warnings.push(format!(
                     "{} suppression for `{selector}` did not match any current finding",
                     entry.kind.as_str()
@@ -952,6 +1295,64 @@ pub fn apply_check_suppressions(
     (matched, warnings)
 }
 
+/// Whether one `exposure_gap` entry's selector names `candidate`: the one
+/// matching rule every surface shares (#15377). A `finding_id` matches the id
+/// or an alias; `path` + `function` matches the exact file and owner function
+/// (#13895), ignoring the id so an expression edit keeps the suppression;
+/// a bare `path` is a glob. `static_class` narrows the last two. Kind and
+/// expiry are the caller's to check.
+fn exposure_entry_matches(entry: &SuppressionEntry, candidate: &CheckSuppressionCandidate) -> bool {
+    let class_matches = || {
+        entry
+            .static_class
+            .as_deref()
+            .is_none_or(|class| class == candidate.class)
+    };
+    match (&entry.finding_id, &entry.function) {
+        (Some(id), _) => id == &candidate.finding_id || candidate.finding_aliases.contains(id),
+        // Unknown owners never match.
+        (None, Some(function)) => {
+            entry.path.as_deref() == Some(candidate.path.as_str())
+                && candidate.owner_function.as_deref() == Some(function.as_str())
+                && class_matches()
+        }
+        (None, None) => {
+            entry
+                .path
+                .as_deref()
+                .is_some_and(|glob| path_glob_matches(glob, &candidate.path))
+                && class_matches()
+        }
+    }
+}
+
+/// The first live `exposure_gap` entry, in manifest order, that names
+/// `candidate` under [`apply_check_suppressions`]'s rule. SARIF marks a
+/// result with this entry's justification, so code scanning suppresses
+/// exactly what the findings formats and badges suppress (#15377).
+pub(crate) fn matching_exposure_entry<'a>(
+    candidate: &CheckSuppressionCandidate,
+    entries: &'a [SuppressionEntry],
+    today: &str,
+) -> Option<&'a SuppressionEntry> {
+    entries.iter().find(|entry| {
+        entry.kind == SuppressionKind::ExposureGap
+            && (entry.finding_id.is_some() || entry.path.is_some())
+            && !is_expired(entry.expires.as_deref(), today)
+            && exposure_entry_matches(entry, candidate)
+    })
+}
+
+/// Appended to the unmatched-`finding_id` warning (#14129): the owner
+/// selector is the edit-stable alternative to an id that hashes the expression.
+const STALE_FINDING_ID_HINT: &str = "finding ids hash the parsed expression, so an edit to the suppressed expression changes the id; to keep suppressing a finding's owning function across edits, select it with `path` + `function` instead of `finding_id`. In `ripr check --format json` on the same diff, locate the intended Rust finding in `findings[]`. If it has a canonical gap with an unambiguous function owner, copy `canonical_gap.file` into `path` (use the literal repository-relative filename if escaped) and `canonical_gap.owner` into `function`. A filename containing a literal backslash cannot use `path` + `function`, even on Unix. To suppress the finding, use its current `finding_id`. Omit `static_class` to select every finding in the function. Keep a valid `static_class` to match only findings of that class. An unknown value ignored on the id entry is rejected here. A changed `const` or `static` has no owning function, so it needs a fresh `finding_id`";
+
+/// The selector label reported for a `path` + `function` entry: the exact
+/// root-relative file and the owner function, joined as the owner symbol is.
+pub fn function_selector_label(path: &str, function: &str) -> String {
+    format!("{path}::{function}")
+}
+
 /// Loads an explicit `--suppression-policy` file for `ripr check` (#1441).
 ///
 /// Unlike the implicit `.ripr/suppressions.toml` (missing file → no
@@ -959,9 +1360,21 @@ pub fn apply_check_suppressions(
 /// malformed file is an `Err`, so the caller can never publish unfiltered
 /// counts believing a policy was applied.
 pub fn load_check_suppression_policy(path: &Path) -> Result<Vec<SuppressionEntry>, String> {
-    let display = path.display().to_string();
+    load_check_suppression_policy_on(path, cfg!(windows))
+}
+
+/// [`load_check_suppression_policy`] with the display host explicit, so the
+/// Windows rendering is testable anywhere (#16357). Every message names the
+/// policy through the house human-path rule: on Windows a `--root .` join
+/// such as `.\.ripr/suppressions.toml` renders as `./.ripr/suppressions.toml`
+/// in the header and on each problem line, never with mixed separators.
+fn load_check_suppression_policy_on(
+    path: &Path,
+    windows: bool,
+) -> Result<Vec<SuppressionEntry>, String> {
+    let display = crate::output::path::human_path_text(&path.to_string_lossy(), windows);
     let text = crate::bounded_input::read_to_string(path)
-        .map_err(|err| format!("failed to read suppression policy `{display}`: {err}"))?;
+        .map_err(|err| format!("failed to read suppression policy `{display}`: {}; pass an existing TOML file as `--suppression-policy`", crate::bounded_input::read_failure_detail(&err)))?;
     let (entries, violations) = parse_suppressions_manifest(&text);
     if violations.is_empty() {
         return Ok(entries);
@@ -974,7 +1387,7 @@ pub fn load_check_suppression_policy(path: &Path) -> Result<Vec<SuppressionEntry
         .map(|violation| violation.replacen(SUPPRESSIONS_PATH, &display, 1))
         .collect();
     Err(format!(
-        "suppression policy `{display}` is invalid:\n{}",
+        "suppression policy `{display}` is invalid; fix each problem listed below, then rerun:\n{}",
         renamed.join("\n")
     ))
 }
@@ -992,12 +1405,61 @@ pub fn path_glob_matches(pattern: &str, path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::{
         CheckSuppressionCandidate, SUPPRESSIONS_PATH, SuppressionApplication, SuppressionEntry,
         SuppressionKind, apply_check_suppressions, apply_exposure_suppressions,
         apply_test_efficiency_suppressions, current_iso_date, days_to_civil_date, is_expired,
-        is_iso_date, load_check_suppression_policy, parse_suppressions_manifest, path_glob_matches,
+        is_iso_date, load_check_suppression_policy, load_check_suppression_policy_on,
+        native_separators_to_slash, owner_function_of, parse_suppressions_manifest,
+        path_glob_matches, root_relative_finding_path,
     };
+
+    /// #16271: only the platform separator becomes `/`. On Unix a literal
+    /// backslash stays part of the file name, so a directory glob cannot
+    /// reach a sibling file whose name contains one; on Windows both
+    /// spellings are the same directory separator.
+    #[test]
+    fn candidate_paths_keep_a_unix_literal_backslash() {
+        assert_eq!(
+            native_separators_to_slash("src\\a\\b.rs", '\\'),
+            "src/a/b.rs"
+        );
+        // Windows `--root .` display: the separator is rewritten before the
+        // `./` trim, so an exact `path` + `function` entry still matches.
+        assert_eq!(
+            native_separators_to_slash(".\\src\\lib.rs", '\\'),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            native_separators_to_slash("./src/lib.rs", '/'),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            native_separators_to_slash("src/a\\b.rs", '/'),
+            "src/a\\b.rs"
+        );
+        assert!(!path_glob_matches(
+            "src/a/**",
+            &native_separators_to_slash("src/a\\b.rs", '/')
+        ));
+        assert!(path_glob_matches(
+            "src/a/**",
+            &native_separators_to_slash("src/a/b.rs", '/')
+        ));
+        if std::path::MAIN_SEPARATOR == '/' {
+            let root = Path::new("repo");
+            assert_eq!(
+                root_relative_finding_path(root, Path::new("repo/src/a\\b.rs")),
+                "src/a\\b.rs"
+            );
+            assert_eq!(
+                root_relative_finding_path(root, Path::new("./src/a/b.rs")),
+                "src/a/b.rs"
+            );
+        }
+    }
 
     #[test]
     fn parse_accepts_well_formed_manifest_with_both_kinds() {
@@ -1376,6 +1838,7 @@ reason = "second"
             finding_id: Some(finding_id.to_string()),
             test: None,
             path: None,
+            function: None,
             reason: "stated".to_string(),
             owner: "team".to_string(),
             expires: expires.map(str::to_string),
@@ -1402,6 +1865,7 @@ reason = "second"
             finding_id: None,
             test: Some(test.to_string()),
             path: path.map(str::to_string),
+            function: None,
             reason: "stated".to_string(),
             owner: "team".to_string(),
             expires: expires.map(str::to_string),
@@ -1588,6 +2052,19 @@ reason = "second"
             finding_id: finding_id.to_string(),
             path: path.to_string(),
             class: class.to_string(),
+            owner_function: None,
+            finding_aliases: Vec::new(),
+        }
+    }
+
+    fn candidate_in(
+        finding_id: &str,
+        path: &str,
+        owner_function: Option<&str>,
+    ) -> CheckSuppressionCandidate {
+        CheckSuppressionCandidate {
+            owner_function: owner_function.map(str::to_string),
+            ..candidate(finding_id, path, "weakly_exposed")
         }
     }
 
@@ -1601,6 +2078,7 @@ reason = "second"
             finding_id: None,
             test: None,
             path: Some(glob.to_string()),
+            function: None,
             reason: "generated surface".to_string(),
             owner: "repo-owner".to_string(),
             expires: expires.map(str::to_string),
@@ -1868,6 +2346,372 @@ owner = "repo-owner"
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
+
+    /// #16357: a Windows `--root .` join reaches the loader as
+    /// `.\.ripr/suppressions.toml`; the refusal names it through the house
+    /// human-path rule, never with mixed separators.
+    #[test]
+    fn check_suppression_policy_missing_file_names_one_separator_style() -> Result<(), String> {
+        let joined = Path::new(".\\ripr-16357-missing\\.ripr/suppressions.toml");
+        let err = load_check_suppression_policy_on(joined, true)
+            .err()
+            .ok_or("missing policy file must be an error")?;
+        assert!(
+            err.starts_with(
+                "failed to read suppression policy `./ripr-16357-missing/.ripr/suppressions.toml`:"
+            ),
+            "err: {err}"
+        );
+        assert!(!err.contains('\\'), "err: {err}");
+        Ok(())
+    }
+
+    /// #16357: header and every per-problem line name the policy the same
+    /// normalized way on Windows. A Unix filename may contain a literal `\`,
+    /// so the file exists on this host while the Windows rule is applied;
+    /// on Unix the same path keeps its backslash, which names that file.
+    #[cfg(unix)]
+    #[test]
+    fn check_suppression_policy_problems_name_one_separator_style() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!(
+            "ripr-check-suppression-policy-16357-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+        let policy = dir.join(".ripr\\suppressions.toml");
+        std::fs::write(
+            &policy,
+            "schema_version = 1\n[[suppressions]]\nkind = \"exposure_gap\"\nreason = 42\n",
+        )
+        .map_err(|e| format!("write: {e}"))?;
+        let normalized = format!("{}/.ripr/suppressions.toml", dir.display());
+
+        let err = load_check_suppression_policy_on(&policy, true)
+            .err()
+            .ok_or("invalid policy file must be an error")?;
+        let mut lines = err.lines();
+        assert_eq!(
+            lines.next(),
+            Some(
+                format!(
+                    "suppression policy `{normalized}` is invalid; fix each problem listed below, then rerun:"
+                )
+                .as_str()
+            ),
+            "err: {err}"
+        );
+        let problems: Vec<&str> = lines.collect();
+        assert!(!problems.is_empty(), "err: {err}");
+        for problem in &problems {
+            assert!(
+                problem.starts_with(&format!("{normalized}:")),
+                "problem: {problem}"
+            );
+        }
+        assert!(!err.contains('\\'), "err: {err}");
+        // Every parser prefix was renamed: no line still opens with the
+        // default location (the renamed name ends with it, so only the
+        // line start discriminates).
+        assert!(
+            !problems.iter().any(|p| p.starts_with(SUPPRESSIONS_PATH)),
+            "err: {err}"
+        );
+
+        // The Unix rule keeps the literal backslash: it names this file.
+        let unix_err = load_check_suppression_policy_on(&policy, false)
+            .err()
+            .ok_or("invalid policy file must be an error")?;
+        assert!(
+            unix_err.contains(&format!("`{}`", policy.display())),
+            "err: {unix_err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    // ── owner-scoped `function` selector (#13895) ──
+
+    fn function_entry_manifest(extra: &str) -> String {
+        format!(
+            "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\n{extra}reason = \"accepted retry debt\"\nowner = \"team-retry\"\n"
+        )
+    }
+
+    #[test]
+    fn parse_accepts_path_plus_function_selector() {
+        let text =
+            function_entry_manifest("path = \"src/retry.rs\"\nfunction = \"retry_allowed\"\n");
+        let (entries, violations) = parse_suppressions_manifest(&text);
+        assert!(violations.is_empty(), "{violations:?}");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path.as_deref(), Some("src/retry.rs"));
+        assert_eq!(entries[0].function.as_deref(), Some("retry_allowed"));
+        assert!(entries[0].finding_id.is_none());
+    }
+
+    #[test]
+    fn parse_rejects_function_without_path() {
+        let text = function_entry_manifest("function = \"retry_allowed\"\n");
+        let (entries, violations) = parse_suppressions_manifest(&text);
+        assert!(entries.is_empty());
+        assert!(
+            violations.iter().any(|v| v.contains("requires `path`")
+                || v.contains("requires `finding_id`, a `path` glob, or `path` + `function`")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_entry_with_no_selector() {
+        let text = function_entry_manifest("");
+        let (entries, violations) = parse_suppressions_manifest(&text);
+        assert!(entries.is_empty());
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("requires `finding_id`, a `path` glob, or `path` + `function`")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_function_with_finding_id_glob_path_or_ambiguous_owner() {
+        let with_id = function_entry_manifest(
+            "finding_id = \"predicate:a6b70212\"\npath = \"src/retry.rs\"\nfunction = \"retry_allowed\"\n",
+        );
+        let (_, violations) = parse_suppressions_manifest(&with_id);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("cannot be combined with `finding_id`")),
+            "{violations:?}"
+        );
+        let glob = function_entry_manifest("path = \"src/**\"\nfunction = \"retry_allowed\"\n");
+        let (_, violations) = parse_suppressions_manifest(&glob);
+        assert!(
+            violations.iter().any(|v| v.contains("must not be a glob")),
+            "{violations:?}"
+        );
+        let ambiguous =
+            function_entry_manifest("path = \"src/retry.rs\"\nfunction = \"retry_allowed#L12\"\n");
+        let (_, violations) = parse_suppressions_manifest(&ambiguous);
+        assert!(
+            violations.iter().any(|v| v.contains("line-disambiguated")),
+            "{violations:?}"
+        );
+        for dotted in ["./src/retry.rs", "src/../src/retry.rs"] {
+            let manifest = function_entry_manifest(&format!(
+                "path = \"{dotted}\"\nfunction = \"retry_allowed\"\n"
+            ));
+            let (_, violations) = parse_suppressions_manifest(&manifest);
+            assert!(
+                violations
+                    .iter()
+                    .any(|v| v.contains("plain root-relative path")),
+                "{dotted}: {violations:?}"
+            );
+        }
+        let blank = function_entry_manifest("path = \"src/retry.rs\"\nfunction = \" \"\n");
+        let (_, violations) = parse_suppressions_manifest(&blank);
+        assert!(
+            violations.iter().any(|v| v.contains("`function` is blank")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn parse_rejects_function_on_test_efficiency_and_duplicate_function_selectors() {
+        let te = "schema_version = 1\n\n[[suppressions]]\nkind = \"test_efficiency\"\ntest = \"t\"\nfunction = \"f\"\nreason = \"r\"\nowner = \"o\"\n";
+        let (_, violations) = parse_suppressions_manifest(te);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("does not accept `function`")),
+            "{violations:?}"
+        );
+        let entry = "[[suppressions]]\nkind = \"exposure_gap\"\npath = \"src/retry.rs\"\nfunction = \"retry_allowed\"\nreason = \"r\"\nowner = \"o\"\n";
+        let dup = format!("schema_version = 1\n\n{entry}\n{entry}");
+        let (_, violations) = parse_suppressions_manifest(&dup);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("duplicate selector function")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn parse_still_rejects_unknown_fields_next_to_function() {
+        let text = function_entry_manifest(
+            "path = \"src/retry.rs\"\nfunction = \"retry_allowed\"\nfunc = \"typo\"\n",
+        );
+        let (_, violations) = parse_suppressions_manifest(&text);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("unsupported `[[suppressions]]` field `func`")),
+            "{violations:?}"
+        );
+    }
+
+    fn function_entry(path: &str, function: &str, expires: Option<&str>) -> SuppressionEntry {
+        SuppressionEntry {
+            kind: SuppressionKind::ExposureGap,
+            finding_id: None,
+            test: None,
+            path: Some(path.to_string()),
+            function: Some(function.to_string()),
+            reason: "accepted retry debt".to_string(),
+            owner: "team-retry".to_string(),
+            expires: expires.map(str::to_string),
+            scope: None,
+            created_at: None,
+            last_seen: None,
+            review_by: None,
+            expected_visibility: None,
+            static_class: None,
+            language: None,
+            language_status: None,
+            block_line: 3,
+        }
+    }
+
+    #[test]
+    fn function_selector_survives_expression_edit_and_spares_other_functions() {
+        let entries = vec![function_entry("src/retry.rs", "retry_allowed", None)];
+        // `attempts <= 3` -> `predicate:a6b70212`, `attempts <= 4` ->
+        // `predicate:4547a614`: the finding id changes, the owner does not.
+        let before = vec![
+            candidate_in("predicate:a6b70212", "src/retry.rs", Some("retry_allowed")),
+            candidate_in("predicate:other0001", "src/retry.rs", Some("backoff_ms")),
+        ];
+        let after = vec![
+            candidate_in("predicate:4547a614", "src/retry.rs", Some("retry_allowed")),
+            candidate_in("predicate:other0001", "src/retry.rs", Some("backoff_ms")),
+        ];
+        for candidates in [&before, &after] {
+            let (matched, warnings) = apply_check_suppressions(candidates, &entries, "2026-01-01");
+            assert_eq!(matched.len(), 1, "{matched:?}");
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert_eq!(
+                matched.values().next().map(String::as_str),
+                Some("src/retry.rs::retry_allowed")
+            );
+            // Negative control: the function G in the same file is not suppressed.
+            assert!(!matched.contains_key("predicate:other0001"));
+        }
+        assert!(before[0].finding_id != after[0].finding_id);
+        assert!(
+            apply_check_suppressions(&before, &entries, "2026-01-01")
+                .0
+                .contains_key("predicate:a6b70212")
+        );
+        assert!(
+            apply_check_suppressions(&after, &entries, "2026-01-01")
+                .0
+                .contains_key("predicate:4547a614")
+        );
+    }
+
+    #[test]
+    fn function_selector_fails_closed_on_path_name_missing_or_expired() {
+        let entries = vec![function_entry("src/retry.rs", "retry_allowed", None)];
+        let cases = [
+            // Same function name in another file.
+            candidate_in("a", "src/other.rs", Some("retry_allowed")),
+            // Impl-qualified owner is a different identity than the bare name.
+            candidate_in("b", "src/retry.rs", Some("impl Retry::retry_allowed")),
+            // Prefix of the name is not the name.
+            candidate_in("c", "src/retry.rs", Some("retry_allowed_v2")),
+            // Missing or ambiguous owner identity.
+            candidate_in("d", "src/retry.rs", None),
+        ];
+        let (matched, warnings) = apply_check_suppressions(&cases, &entries, "2026-01-01");
+        assert!(matched.is_empty(), "{matched:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("did not match any current finding")),
+            "{warnings:?}"
+        );
+
+        let qualified = vec![function_entry(
+            "src/retry.rs",
+            "impl Retry::retry_allowed",
+            None,
+        )];
+        let (matched, _) = apply_check_suppressions(&cases, &qualified, "2026-01-01");
+        assert_eq!(
+            matched.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["b"]
+        );
+
+        let expired = vec![function_entry(
+            "src/retry.rs",
+            "retry_allowed",
+            Some("2020-01-01"),
+        )];
+        let live = vec![candidate_in("e", "src/retry.rs", Some("retry_allowed"))];
+        let (matched, warnings) = apply_check_suppressions(&live, &expired, "2026-01-01");
+        assert!(matched.is_empty(), "expired entries must not apply");
+        assert!(
+            warnings.iter().any(|w| w.contains("expired")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn owner_function_of_strips_the_file_and_rejects_ambiguous_owners() {
+        let file = Path::new("src/retry.rs");
+        assert_eq!(
+            owner_function_of("src/retry.rs", file, Some("src/retry.rs::retry_allowed")).as_deref(),
+            Some("retry_allowed")
+        );
+        assert_eq!(
+            owner_function_of(
+                "src/retry.rs",
+                file,
+                Some("src/retry.rs::impl Retry::allowed")
+            )
+            .as_deref(),
+            Some("impl Retry::allowed")
+        );
+        assert_eq!(
+            owner_function_of("src/retry.rs", file, Some("src\\retry.rs::inner::helper"))
+                .as_deref(),
+            Some("inner::helper")
+        );
+        assert_eq!(owner_function_of("src/retry.rs", file, None), None);
+        assert_eq!(
+            owner_function_of("src/retry.rs", file, Some("src/other.rs::retry_allowed")),
+            None
+        );
+        assert_eq!(
+            owner_function_of("src/retry.rs", file, Some("src/retry.rs::")),
+            None
+        );
+        // A percent-bearing file: the owner carries the stable escape while
+        // the location is root-joined, so only the stable relative spelling
+        // can match.
+        assert_eq!(
+            owner_function_of(
+                "src/rate%limit.rs",
+                Path::new("/repo/src/rate%limit.rs"),
+                Some("src/rate%25limit.rs::allowed")
+            )
+            .as_deref(),
+            Some("allowed")
+        );
+        assert_eq!(
+            owner_function_of(
+                "src/retry.rs",
+                file,
+                Some("src/retry.rs::retry_allowed#L12")
+            ),
+            None
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2009,26 +2853,141 @@ mod audit_controls {
             .ok_or("duplicate policy must fail closed")?;
         assert!(error.contains("custom-policy.toml:8 duplicate"), "{error}");
         assert!(!error.contains(SUPPRESSIONS_PATH), "{error}");
-        load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
-            .err()
-            .ok_or("duplicate implicit policy must fail closed")?;
+        crate::output::suppressions::load_suppressions_for_root_at(
+            &root,
+            Path::new("custom-policy.toml"),
+        )
+        .err()
+        .ok_or("duplicate implicit policy must fail closed")?;
         std::fs::write(&path, VALID).map_err(|e| e.to_string())?;
         assert_eq!(load_check_suppression_policy(&path)?.len(), 1);
         assert_eq!(
-            load_suppressions_for_root_at(&root, Path::new("custom-policy.toml"))
-                .map_err(|e| e.join("\n"))?
-                .len(),
+            crate::output::suppressions::load_suppressions_for_root_at(
+                &root,
+                Path::new("custom-policy.toml")
+            )
+            .map_err(|e| e.join("\n"))?
+            .len(),
             1
         );
         assert!(
-            load_suppressions_for_root_at(&root, Path::new("missing.toml"))
-                .map_err(|e| e.join("\n"))?
-                .is_empty()
+            crate::output::suppressions::load_suppressions_for_root_at(
+                &root,
+                Path::new("missing.toml")
+            )
+            .map_err(|e| e.join("\n"))?
+            .is_empty()
         );
         load_check_suppression_policy(&root.join("missing.toml"))
             .err()
             .ok_or("missing explicit policy must fail closed")?;
         std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// A checkout can make its suppressions manifest a link to a file outside
+    /// the repository; the parser would echo that file's keys (#15546). The
+    /// loader must refuse it by configured path only, while an in-root link
+    /// keeps working.
+    #[cfg(unix)]
+    #[test]
+    fn root_loader_refuses_a_manifest_link_that_leaves_the_root() -> Result<(), String> {
+        let base = std::env::temp_dir().join(format!(
+            "ripr-suppression-link-escape-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("repo");
+        std::fs::create_dir_all(root.join(".ripr")).map_err(|e| e.to_string())?;
+        let outside = base.join("outside-secret.toml");
+        std::fs::write(&outside, "outside_secret_key = \"value\"\n").map_err(|e| e.to_string())?;
+        let manifest = Path::new(".ripr/suppressions.toml");
+        std::os::unix::fs::symlink(&outside, root.join(manifest)).map_err(|e| e.to_string())?;
+
+        let refused = load_suppressions_for_root_at(&root, manifest)
+            .err()
+            .ok_or("a manifest link out of the root must be refused")?;
+        let text = refused.join("\n");
+        assert!(
+            text.contains("resolves outside the repository root"),
+            "{text}"
+        );
+        assert!(text.contains(".ripr/suppressions.toml"), "{text}");
+        assert!(!text.contains("outside_secret_key"), "{text}");
+        assert!(!text.contains("outside-secret"), "{text}");
+
+        // Control: the same link target inside the root is read and parsed,
+        // so the refusal above is containment, not a broken link.
+        let inside = root.join("policy.toml");
+        std::fs::write(&inside, VALID).map_err(|e| e.to_string())?;
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&inside, root.join(manifest)).map_err(|e| e.to_string())?;
+        assert_eq!(
+            load_suppressions_for_root_at(&root, manifest)
+                .map_err(|e| e.join("\n"))?
+                .len(),
+            1
+        );
+        // An in-root FIFO is refused instead of blocking the read.
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        let made = std::process::Command::new("mkfifo")
+            .arg(root.join(manifest))
+            .status()
+            .map_err(|e| format!("mkfifo: {e}"))?;
+        assert!(made.success(), "mkfifo failed");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let probe = root.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(load_suppressions_for_root_at(&probe, manifest));
+        });
+        let refused = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .map_err(|e| format!("a FIFO manifest blocked the loader: {e}"))?;
+        let refused = refused
+            .err()
+            .ok_or("a FIFO manifest must be refused")?
+            .join("\n");
+        assert!(refused.contains("not a regular file"), "{refused}");
+
+        // A link loop is an unreadable manifest, not an absent one.
+        std::fs::remove_file(root.join(manifest)).map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink("suppressions.toml", root.join(manifest))
+            .map_err(|e| e.to_string())?;
+        let refused = read_root_manifest(&root, manifest)
+            .err()
+            .ok_or("a manifest link loop must be refused, not read as absent")?;
+        assert!(refused.contains("cannot be resolved"), "{refused}");
+        assert!(refused.contains(".ripr/suppressions.toml"), "{refused}");
+
+        // A parent-directory link (`.ripr -> outside`) escapes the same way.
+        std::fs::remove_dir_all(root.join(".ripr")).map_err(|e| e.to_string())?;
+        let outside_dir = base.join("outside-dir");
+        std::fs::create_dir_all(&outside_dir).map_err(|e| e.to_string())?;
+        std::fs::write(
+            outside_dir.join("suppressions.toml"),
+            "outside_dir_key = \"value\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        std::os::unix::fs::symlink(&outside_dir, root.join(".ripr")).map_err(|e| e.to_string())?;
+        let refused = load_suppressions_for_root_at(&root, manifest)
+            .err()
+            .ok_or("a parent-directory link out of the root must be refused")?
+            .join("\n");
+        assert!(
+            refused.contains("resolves outside the repository root"),
+            "{refused}"
+        );
+        assert!(!refused.contains("outside_dir_key"), "{refused}");
+        // The shared reader that `policy suppression-health` uses refuses too.
+        let shared = read_root_manifest(&root, manifest)
+            .err()
+            .ok_or("the shared manifest reader must refuse the escape")?;
+        assert!(
+            shared.contains("resolves outside the repository root"),
+            "{shared}"
+        );
+        assert!(!shared.contains("outside-dir"), "{shared}");
+        std::fs::remove_dir_all(&base).map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -2112,3 +3071,7 @@ mod audit_controls {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "suppressions/typo_hint_tests.rs"]
+mod typo_hint_tests;

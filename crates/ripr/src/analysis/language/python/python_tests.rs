@@ -867,6 +867,36 @@ fn cli_output_discriminators_cover_echo_streams_and_exit_codes() {
 }
 
 #[test]
+fn appended_value_discriminator_names_contents_not_length() {
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(msg.upper())").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("self.buf.append(msg)").as_deref(),
+        Some("buf contents == [<expected value>]")
+    );
+    assert_eq!(python_output_or_call_discriminator("buf.append()"), None);
+    // A literal argument keeps the literal-based shapes below it.
+    assert_eq!(
+        python_output_or_call_discriminator("print(\"queued\")").as_deref(),
+        Some("output contains \"queued\"")
+    );
+    // A literal append keeps its concrete discriminator; the placeholder
+    // contents shape applies only when no string literal names the value.
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append(\"queued\")").as_deref(),
+        Some("call includes \"queued\"")
+    );
+    assert_eq!(
+        python_output_or_call_discriminator("buf.append('queued')").as_deref(),
+        Some("call includes 'queued'")
+    );
+    // `.push(` is not a Python list append and names no discriminator.
+    assert_eq!(python_output_or_call_discriminator("buf.push(msg)"), None);
+}
+
+#[test]
 fn extract_tests_records_vararg_and_kwarg_pytest_fixtures() -> Result<(), String> {
     let tests = extract_tests(
         Path::new("tests/test_fixtures.py"),
@@ -1278,6 +1308,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1285,6 +1316,8 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -1294,6 +1327,9 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1445,6 +1481,39 @@ fn is_unittest_class_accepts_bare_and_dotted_test_case_bases() -> Result<(), Str
     }
     if !neither.is_empty() {
         return Err("non-TestCase, non-Test* class should not be a pytest class".to_string());
+    }
+    Ok(())
+}
+
+#[test]
+fn is_unittest_class_accepts_isolated_asyncio_test_case_bases_only_by_name() -> Result<(), String> {
+    for (file, source) in [
+        (
+            "tests/test_async_dotted.py",
+            "import unittest\nclass A(unittest.IsolatedAsyncioTestCase):\n    async def test_a(self):\n        pass\n",
+        ),
+        (
+            "tests/test_async_bare.py",
+            "from unittest import IsolatedAsyncioTestCase\nclass B(IsolatedAsyncioTestCase):\n    def test_b(self):\n        pass\n",
+        ),
+    ] {
+        let tests = extract_tests(Path::new(file), source);
+        if tests.first().map(|t| t.framework) != Some(PythonFramework::Unittest) {
+            return Err(format!(
+                "{file}: IsolatedAsyncioTestCase base should mark unittest"
+            ));
+        }
+    }
+    // A project base whose name merely ends with the stdlib name is not it.
+    let lookalike = extract_tests(
+        Path::new("tests/test_lookalike.py"),
+        "from helpers import MyIsolatedAsyncioTestCase\nclass C(MyIsolatedAsyncioTestCase):\n    async def test_c(self):\n        pass\n",
+    );
+    if lookalike
+        .iter()
+        .any(|t| t.framework == PythonFramework::Unittest)
+    {
+        return Err("`MyIsolatedAsyncioTestCase` must not read as a unittest base".to_string());
     }
     Ok(())
 }
@@ -1855,6 +1924,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1862,6 +1932,8 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -1871,6 +1943,9 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1926,6 +2001,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -1933,6 +2009,8 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -1942,6 +2020,9 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -2019,6 +2100,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2026,6 +2108,8 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2035,6 +2119,9 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -2082,6 +2169,7 @@ fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: vec!["core".to_string()],
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2089,6 +2177,8 @@ fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2098,6 +2188,9 @@ fn reexport_package_name_with_a_same_project_plain_module_identifies_neither() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let import = PythonImport {
         imported: "price".to_string(),
@@ -2149,6 +2242,7 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: vec!["core".to_string()],
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2156,6 +2250,8 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2165,6 +2261,9 @@ fn reexport_package_receiver_spelling_is_withheld_when_the_package_is_shadowed()
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let mut test = align_importing_test("core", "");
     test.file = PathBuf::from("svc/a/tests/test_core.py");
@@ -2207,6 +2306,7 @@ fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2214,6 +2314,8 @@ fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2223,6 +2325,9 @@ fn src_short_name_with_a_same_project_plain_module_identifies_neither() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let import = |module: &str| PythonImport {
         imported: "price".to_string(),
@@ -2325,6 +2430,7 @@ fn same_stem_related_handles_missing_stems() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -2332,6 +2438,8 @@ fn same_stem_related_handles_missing_stems() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -2341,10 +2449,14 @@ fn same_stem_related_handles_missing_stems() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4264,6 +4376,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let mocked = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4292,6 +4405,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let bare = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4318,6 +4432,7 @@ fn test_has_mocked_module_recognizes_dotted_patch_decorator() {
     let clean = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -4945,6 +5060,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -4952,6 +5068,8 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -4961,6 +5079,9 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -5033,6 +5154,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -5040,6 +5162,8 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -5049,6 +5173,9 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -5071,6 +5198,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
     let alias_test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5125,6 +5253,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -5132,6 +5261,8 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -5141,6 +5272,9 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     }
 }
 
@@ -5169,6 +5303,7 @@ fn align_importing_test(imported: &str, module: &str) -> PythonTest {
         activation_controls: Vec::new(),
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5220,6 +5355,7 @@ fn sink_alignment_is_alias_when_oracle_uses_import_alias() {
     let alias_test = PythonTest {
         setup_receivers: Vec::new(),
         fixture_defs: Vec::new(),
+        value_helpers: Vec::new(),
         direct_parametrized: Vec::new(),
         unsettled_indirect: Vec::new(),
         parametrize_argnames: Vec::new(),
@@ -5942,6 +6078,7 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -5949,6 +6086,8 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -5958,6 +6097,9 @@ fn test_local_module_shadows_a_bare_owner_import_for_tests_it_precedes() {
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     let identifies = |files: &[&str], module: &str, test: &str| {
         let files = files.iter().map(PathBuf::from).collect::<Vec<_>>();
@@ -6049,6 +6191,7 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         decorator_lines: None,
         parameters: Vec::new(),
         reexport_modules: Vec::new(),
+        class_reexport_modules: Vec::new(),
         star_exported: false,
         ambiguous_src_modules: Vec::new(),
         test_local_shadows: Vec::new(),
@@ -6056,6 +6199,8 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         module_callees: Vec::new(),
+        route_scope_callees: Vec::new(),
+        route_scope_awaited_callees: Vec::new(),
         class_path: String::new(),
         term_facts: Default::default(),
         class_facts: Default::default(),
@@ -6065,6 +6210,9 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
         nested_called_by_parent: false,
         nested_result_discarded: false,
         trusted_stdlib_click_alias: false,
+        route_returns_body: false,
+        route_dispatch_ambiguous: false,
+        route_dict_annotation: false,
     };
     // All forms of `core` imported by `test`; true when the owner at
     // `owner_file` stays the owner.
@@ -6146,6 +6294,50 @@ fn test_local_module_shadow_covers_project_names_import_forms_and_conftest_dirs(
     ];
     let unit = "svc/a/tests/unit/test_x.py";
     assert!(identifies(&nested, "svc/a/core.py", unit).0);
+    // #14083 A5: a module pytest collects in `tests` inserts that basedir too,
+    // ahead of the subdirectory's own import (checked under pytest 9.2: a run
+    // of the whole tree resolves `core` in `unit/test_x.py` to the helper,
+    // while a run of `tests/unit` alone reaches the project module).
+    let with_collected = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/test_a.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(!identifies(&with_collected, "svc/a/core.py", unit).0);
+    // A helper module pytest does not collect (`tests/helpers.py`, under a
+    // `tests` directory) inserts nothing: the layout stays identifying.
+    let uncollected = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/helpers.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(identifies(&uncollected, "svc/a/core.py", unit).0);
+    // A collected test module above the test's own project root belongs to
+    // the outer project's run, not to `svc/a`'s: the nested project's tests
+    // keep their credit (`svc/test_health.py` beside the outer `svc/core.py`).
+    let nested_project = [
+        "svc/pyproject.toml",
+        "svc/core.py",
+        "svc/test_health.py",
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/tests/test_core.py",
+    ];
+    assert!(identifies(&nested_project, "svc/a/core.py", "svc/a/tests/test_core.py").0);
+    // The project root itself is inside the project: a collected module in
+    // `svc/a` puts `svc/a` on the path, where the owner lives anyway.
+    let at_root = [
+        "svc/a/pyproject.toml",
+        "svc/a/core.py",
+        "svc/a/test_root.py",
+        "svc/a/tests/core.py",
+        "svc/a/tests/unit/test_x.py",
+    ];
+    assert!(identifies(&at_root, "svc/a/core.py", unit).0);
     let with_conftest = [
         "svc/a/pyproject.toml",
         "svc/a/core.py",

@@ -725,3 +725,70 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (38)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (39)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (40)
+
+Reason:
+RIPR-SPEC-0008: preview-language GitHub file= and SARIF uris anchored at the checkout top level (#15367)
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+- `expected/github.txt`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (41)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (42)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_adversarial_changed_sink_non_delta_operand (43)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless python_adversarial_changed_sink_non_delta_operand --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

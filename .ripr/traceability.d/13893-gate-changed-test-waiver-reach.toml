@@ -1,0 +1,13 @@
+# The gate's changed-test waiver applies only to a changed test that reaches
+# the candidate's owner, never to file or PR proximity (#13893).
+[[extend]]
+id = "RIPR-SPEC-0014"
+tests = [
+  "crates/ripr/src/output/gate/tests.rs::gate_changed_test_waiver_needs_a_changed_test_that_reaches_the_owner",
+  "crates/ripr/src/output/gate/tests.rs::gate_changed_test_and_missing_guidance_candidates_stay_advisory",
+  "crates/ripr/src/output/review_comments/mod.rs::tests::changed_test_that_reaches_the_owner_is_named_on_the_card",
+  "crates/ripr/src/output/review_comments/mod.rs::tests::changed_unrelated_test_in_the_same_file_is_not_named",
+  "crates/ripr/src/output/review_comments/mod.rs::tests::changed_proximity_only_related_test_is_not_named",
+  "crates/ripr/src/output/review_comments/mod.rs::tests::file_level_test_change_without_function_attribution_is_not_named",
+  "crates/ripr/src/analysis/test_changes.rs::tests::integration_test_file_attributes_only_touched_functions",
+]

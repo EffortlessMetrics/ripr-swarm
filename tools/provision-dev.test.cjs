@@ -90,7 +90,7 @@ function nativeToolMain() {
       'RUSTUP_AUTO_INSTALL', 'RUSTC', 'CARGO_BUILD_RUSTC', 'RUSTC_WRAPPER',
       'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC_WRAPPER',
       'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER', 'TAR_OPTIONS', 'PATH',
-      'DEBIAN_FRONTEND'].map(key => [key, process.env[key] ?? null])) });
+      'npm_config_cache', 'NPM_CONFIG_CACHE', 'DEBIAN_FRONTEND'].map(key => [key, process.env[key] ?? null])) });
   save();
   if (state.failure?.command === command
     && (!state.failure.includes || args.includes(state.failure.includes))) {
@@ -203,7 +203,15 @@ function nativeToolMain() {
   }
   if (command === 'npm') {
     if (args[0] === '--version') return output('11.6.0');
+    const cache = process.env.npm_config_cache ?? process.env.NPM_CONFIG_CACHE
+      ?? state.defaultCache ?? path.join(process.env.HOME, '.npm');
+    if (JSON.stringify(args) === JSON.stringify(['config', 'get', 'cache'])) {
+      // npm initializes its effective cache during config lookup, even for "get".
+      try { fs.mkdirSync(cache, { recursive: true }); } catch { /* npm tolerates this. */ }
+      return output(cache);
+    }
     if (args[0] === 'ci') {
+      if (state.failAtInstall) fail('fixture npm ci encountered an unusable cache', 83);
       const lockBytes = fs.readFileSync(path.join(process.cwd(), 'package-lock.json'));
       const lock = JSON.parse(lockBytes);
       const modules = path.join(process.cwd(), 'node_modules');
@@ -298,7 +306,7 @@ function writeFile(filename, content, mode) {
 }
 
 function makeFixture(t, options = {}) {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-provision-test-'));
+  const temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ripr-provision-test-'));
   t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
   const root = path.join(temp, 'checkout with spaces');
   const cargoHome = path.join(temp, 'cargo home');
@@ -346,6 +354,14 @@ function makeFixture(t, options = {}) {
     'npm', 'xvfb-run', 'Xvfb', 'xauth']) {
     if (name !== options.missingCommand) writeFile(path.join(bin, name), toolScript, 0o755);
   }
+  if (options.missingCommand !== 'npm') {
+    // The lookup's Node process may write only the fixture event journal.
+    writeFile(statePath + '.npm.cjs', 'process.argv.splice(1, 1);\n(' + nativeToolMain.toString() + ')();');
+    writeFile(path.join(bin, 'npm'), '#!/bin/bash\n'
+      + 'record=()\nif [[ "$1" == config && "$NODE_OPTIONS" == *--permission* ]]; then\n'
+      + '  record+=(--allow-fs-write="$RIPR_PROVISION_TEST_STATE")\nfi\n'
+      + 'exec node "${record[@]}" "$RIPR_PROVISION_TEST_STATE.npm.cjs" "$0" "$@"\n', 0o755);
+  }
   for (const [name, actual] of [['bash', '/bin/bash'], ['timeout', NATIVE ? '/usr/bin/timeout' : null],
     ['node', process.execPath]]) {
     if (name !== options.missingCommand) {
@@ -387,13 +403,37 @@ function assertComponents(state, selectors, additional = []) {
   }
 }
 
+// The TERM acknowledgement must not come from the supervised Node process: a
+// loaded runner can starve its event loop past the escalation grace, so the
+// process is SIGKILLed before the handler runs and the .term file never
+// appears even though the owned group received the signal. This supervisor is
+// blocked in wait(2), so the trap writes the acknowledgement as soon as the
+// group is signalled. It publishes .term.ready first, so cancellation cannot
+// begin before the trap is armed.
+const TERM_SUPERVISOR_SCRIPT = [
+  '#!/bin/sh',
+  'term=$1',
+  'shift',
+  'trap \'printf observed > "$term"\' TERM',
+  ': > "$term.ready"',
+  '"$@" &',
+  'patient=$!',
+  'status=0',
+  'while kill -0 "$patient" 2>/dev/null; do',
+  '  wait "$patient" 2>/dev/null && status=0 || status=$?',
+  'done',
+  'exit $status',
+  '',
+].join('\n');
+
 function ownedProcessMain() {
   const fs = require('node:fs');
   const path = require('node:path');
   const cp = require('node:child_process');
   const [role, directory, behavior = 'ignore-term'] = process.argv.slice(2);
+  // Installing any handler keeps this fixture resistant to TERM; the group
+  // acknowledgement is recorded by the supervisor that started it.
   process.on('SIGTERM', () => {
-    fs.writeFileSync(path.join(directory, role + '.term'), 'observed');
     if (role === 'parent' && behavior === 'parent-exits') process.exit(0);
   });
   process.on('SIGINT', () => fs.writeFileSync(path.join(directory, role + '.int'), 'observed'));
@@ -407,8 +447,11 @@ function ownedProcessMain() {
     startTime: fields[19], procGroup: Number(fields[2]),
   }));
   fs.renameSync(identityFile + '.partial', identityFile);
+  const supervisor = process.argv[5];
   if (role === 'parent') {
-    cp.spawn(process.execPath, [process.argv[1], 'descendant', directory, behavior], { stdio: 'ignore' });
+    cp.spawn('/bin/sh', [supervisor, path.join(directory, 'descendant.term'),
+      process.execPath, process.argv[1], 'descendant', directory, behavior, supervisor],
+    { stdio: 'ignore' });
   }
   const pulse = path.join(directory, role + '.pulse');
   setInterval(() => {
@@ -448,6 +491,15 @@ function makeProcessFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ripr-provision-process-'));
   const program = path.join(root, 'owned-process.cjs');
   writeFile(program, '(' + ownedProcessMain.toString() + ')();\n');
+  const supervisor = path.join(root, 'term-supervisor.sh');
+  writeFile(supervisor, TERM_SUPERVISOR_SCRIPT, 0o755);
+  const termFile = role => path.join(root, role + '.term');
+  const readyFile = role => termFile(role) + '.ready';
+  const invocation = (behavior = 'ignore-term') => ({
+    file: '/bin/sh',
+    args: [supervisor, termFile('parent'), process.execPath, program,
+      'parent', root, behavior, supervisor],
+  });
   const pids = () => ['parent', 'descendant'].map(role => {
     const filename = path.join(root, role + '.pid');
     return { role, ...(fs.existsSync(filename)
@@ -472,7 +524,9 @@ function makeProcessFixture(t) {
     const observations = pids().map(identity => {
       const { role, pid, procPid } = identity;
       assert.ok(pid > 0 && procPid > 0, role + ' never reached the intended fixture');
-      assert.equal(fs.existsSync(path.join(root, role + '.term')), true,
+      assert.ok(fs.existsSync(readyFile(role)),
+        role + ' supervisor was never armed for the owned group TERM');
+      assert.equal(fs.existsSync(termFile(role)), true,
         role + ' did not observe the owned group TERM');
       const observation = terminalState(identity);
       assert.equal(observation.terminal, true, role + ' remains live after nativeRun returned');
@@ -482,17 +536,18 @@ function makeProcessFixture(t) {
     // from native reaping; neither is a running descendant.
     t.diagnostic('Owned process terminal states: ' + observations.join(', '));
   };
-  return { root, program, pids, observe,
+  return { root, program, supervisor, termFile, readyFile, invocation, pids, observe,
     env: { PATH: '/usr/bin:/bin', HOME: root } };
 }
 
 async function cancelProcessFixture(t, behavior = 'ignore-term') {
   const f = makeProcessFixture(t);
+  const invocation = f.invocation(behavior);
   const driver = path.join(f.root, 'driver.cjs');
   const resultFile = path.join(f.root, 'result.json');
   writeFile(driver, "'use strict';\nconst fs = require('node:fs');\n"
     + 'const { nativeRun } = require(' + JSON.stringify(path.join(__dirname, 'provision-dev.cjs')) + ');\n'
-    + 'nativeRun(process.execPath, ' + JSON.stringify([f.program, 'parent', f.root, behavior]) + ', '
+    + 'nativeRun(' + JSON.stringify(invocation.file) + ', ' + JSON.stringify(invocation.args) + ', '
     + JSON.stringify({ cwd: f.root, env: f.env, capture: true, timeoutMs: 8000, killAfterMs: 150 })
     + ').then(result => { fs.writeFileSync(' + JSON.stringify(resultFile)
     + ', JSON.stringify(result)); process.exitCode = result.status; })'
@@ -508,8 +563,9 @@ async function cancelProcessFixture(t, behavior = 'ignore-term') {
     await exit;
   });
   const pulseFile = path.join(f.root, 'descendant.pulse');
-  await until(() => f.pids().every(({ pid }) => pid) && fs.existsSync(pulseFile),
-    'descendant never reached cancellation control');
+  await until(() => f.pids().every(({ pid }) => pid) && fs.existsSync(pulseFile)
+    && ['parent', 'descendant'].every(role => fs.existsSync(f.readyFile(role))),
+  'descendant never reached cancellation control');
   const initialPulse = fs.readFileSync(pulseFile, 'utf8');
   await until(() => fs.readFileSync(pulseFile, 'utf8') !== initialPulse,
     'descendant heartbeat never advanced before cancellation');
@@ -519,6 +575,11 @@ async function cancelProcessFixture(t, behavior = 'ignore-term') {
   assert.equal(terminalState(descendant).terminal, false,
     'the liveness oracle must observe the running descendant');
   assert.equal(child.kill('SIGTERM'), true);
+  // Bounded handshake, not one sample of a live process table: each supervisor
+  // records the group TERM from a process blocked in wait(2), so the
+  // acknowledgement cannot be starved past the escalation grace.
+  await until(() => ['parent', 'descendant'].every(role => fs.existsSync(f.termFile(role))),
+    'owned group never acknowledged the cancellation TERM', 4000);
   await until(() => closed, 'cancellation driver did not exit after group cleanup');
   const nativeExit = await exit;
   assert.equal(nativeExit.status, 143);
@@ -816,6 +877,134 @@ test('Given missing components on installed SDKs, ensure repairs them without ad
     assert.equal(f.read().stableRefreshes, 1);
   });
 
+test('An unusable default npm cache fails before ci with the native cause and recovery',
+  { skip: !NATIVE }, async t => {
+    const f = makeFixture(t);
+    const cache = path.join(f.env.HOME, 'default cache');
+    fs.mkdirSync(cache, { recursive: true });
+    fs.chmodSync(cache, 0o555);
+    t.after(() => { if (fs.existsSync(cache)) fs.chmodSync(cache, 0o755); });
+    f.update(state => { state.defaultCache = cache; state.failAtInstall = true; });
+    if (process.getuid() === 0) {
+      // Root can bypass mode bits. Inject the same native refusal at the
+      // exclusive probe open while retaining real child processes and paths.
+      const open = fs.openSync;
+      t.mock.method(fs, 'openSync', (filename, flags, ...rest) => {
+        if (flags === 'wx+' && path.basename(filename).startsWith('.ripr-provision-')) {
+          throw Object.assign(new Error('EACCES: permission denied, open ' + filename), { code: 'EACCES' });
+        }
+        return open(filename, flags, ...rest);
+      });
+    }
+    await assert.rejects(f.run(['--ensure']), error => error.exitCode === 1
+      && /EACCES/.test(error.message) && /npm_config_cache=/.test(error.message)
+      && !/corrupt/i.test(error.message));
+    const events = f.read().events;
+    assert.deepEqual(events.filter(event => event.command === 'npm').map(event => event.args),
+      [['config', 'get', 'cache']]);
+    assert.equal(fs.existsSync(path.join(f.modules, '.ripr-provision-lock.json')), false);
+  });
+
+test('An explicit npm cache with spaces is used by lookup, install and offline reuse',
+  { skip: !NATIVE }, t => {
+    const f = makeFixture(t);
+    const cache = path.join(f.env.HOME, 'chosen cache ');
+    f.env.NPM_CONFIG_CACHE = cache;
+    const physicalHome = path.join(path.dirname(f.env.HOME), 'physical home');
+    fs.mkdirSync(physicalHome);
+    fs.symlinkSync(physicalHome, f.env.HOME);
+    fs.chmodSync(f.env.HOME, 0o311); // Traverse and create, without listing the parent.
+    const lock = fs.readFileSync(f.lock);
+    const first = f.cli(['--ensure']);
+    fs.chmodSync(f.env.HOME, 0o700);
+    assert.equal(first.status, 0, first.stderr);
+    assert.match(first.stdout, /\(created\)/);
+    assert.deepEqual(fs.readdirSync(cache), []);
+    assert.match(first.stdout, /npm cache/i);
+    fs.writeFileSync(path.join(cache, 'sentinel'), 'keep');
+    const second = f.cli(['--ensure']);
+    assert.equal(second.status, 0, second.stderr);
+    assert.deepEqual(fs.readdirSync(cache), ['sentinel']);
+    assert.equal(fs.readFileSync(path.join(cache, 'sentinel'), 'utf8'), 'keep');
+    const events = f.read().events.filter(event => event.command === 'npm');
+    const editor = path.dirname(f.lock);
+    assert.deepEqual(events.filter(event => event.args[0] !== 'run').map(event => event.args),
+      [['config', 'get', 'cache'], ['ci', '--include=dev'], ['ls', '--all', '--include=dev', '--offline'],
+        ['config', 'get', 'cache'], ['ls', '--all', '--include=dev', '--offline']]);
+    for (const event of events) {
+      assert.equal(event.cwd, editor);
+      assert.equal(event.env.RUSTC, events.find(call => call.args[0] === 'ci').env.RUSTC);
+      assert.equal(event.env.NPM_CONFIG_CACHE, cache);
+      assert.equal(event.env.npm_config_cache, null);
+      assert.equal(event.executable, path.join(f.bin, 'npm'));
+    }
+    assert.deepEqual(fs.readFileSync(f.lock), lock);
+  });
+
+test('Unsafe npm cache selections preserve existing contents and reject before installation',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    fs.mkdirSync(f.env.HOME);
+    const file = path.join(f.env.HOME, 'file');
+    const link = path.join(f.env.HOME, 'link');
+    const dangling = path.join(f.env.HOME, 'dangling');
+    fs.writeFileSync(file, 'keep');
+    fs.symlinkSync(f.root, link);
+    fs.symlinkSync(path.join(f.env.HOME, 'absent'), dangling);
+    const unsafe = [
+      [file, /ENOTDIR/], [dangling, /ENOTDIR|ELOOP/], [path.join(link, 'escaped'), /ENOTDIR|ELOOP/],
+      [f.root, /outside the checkout/], ['/', /below the filesystem root/],
+      ['relative', /one absolute/], [f.root + '/../outside', /traversal/],
+      [f.root + '/tracked-cache', /outside the checkout/], [f.env.HOME + '\n/extra', /control characters/],
+    ];
+    for (const [cache, reason] of unsafe) {
+      f.env.npm_config_cache = cache;
+      await assert.rejects(f.run([]), error => reason.test(error.message) && /npm_config_cache=/.test(error.message));
+    }
+    assert.equal(f.read().events.filter(event => event.command === 'npm' && event.args[0] === 'config').length, unsafe.length);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'keep');
+    assert.equal(fs.existsSync(path.join(f.root, 'escaped')), false);
+    assert.equal(fs.existsSync(path.join(f.root, 'tracked-cache')), false);
+    assert.equal(fs.existsSync(path.join(f.env.HOME, 'absent')), false);
+    assert.equal(f.read().events.some(event => event.command === 'npm' && event.args[0] === 'ci'), false);
+  });
+
+test('Native npm cache probe errors retain the cause and clean only owned files',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    const cache = path.join(f.env.HOME, 'caller cache');
+    f.env.npm_config_cache = cache;
+    fs.mkdirSync(cache, { recursive: true });
+    fs.writeFileSync(path.join(cache, 'sentinel'), 'preserve');
+    // Inject a native error only into the descriptor write in this process.
+    // The child npm and its cwd, environment and command line remain real fixtures.
+    const write = fs.writeFileSync;
+    for (const code of ['EACCES', 'EROFS', 'ENOSPC']) {
+      fs.writeFileSync = (file, data, ...args) => {
+        if (typeof file === 'number' && Buffer.isBuffer(data) && data.toString() === 'ripr') {
+          throw Object.assign(new Error(`${code}: fixture filesystem write`), { code });
+        }
+        return write(file, data, ...args);
+      };
+      try {
+        await assert.rejects(f.run(['--ensure']), new RegExp(code + ': fixture filesystem write'));
+      } finally { fs.writeFileSync = write; }
+      assert.deepEqual(fs.readdirSync(cache), ['sentinel']);
+    }
+    assert.equal(f.read().npmInstalls, 0);
+    assert.equal(fs.readFileSync(path.join(cache, 'sentinel'), 'utf8'), 'preserve');
+  });
+
+test('A failed npm cache query preserves native stderr and exit',
+  { skip: !UNIX }, async t => {
+    const f = makeFixture(t);
+    f.update(state => { state.failure = { command: 'npm', includes: 'config',
+      status: 72, message: 'fixture configuration failure' }; });
+    await assert.rejects(f.run([]), error => error.exitCode === 72
+      && /fixture configuration failure.*npm_config_cache=/s.test(error.message));
+    assert.equal(f.read().npmInstalls, 0);
+  });
+
 test('Given matching locked editor dependencies, ensure reuses them without rerunning npm ci',
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
@@ -876,6 +1065,7 @@ test('Given a failing Xvfb or canonical editor smoke, setup retains native diagn
 test('Given a changed locked source at the same version, ensure reinstalls before the editor smoke',
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
+    f.env.npm_config_cache = path.join(f.env.HOME, 'selected cache');
     await f.run([]);
     const lock = JSON.parse(fs.readFileSync(f.lock, 'utf8'));
     lock.packages['node_modules/typescript'].resolved = 'https://registry.invalid/reviewed-typescript-6.0.3.tgz';
@@ -886,16 +1076,21 @@ test('Given a changed locked source at the same version, ensure reinstalls befor
     const installed = JSON.parse(fs.readFileSync(path.join(f.modules, 'typescript/package.json')));
     assert.equal(installed.version, '6.0.3');
     assert.equal(installed.resolved, 'https://registry.invalid/reviewed-typescript-6.0.3.tgz');
+    const installs = f.read().events.filter(event => event.command === 'npm' && event.args[0] === 'ci');
+    assert.ok(installs.every(event => event.env.npm_config_cache === f.env.npm_config_cache));
   });
 
 test('Given damaged installed dependencies, a matching stamp cannot suppress repair',
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
+    f.env.npm_config_cache = path.join(f.env.HOME, 'selected cache');
     await f.run([]);
     fs.rmSync(path.join(f.modules, 'typescript/bin/tsc'));
     await f.run(['--ensure']);
     assert.equal(f.read().npmInstalls, 2);
     assert.equal(fs.existsSync(path.join(f.modules, 'typescript/bin/tsc')), true);
+    const installs = f.read().events.filter(event => event.command === 'npm' && event.args[0] === 'ci');
+    assert.ok(installs.every(event => event.env.npm_config_cache === f.env.npm_config_cache));
   });
 
 test('Given different installed dependency versions, a matching stamp cannot prove a locked install',
@@ -911,6 +1106,7 @@ test('Given different installed dependency versions, a matching stamp cannot pro
 test('Given a deleted packaging entrypoint or transitive dependency, ensure repairs the editor tree',
   { skip: !UNIX }, async t => {
     const f = makeFixture(t);
+    f.env.npm_config_cache = path.join(f.env.HOME, 'selected cache');
     await f.run([]);
     fs.rmSync(path.join(f.modules, '.bin/vsce'));
     await f.run(['--ensure']);
@@ -920,6 +1116,8 @@ test('Given a deleted packaging entrypoint or transitive dependency, ensure repa
     await f.run(['--ensure']);
     assert.equal(f.read().npmInstalls, 3);
     assert.equal(fs.existsSync(path.join(f.modules, 'fixture-transitive-dependency/package.json')), true);
+    const installs = f.read().events.filter(event => event.command === 'npm' && event.args[0] === 'ci');
+    assert.ok(installs.every(event => event.env.npm_config_cache === f.env.npm_config_cache));
   });
 
 test('Given a lockfile changed during npm ci, no reusable install stamp or editor success is published',
@@ -952,6 +1150,7 @@ test('Given a failed locked reinstall, ensure cannot report editor success or re
     f.update(state => { state.failure = { command: 'npm', includes: 'ci', status: 74 }; });
     await assert.rejects(f.run(['--ensure']), error => error.exitCode === 74);
     assert.equal(f.read().editorSmokes, 1);
+    assert.equal(fs.existsSync(path.join(f.modules, '.ripr-provision-lock.json')), false);
     f.update(state => { state.failure = null; });
     await f.run(['--ensure']);
     assert.equal(f.read().npmInstalls, 2);
@@ -1066,6 +1265,39 @@ test('Given CLI help or invalid arguments, native children never begin provision
     assert.deepEqual(f.read().sdks, {});
   });
 
+test('Given an updated stable release, Copilot bootstrap refreshes it and checkout startup selects the pin',
+  { skip: !NATIVE }, async t => {
+    const entrypoint = fs.readFileSync(path.join(SOURCE_ROOT, '.github/copilot-instructions.md'), 'utf8');
+    const commands = heading => {
+      const section = entrypoint.split('## ' + heading + '\n')[1]?.split('\n## ')[0];
+      const block = section?.match(/```bash\n([\s\S]+?)\n```/);
+      assert.ok(block, 'missing Bash recipe under ' + heading);
+      return block[1];
+    };
+    const f = makeFixture(t);
+    await f.run(['--rust-only']);
+    const nextStable = '1.100.0';
+    const checkoutPin = '1.98.2';
+    f.update(state => { state.remoteStable = nextStable; });
+    f.put('rust-toolchain.toml', '[toolchain]\nprofile = "minimal"\nchannel = "' + checkoutPin
+      + '"\ncomponents = ["rustfmt", "clippy"]\n');
+    fs.symlinkSync('/usr/bin/mkdir', path.join(f.bin, 'mkdir'));
+    const shell = body => f.deps.run('/bin/bash', ['--noprofile', '--norc', '-ec', body],
+      { cwd: f.root, env: f.env });
+
+    const bootstrap = shell(commands('Prepare a GitHub Actions environment'));
+    assert.equal(bootstrap.status, 0, bootstrap.stdout + bootstrap.stderr);
+    assert.equal(f.read().stableRefreshes, 2);
+    assertComponents(f.read(), [checkoutPin + '-' + HOST, nextStable + '-' + HOST]);
+    assert.deepEqual(f.read().aptActions, ['update', 'install']);
+    assert.equal(f.read().editorSmokes, 1);
+
+    const started = shell(commands('Start work on the checkout') + '\nprintf "%s\\n" "$RUSTUP_TOOLCHAIN"');
+    assert.equal(started.status, 0, started.stdout + started.stderr);
+    assert.equal(started.stdout.trim().split('\n').at(-1), checkoutPin + '-' + HOST);
+    assert.equal(f.read().stableRefreshes, 2);
+  });
+
 test('Given a CLI invocation from another directory, the checked-out pin and space-containing homes drive installation',
   { skip: !NATIVE }, t => {
     const f = makeFixture(t);
@@ -1090,9 +1322,10 @@ test('Given a native CLI installer failure, the process exits with that status w
 test('Given a deadline and TERM-resistant descendants, nativeRun returns after the owned group is terminal',
   { skip: !NATIVE, timeout: 8000 }, async t => {
     const f = makeProcessFixture(t);
+    const invocation = f.invocation();
     const termListeners = process.listenerCount('SIGTERM');
     const intListeners = process.listenerCount('SIGINT');
-    const result = await nativeRun(process.execPath, [f.program, 'parent', f.root],
+    const result = await nativeRun(invocation.file, invocation.args,
       { cwd: f.root, env: f.env, capture: true, timeoutMs: 1500, killAfterMs: 150 });
     assert.equal(result.timedOut, true);
     assert.notEqual(result.status, 0);

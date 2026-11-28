@@ -680,3 +680,38 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_macro_wrapped_assertion_limitation (39)
+
+Reason:
+RIPR-SPEC-0120: a test checking only through an unread assertion-like macro reads assertion_admission_unproven, not has no assertion (#15237)
+
+Command:
+`cargo xtask goldens bless rust_macro_wrapped_assertion_limitation --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_macro_wrapped_assertion_limitation (40)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_macro_wrapped_assertion_limitation --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_macro_wrapped_assertion_limitation (41)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_macro_wrapped_assertion_limitation --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

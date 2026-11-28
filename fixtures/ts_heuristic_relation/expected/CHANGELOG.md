@@ -637,3 +637,36 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_heuristic_relation (39)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_heuristic_relation --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — ts_heuristic_relation (40)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless ts_heuristic_relation --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — ts_heuristic_relation (41)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_heuristic_relation --reason "..."`
+
+Updated:
+- `expected/human.txt`

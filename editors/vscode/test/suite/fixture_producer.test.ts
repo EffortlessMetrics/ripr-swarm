@@ -17,6 +17,8 @@ function running(pid: number): boolean {
       const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
       return !['Z', 'X'].includes(stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3));
     } catch (error) {
+      // A process can disappear after the native probe but during the read.
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') { return false; }
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         // Some executors expose a different procfs namespace. Missing procfs
         // evidence cannot override a successful native process-existence probe.
@@ -31,6 +33,66 @@ function running(pid: number): boolean {
   }
   return true;
 }
+
+// Fault injection is synchronous and restored before any asynchronous producer
+// runs. It models the procfs/native observation boundary, not a natural race.
+suite('Fixture producer process observation', () => {
+  setup(function () { if (process.platform !== 'linux') { this.skip(); } });
+
+  function observe(read: () => string, probe: () => boolean): boolean {
+    const nativeFs = require('fs') as typeof fs;
+    const originalRead = nativeFs.readFileSync, originalKill = process.kill;
+    Object.assign(nativeFs, { readFileSync: read });
+    Object.assign(process, { kill: probe });
+    try { return running(12345); }
+    finally {
+      Object.assign(nativeFs, { readFileSync: originalRead });
+      process.kill = originalKill;
+    }
+  }
+
+  function failure(code: string): never {
+    throw Object.assign(new Error(code), { code });
+  }
+
+  test('reports stopped when procfs reads ESRCH after a successful native probe', () => {
+    let probes = 0;
+    assert.strictEqual(observe(() => failure('ESRCH'), () => { probes++; return true; }), false);
+    assert.strictEqual(probes, 1);
+  });
+
+  test('rechecks missing procfs evidence in the native namespace', () => {
+    let probes = 0;
+    assert.strictEqual(observe(() => failure('ENOENT'), () => { probes++; return true; }), true);
+    assert.strictEqual(probes, 2);
+    probes = 0;
+    assert.strictEqual(observe(() => failure('ENOENT'), () => {
+      if (++probes === 2) { failure('ESRCH'); }
+      return true;
+    }), false);
+    assert.strictEqual(probes, 2);
+  });
+
+  test('propagates procfs and native permission and unexpected errors', () => {
+    for (const code of ['EACCES', 'EPERM', 'EIO']) {
+      assert.throws(() => observe(() => failure(code), () => true), { code });
+      assert.throws(() => observe(() => 'unused', () => failure(code)), { code });
+      let probes = 0;
+      assert.throws(() => observe(() => failure('ENOENT'), () => {
+        if (++probes === 2) { failure(code); }
+        return true;
+      }), { code });
+    }
+  });
+
+  test('distinguishes active processes from zombie and dead states', () => {
+    for (const state of ['S', 'R', 'Z', 'X']) {
+      assert.strictEqual(observe(() => `12345 (command with ) parentheses) ${state} 1`, () => true),
+        state !== 'Z' && state !== 'X');
+    }
+    assert.strictEqual(observe(() => failure('EIO'), () => failure('ESRCH')), false);
+  });
+});
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const until = Date.now() + 15_000;

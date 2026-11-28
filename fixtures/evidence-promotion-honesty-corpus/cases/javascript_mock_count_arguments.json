@@ -1,0 +1,29 @@
+{
+  "id": "javascript_mock_count_arguments",
+  "language": "javascript",
+  "tier": "pure",
+  "source_fixture": "fixtures/javascript_mock_count_arguments",
+  "vector": "argument_pin_control_keeps_credit",
+  "probe_family": "side_effect",
+  "assertions": [
+    {
+      "type": "must_not_report_clean"
+    },
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "must_promote"
+    },
+    {
+      "type": "expected_class",
+      "class": "exposed"
+    },
+    {
+      "type": "expected_oracle",
+      "kind": "exact_value",
+      "strength": "strong"
+    }
+  ]
+}

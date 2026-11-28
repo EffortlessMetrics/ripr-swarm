@@ -33,13 +33,31 @@
 //!   `preflight_refuses_forks_and_conflicts` fails on the head-repo and
 //!   mergeability markers;
 //! - the allowlist budget row removed → `run_block_budget_is_registered`
-//!   fails (and `cargo xtask check-workflows` fails the PR).
+//!   fails (and `cargo xtask check-workflows` fails the PR);
+//! - the pinned toolchain step losing its `with: toolchain:` input, or moving
+//!   it under `env:`, inside `run:`, or into a sibling step →
+//!   `bless_installs_the_pinned_toolchain` fails; a block scalar or nested
+//!   mapping under `with:` masquerading as the input, or a blank line
+//!   splitting the step → `toolchain_parser_shapes` fails; scalar shapes are
+//!   covered by `toolchain_scalar_shapes` (#14563).
 
 use std::fs;
 use std::path::Path;
 
 const WORKFLOW: &str = ".github/workflows/goldens-rebless.yml";
 const ALLOWLIST: &str = "policy/workflow_allowlist.txt";
+
+/// `dtolnay/rust-toolchain` refs whose `action.yml` has no default for the
+/// `toolchain` input, so a step pinned to one must pass `with: toolchain:` or
+/// the action exits 1 with "'toolchain' is a required input" before any step
+/// runs (#14563).
+///
+/// Verified against the action's refs: `683b588c…` is `refs/heads/master` and
+/// `refs/tags/v1` and has no default. `refs/heads/stable` (`b725eda5…`),
+/// `refs/heads/1.95`/`1.95.0` (`035fceb3…`) and the pinned commit
+/// `4cda84d5…` all carry a toolchain default, so they need no input. This list
+/// is maintained by hand: a new no-default ref must be added here.
+const NO_DEFAULT_TOOLCHAIN_REFS: &[&str] = &["683b588c487a69d01f6c6ddf40f036ff682cc2c8"];
 
 /// Executable (non-comment) fragments that would let the route gate,
 /// dispatch, mutate review state, or exceed its write boundary.
@@ -692,6 +710,335 @@ fn workflow_stays_inside_its_write_boundary() -> Result<(), String> {
         "pull-requests: write",
         "the comment authority for claim, refusal and re-arm notes",
     )
+}
+
+/// The part of a block mapping or list item indented beneath its header.
+fn nested_lines<'a>(lines: &'a [&'a str], parent_indent: usize) -> &'a [&'a str] {
+    let end = lines
+        .iter()
+        .position(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty()
+                && !trimmed.starts_with('#')
+                && line.len() - trimmed.len() <= parent_indent
+        })
+        .unwrap_or(lines.len());
+    &lines[..end]
+}
+
+/// Read an unquoted block key after its indentation has been checked.
+/// A colon without a separator remains part of a plain scalar.
+fn mapping_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let value = line.strip_prefix(key)?.strip_prefix(':')?;
+    (value.is_empty() || value.starts_with([' ', '\t'])).then_some(value)
+}
+
+fn step_field<'a>(step: &[&'a str], key: &str) -> Option<(usize, &'a str)> {
+    step.iter().enumerate().find_map(|(index, line)| {
+        let prefix = if index == 0 { "      - " } else { "        " };
+        mapping_value(line.strip_prefix(prefix)?, key).map(|value| (index, value))
+    })
+}
+
+/// A deeper content line can extend a plain scalar even across a blank line.
+fn inline_scalar(value: &str, following: &[&str], indent: usize) -> Option<String> {
+    if nested_lines(following, indent).iter().any(|line| {
+        let trimmed = line.trim_start();
+        !trimmed.is_empty() && !trimmed.starts_with('#')
+    }) {
+        return None;
+    }
+    yaml_scalar(value)
+}
+
+/// Match the action and its input on the same direct item of `bless.steps`.
+/// The two-space block layout keeps deeper mappings and script text out.
+fn pinned_step_toolchain(steps: &[&str]) -> Option<String> {
+    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
+    let action = format!("dtolnay/rust-toolchain@{reference}");
+    let step = steps
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.starts_with("      - "))
+        .map(|(index, _)| {
+            let body = nested_lines(&steps[index + 1..], 6);
+            &steps[index..index + 1 + body.len()]
+        })
+        .find(|step| {
+            step_field(step, "uses")
+                .and_then(|(index, value)| inline_scalar(value, &step[index + 1..], 8))
+                .as_deref()
+                == Some(action.as_str())
+        })?;
+    let (with_index, with_value) = step_field(step, "with")?;
+    if !strip_trailing_comment(with_value).trim().is_empty() {
+        return None;
+    }
+    let inputs = nested_lines(&step[with_index + 1..], 8);
+    let (index, value) = inputs.iter().enumerate().find_map(|(index, line)| {
+        mapping_value(line.strip_prefix("          ")?, "toolchain").map(|value| (index, value))
+    })?;
+    inline_scalar(value, &inputs[index + 1..], 10)
+}
+
+/// The text of a one-line YAML scalar, or `None` when the key carries no
+/// usable value.
+///
+/// Supported shapes:
+/// - a plain scalar: `1.95.0`, `stable`;
+/// - a single- or double-quoted scalar: `"1.95.0"`, `'1.95.0'`;
+/// - a trailing comment after any of the above: `1.95.0 # pinned`,
+///   `"" # pinned`, `'' # pinned`;
+/// - YAML null forms, which mean no input: empty, `~`, `null`, `Null`,
+///   `NULL` (quoted or not).
+///
+/// A `#` inside a quoted scalar is part of the value, not a comment. This is a
+/// one-line heuristic, not a full YAML parser: it does not handle multi-line
+/// scalars, anchors, or escapes inside double quotes.
+fn yaml_scalar(value: &str) -> Option<String> {
+    let value = strip_trailing_comment(value);
+    let value = strip_matching_quotes(value.trim());
+    let value = value.trim();
+    if value.is_empty() || is_yaml_null(value) {
+        return None;
+    }
+    Some(value.to_string())
+}
+
+/// Drop a trailing YAML comment, respecting quoted scalars so a `#` inside
+/// quotes is not treated as a comment.
+fn strip_trailing_comment(value: &str) -> &str {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (index, ch) in value.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match quote {
+            Some(open) => {
+                if open == '"' && ch == '\\' {
+                    escaped = true;
+                } else if ch == open {
+                    quote = None;
+                }
+            }
+            None => {
+                if ch == '"' || ch == '\'' {
+                    quote = Some(ch);
+                } else if ch == '#' {
+                    let before = &value[..index];
+                    if before.is_empty() || before.chars().last().is_some_and(char::is_whitespace) {
+                        return before;
+                    }
+                }
+            }
+        }
+    }
+    value
+}
+
+/// Strip one pair of matching single or double quotes, if present.
+fn strip_matching_quotes(value: &str) -> &str {
+    for quote in ['"', '\''] {
+        if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
+            return &value[1..value.len() - 1];
+        }
+    }
+    value
+}
+
+/// YAML null spellings that mean the key carries no value.
+fn is_yaml_null(value: &str) -> bool {
+    matches!(value, "~" | "null" | "Null" | "NULL")
+}
+
+#[test]
+fn bless_installs_the_pinned_toolchain() -> Result<(), String> {
+    let source = repo_file(WORKFLOW)?;
+    let lines = executable_lines(&source);
+    let bless = job_block(&lines, "bless");
+    let steps_index = bless
+        .iter()
+        .position(|line| {
+            line.strip_prefix("    ")
+                .and_then(|line| mapping_value(line, "steps"))
+                .is_some_and(|value| strip_trailing_comment(value).trim().is_empty())
+        })
+        .ok_or_else(|| "the bless job must define its steps".to_string())?;
+    let steps = nested_lines(&bless[steps_index + 1..], 4);
+    let value = pinned_step_toolchain(steps).ok_or_else(|| {
+        "the bless job must install the pinned action with an explicit `with: toolchain:` input (#14563)"
+            .to_string()
+    })?;
+    if value != "1.95.0" {
+        return Err(format!(
+            "the bless toolchain must be 1.95.0 to match rust-toolchain.toml; found `{value}`"
+        ));
+    }
+    Ok(())
+}
+
+fn step_value(source: &str) -> Option<String> {
+    pinned_step_toolchain(&source.lines().collect::<Vec<_>>())
+}
+
+#[test]
+fn toolchain_scalar_shapes() -> Result<(), String> {
+    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
+    let cases = [
+        ("plain", "1.95.0", true),
+        ("double quoted", "\"1.95.0\"", true),
+        ("single quoted", "'1.95.0'", true),
+        ("plain with comment", "1.95.0 # pinned", true),
+        ("double quoted with comment", "\"1.95.0\" # pinned", true),
+        ("single quoted with comment", "'1.95.0' # pinned", true),
+        ("hash inside quotes", "\"a#b\"", true),
+        ("empty", "", false),
+        ("double quoted empty", "\"\"", false),
+        ("single quoted empty", "''", false),
+        ("double quoted empty with comment", "\"\" # pinned", false),
+        ("single quoted empty with comment", "'' # pinned", false),
+        ("whitespace only", "   ", false),
+        ("double quoted whitespace", "\"   \"", false),
+        ("comment only", "# pinned", false),
+        ("tilde null", "~", false),
+        ("null", "null", false),
+        ("Null", "Null", false),
+        ("NULL", "NULL", false),
+        ("quoted null", "\"null\"", false),
+    ];
+    for (name, value, expected) in cases {
+        let source = format!(
+            "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: {value}\n"
+        );
+        let accepted = step_value(&source).is_some();
+        if accepted != expected {
+            return Err(format!(
+                "{name}: expected accepted={expected}, got accepted={accepted}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn toolchain_parser_shapes() -> Result<(), String> {
+    let reference = NO_DEFAULT_TOOLCHAIN_REFS[0];
+    let cases = [
+        (
+            "block scalar under with:",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          components: |\n            toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "nested mapping under with:",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          components:\n            toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "blank line between uses and with",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "blank line inside with",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n        with: # input\n\n          toolchain: 1.95.0\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "missing key separator",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain:1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "action text in name",
+            format!(
+                "      - name: Example uses: dtolnay/rust-toolchain@{reference}\n        uses: actions/checkout@v4\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "action and input text in run",
+            format!(
+                "      - run: |\n          - uses: dtolnay/rust-toolchain@{reference}\n            with:\n              toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "action text in run before real step",
+            format!(
+                "      - run: |\n          uses: dtolnay/rust-toolchain@{reference}\n      - uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "input is on sibling step",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n\n      - uses: dtolnay/rust-toolchain@stable\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "continued action ref",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n\n          extra\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "continued toolchain value",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: 1.95.0\n\n            extra\n"
+            ),
+            None,
+        ),
+        (
+            "different action ref",
+            format!(
+                "      - uses: dtolnay/rust-toolchain@{reference}-extra\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+        (
+            "with before a quoted action",
+            format!(
+                "      - with:\n          toolchain: '1.95.0' # pinned\n        uses: \"dtolnay/rust-toolchain@{reference}\" # v1\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "direct child",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        with:\n          toolchain: 1.95.0\n"
+            ),
+            Some("1.95.0"),
+        ),
+        (
+            "env: toolchain",
+            format!(
+                "      - name: Install\n        uses: dtolnay/rust-toolchain@{reference}\n        env:\n          toolchain: 1.95.0\n"
+            ),
+            None,
+        ),
+    ];
+    for (name, source, expected) in cases {
+        let actual = step_value(&source);
+        if actual.as_deref() != expected {
+            return Err(format!("{name}: expected {expected:?}, got {actual:?}"));
+        }
+    }
+    Ok(())
 }
 
 #[test]

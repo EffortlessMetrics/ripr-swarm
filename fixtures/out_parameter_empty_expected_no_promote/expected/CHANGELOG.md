@@ -202,3 +202,48 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — out_parameter_empty_expected_no_promote (17)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless out_parameter_empty_expected_no_promote --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — out_parameter_empty_expected_no_promote (18)
+
+Reason:
+RIPR-SPEC-0259: #13037 amendment, a weak finding whose related test already asserts an exact value names the unestablished link instead of the strengthen template; static class unchanged
+
+Command:
+`cargo xtask goldens bless out_parameter_empty_expected_no_promote --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — out_parameter_empty_expected_no_promote (19)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless out_parameter_empty_expected_no_promote --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — out_parameter_empty_expected_no_promote (20)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless out_parameter_empty_expected_no_promote --reason "..."`
+
+Updated:
+- `expected/human.txt`

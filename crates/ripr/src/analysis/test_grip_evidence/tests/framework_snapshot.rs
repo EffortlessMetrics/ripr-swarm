@@ -88,6 +88,10 @@ fn assert_limits(test: &str, expected_fields: [bool; 2]) -> Result<(), String> {
                 expected,
                 "{entry:?}"
             );
+            assert_eq!(
+                entry.evidence.discriminate.static_limit_kind,
+                expected.then_some(LIMIT)
+            );
             if expected {
                 assert!(matches!(
                     entry.class,

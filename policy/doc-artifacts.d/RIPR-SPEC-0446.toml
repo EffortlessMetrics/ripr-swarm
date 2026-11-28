@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0446"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0446-verbose-stderr-diagnostics.md"
+status = "accepted"
+owner = "product"
+standalone_reason = "#14831 adds new verbose diagnostics and the RIPR_VERBOSE stderr-only switch; RIPR-SPEC-0203 explicitly excludes new diagnostics, so no existing spec owns this contract."

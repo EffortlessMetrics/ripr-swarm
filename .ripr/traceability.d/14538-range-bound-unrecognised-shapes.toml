@@ -1,0 +1,7 @@
+# Range-bound edits in several-range lines and deferred assertions are not credited (#14538).
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = [
+  "fixtures/rust_range_bound_two_ranges_one_line",
+  "fixtures/rust_range_bound_unpolled_async_assertion",
+]

@@ -1,0 +1,7 @@
+diff --git a/partial/core.py b/partial/core.py
+--- a/partial/core.py
++++ b/partial/core.py
+@@ -1,2 +1,2 @@
+ def value_of(x):
+-    return x if x is not None else 5
++    return 5 if x is None else x

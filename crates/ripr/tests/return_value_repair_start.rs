@@ -477,16 +477,21 @@ const CONFIG_OLD: &str = "pub struct Config {\n    pub timeout_secs: u32,\n    p
 const CONFIG_NEW: &str = "pub struct Config {\n    pub timeout_secs: u32,\n    pub retries: u32,\n}\n\npub fn default_config() -> Config {\n    let retries = 3;\n    Config {\n        timeout_secs: 30,\n        retries,\n    }\n}\n";
 
 /// `ripr repair` agrees with `ripr check` on the struct-field change of
-/// `observation_unverified_field_construction`: a weak assertion on a sibling
-/// field is not a repair start, bare or by location, and the manual stub route
-/// stays named.
+/// A weak assertion on a sibling field read without binding the owner result
+/// is not a repair start, bare or by location, and the manual stub route stays
+/// named. (The `observation_unverified_field_construction` fixture keeps the
+/// bound form, but its candidate line is a shorthand `retries,` return-value
+/// seam, which the #13700 field route does not take.)
 #[test]
 fn repair_agrees_with_check_on_a_statically_limited_struct_field_finding() -> Result<(), String> {
     let repo = assert_no_start(
         "field-construction",
         CONFIG_OLD,
         CONFIG_NEW,
-        "use ar::default_config;\n\n#[test]\nfn config_exists() {\n    let cfg = default_config();\n    assert!(cfg.timeout_secs > 0);\n}\n",
+        // Unbound sibling read: a bound `let cfg = default_config();` with
+        // only `cfg.timeout_secs` read is the #13700 unread-field shape for
+        // `retries`, which now starts the field route.
+        "use ar::default_config;\n\n#[test]\nfn config_exists() {\n    assert!(default_config().timeout_secs > 0);\n}\n",
     )?;
     {
         let item = "src/lib.rs:8";
@@ -1095,12 +1100,15 @@ fn exact_field_or_arm_assertion_and_sibling_field_are_not_repair_starts() -> Res
         "src/lib.rs:4",
     )?;
     // A weak assertion on a sibling field does not tie the test to the
-    // changed field (the field route's own rule), so it is not a start.
+    // changed field (the field route's own rule), so it is not a start. The
+    // read stays unbound: binding the owner result and never reading the
+    // changed field is the #13700 unread-field start
+    // (`tests/unread_owner_result_field_repair_start.rs`).
     assert_no_start_at(
         "field-sibling",
         FIELD_OLD,
         FIELD_NEW,
-        "use ar::default_config;\n\n#[test]\nfn quiet() {\n    let c = default_config();\n    assert!(!c.verbose);\n}\n",
+        "use ar::default_config;\n\n#[test]\nfn quiet() {\n    assert!(!default_config().verbose);\n}\n",
         "src/lib.rs:8",
     )
 }
@@ -1709,5 +1717,85 @@ fn differing_inline_arms_repair_still_claims_existing_tests_already_check() -> R
         repair.contains(EXISTING_TESTS_ALREADY_CHECK),
         "differing arms must still read as gripped on current evidence:\n{repair}"
     );
+    Ok(())
+}
+
+#[test]
+fn long_literal_gap_round_trips_through_explain_repair_and_receipt() -> Result<(), String> {
+    for literal in ["a".repeat(2000), "é🚀".repeat(5000)] {
+        let old = format!("pub fn calc(x: usize) -> usize {{\n    x + \"{literal}\".len()\n}}\n");
+        let new = old.replace("x +", "x * 2 +");
+        let repo = Repo::create(
+            &old,
+            &new,
+            "use ar::calc;\n#[test]\nfn positive() {\n    assert!(calc(2) > 0);\n}\n",
+        )?;
+        let check = repo.ripr(&["check", "--base", "HEAD~1", "--format", "json"])?;
+        let report: serde_json::Value =
+            serde_json::from_slice(&check.stdout).map_err(|e| e.to_string())?;
+        let finding = report["findings"]
+            .as_array()
+            .ok_or("missing findings")?
+            .iter()
+            .find(|f| {
+                f["canonical_gap"]["owner"] == "calc"
+                    && f["canonical_gap"]["probe_kind"] == "return_value"
+            })
+            .ok_or("missing calc return-value finding")?;
+        assert_eq!(finding["classification"], "weakly_exposed");
+        let gap = finding["canonical_gap_id"]
+            .as_str()
+            .ok_or("missing gap ID")?;
+        assert_eq!(finding["canonical_gap"]["id"], gap);
+        assert!(
+            gap.len() < 150,
+            "long literal produced a {}-byte gap ID",
+            gap.len()
+        );
+
+        let explain = repo.ripr(&["explain", gap, "--base", "HEAD~1"])?;
+        assert!(
+            explain.status.success() && text(&explain).contains(gap),
+            "{}",
+            text(&explain)
+        );
+        let (ready, repair) = repo.repair_text(&[gap])?;
+        assert!(
+            ready && repair.contains("edit one test file: tests/t.rs"),
+            "{repair}"
+        );
+        if literal.len() == 30_000 {
+            assert!(repair.contains("See changed_expression in the canonical packet"));
+            let packet: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(repo.0.join("target/ripr/workflow/agent-packet.json"))
+                    .map_err(|e| e.to_string())?,
+            )
+            .map_err(|e| e.to_string())?;
+            assert_eq!(
+                packet["packets"][0]["changed_expression"],
+                format!(r#"x * 2 + "{literal}".len()"#)
+            );
+        }
+        let receipt = repo.ripr(&[
+            "receipt",
+            "write",
+            "--gap",
+            gap,
+            "--verify-command",
+            "cargo test",
+            "--status",
+            "not_run",
+        ])?;
+        assert!(receipt.status.success(), "{}", text(&receipt));
+        let written: serde_json::Value =
+            serde_json::from_slice(&receipt.stdout).map_err(|e| e.to_string())?;
+        assert_eq!(written["canonical_gap_id"], gap);
+        let read = repo.ripr(&["receipt", "check", "--gap", gap])?;
+        assert!(
+            read.status.success() && text(&read).contains("structurally valid"),
+            "{}",
+            text(&read)
+        );
+    }
     Ok(())
 }

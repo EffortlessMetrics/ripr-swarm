@@ -1036,7 +1036,10 @@ fn a_std_derive_that_defines_the_method_withholds_the_sole_credit() -> Result<()
         signature: "fn partial_cmp(&self, other: &Money) -> Option<std::cmp::Ordering>",
         old_line: "        self.0.partial_cmp(&other.0)",
         new_line: "        other.0.partial_cmp(&self.0)",
-        test_body: "let less = Money(2) < Money(3);\n        assert_eq!(less, true);",
+        // Both directions pinned at once is an exact pin of the ordering; a
+        // lone stored bool compared with `true` reads as the relational check
+        // it stores (#16296), which this credit question does not study.
+        test_body: "let order = [Money(2) < Money(3), Money(3) < Money(2)];\n        assert_eq!(order, [true, false]);",
         extra_items: concat!(
             "#[derive(Debug, Clone, Copy)]\npub struct Money(pub i64);\n",
             "#[cfg(test)] mod named { use super::*; #[test] fn named_call() { let order = Money::partial_cmp(&Money(1), &Money(2)); assert!(order.is_some()); } }"
@@ -1395,48 +1398,73 @@ mod pathed {
         extra_items: "
 #[cfg(test)]
 mod crowded {
+    // Each crowd row also calls a foreign `add`, so it ranks as near the owner
+    // by name like `zz_pathed` (#15026). Eight of them fill the window ahead
+    // of it, and the tie keeps name order.
     use super::*;
 
     #[test]
     fn a01_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a02_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a03_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a04_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a05_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a06_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
     fn a07_operator() {
         let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
         assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
+    }
+
+    #[test]
+    fn a08_operator() {
+        let sum = Money(1) + Money(1);
+        let one = 0i64.add(1);
+        assert_eq!(sum.0, 2);
+        assert_eq!(one, 1);
     }
 
     #[test]
@@ -1460,7 +1488,9 @@ mod crowded {
         !crowded_last[0]
             .related_tests
             .iter()
-            .any(|test| test.name == "zz_pathed")
+            .any(|test| test.name == "zz_pathed"),
+        "{:#?}",
+        crowded_last[0].related_tests
     );
     assert_eq!(crowded_last[0].class, ExposureClass::WeaklyExposed);
     let crowded_path_call_first = Case {

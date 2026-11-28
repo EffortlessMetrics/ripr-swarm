@@ -1,5 +1,407 @@
 # Golden Output Changes
 
+## Pending — corpus cache generation 1.220 for the producer-owned reach limit (#5492)
+
+Repo-seam reach stages now carry a producer-owned typed
+`unresolved_reach_limit` through classified-seam cache round trips, which
+bumps the analyzer cache schema to 1.220 (1.219 is left for #12686). Move the
+portable unchanged-attempt snapshots to 1.220, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.218 for receiver kinds read after generics (#16352)
+
+An owner's receiver kind is now read from its parameter list after the
+generics, and typed `self: Self`, `self: &Self` and `self: &mut Self`
+receivers are read, which can move a relation from a direct owner call to a
+name-only match and bumps the analyzer cache schema to 1.218. Move the
+portable unchanged-attempt snapshots to 1.218, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.217 for rootless grouped imports and body-scoped macro names (#16388)
+
+A rootless grouped drop-in import (`use {anyhow::anyhow, ..};`) is now
+verified by its own root, and a body-scoped macro name joins the binding
+scan only when the wrapper invokes it bare, which bumps the analyzer cache
+schema to 1.217. Move the portable unchanged-attempt snapshots to 1.217,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then
+the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain the same. No other fixture output
+is regenerated.
+
+## Pending — corpus cache generation 1.216 for source-bound provider failures (#10864)
+
+A property test whose provider verification failed is now an opaque repository
+limit with typed failure outcomes in the provider identity, which bumps the
+analyzer cache schema to 1.216. Move the portable unchanged-attempt snapshots to
+1.216, recompute the `raw_json_placeholder_v1` artifact content commitment, then
+the dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.215 for item macros naming serde_json (#16388)
+
+An item-position macro whose tokens name `serde_json` now refuses bare
+`json!` forwarding credit, which bumps the analyzer cache schema to 1.215.
+Move the portable unchanged-attempt snapshots to 1.215, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.214 for bare imported logging macros (#16420)
+
+A helper wrapper that logs through a bare leveled macro imported from an
+audited tracing or log release now forwards its helper result, which bumps
+the analyzer cache schema to 1.214. Move the portable unchanged-attempt
+snapshots to 1.214, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.213 for type-parameter-shadowed helpers (#12891)
+
+A helper whose every call to a name is qualified by its own type parameter no
+longer credits the same-spelled module function, which bumps the analyzer cache
+schema to 1.213. Move the portable unchanged-attempt snapshots to 1.213,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.212 for block arms that read a parameter (#10357)
+
+A comma-less match block arm in a helper wrapper that only reads the
+wrapper's parameter no longer reads as rebinding it, which bumps the
+analyzer cache schema to 1.212. Move the portable unchanged-attempt
+snapshots to 1.212, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.211 for imported anyhow! wrappers (#10357)
+
+A helper wrapper that calls bare `anyhow!` imported by a verified, audited
+`use anyhow::anyhow;` now forwards its helper result, which bumps the
+analyzer cache schema to 1.211. Move the portable unchanged-attempt
+snapshots to 1.211, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.210 for imported json! wrappers (#10357)
+
+A helper wrapper that calls bare `json!` imported by a verified, audited
+`use serde_json::json;` now forwards its helper result, which bumps the
+analyzer cache schema to 1.210. Move the portable unchanged-attempt
+snapshots to 1.210, recompute the `raw_json_placeholder_v1` artifact
+content commitment, then the dependent verify commitments and receipt byte
+hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain the same. No
+other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.209 for standard trait rivals (#16040)
+
+A `&self` or `&mut self` trait impl method on the text receiver path is now
+name-only when a standard trait's method of the name comes at an earlier
+probing step, which bumps the analyzer cache schema to 1.209. Move the portable unchanged-attempt snapshots to 1.209,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.208 for audited value-macro wrappers (#10357)
+
+A helper wrapper that builds a value through a path-qualified
+`anyhow::anyhow!` or `serde_json::json!` of an audited release now forwards
+its helper result, which bumps the analyzer cache schema to 1.208. Move the
+portable unchanged-attempt snapshots to 1.208, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.207 for constructed trait receivers (#15956, #15428)
+
+A trait impl method on a receiver built by an indexed constructor now relates
+by `direct_owner_call` unless another method of the name may take the call,
+and an inherent by-value twin withholds the relation, which bumps the
+analyzer cache schema to 1.207. Move the portable unchanged-attempt snapshots
+to 1.207, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain the same. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.206 for audited logging wrappers (#10357)
+
+A helper wrapper that logs through a path-qualified leveled macro of an
+audited `tracing` or `log` release (`tracing::info!(..)`) now forwards its
+helper result, which bumps the analyzer cache schema to 1.206. Move the
+portable unchanged-attempt snapshots to 1.206, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.205 for compared boolean locals (#16296)
+
+A boolean local compared with `true` (`let ok = value > 0; assert_eq!(ok,
+true);`) now reads as its initializer, which bumps the analyzer cache schema
+to 1.205. Move the portable unchanged-attempt snapshots to 1.205, recompute
+the `raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.204 for test-local binders (#14552)
+
+A test whose every mention of the owner's name is bound by a local of its
+body (`let dt = |x| x + 1;`, a closure parameter, a nested `fn dt`) no longer
+relates by `direct_owner_call`, which bumps the analyzer cache schema to
+1.204. Move the portable unchanged-attempt snapshots to 1.204, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.202 for compared pattern oracles (#16290)
+
+`assert_eq!(matches!(value, PATTERN), true)` now reads only as strong as its
+pattern, which bumps the analyzer cache schema to 1.202. Move the portable
+unchanged-attempt snapshots to 1.202, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.201 for file-module nested-block renames (#16277)
+
+A test in its own module file (`src/tests.rs` with `use super::*;`) whose
+renamed call sits inside `assert!` or `assert_eq!` now reads the enclosing
+module files, which bumps the analyzer cache schema to 1.201. Move the
+portable unchanged-attempt snapshots to 1.201, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.200 for or-pattern oracles (#16286)
+
+A `matches!` or `assert_matches!` or-pattern whose alternatives all pin a
+value now reads weak instead of exact, which bumps the analyzer cache schema
+to 1.200. Move the portable unchanged-attempt snapshots to 1.200, recompute
+the `raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.199 for include-reading helper wrappers (#10357)
+
+A helper wrapper that reads `include_str!` or `include_bytes!` before calling
+its helper now forwards the helper's result, which bumps the analyzer cache
+schema to 1.199. Move the portable unchanged-attempt snapshots to 1.199,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.198 for discarded owner calls (#16258)
+
+An owner call outside an untrusted inner macro whose statement discards the
+result (`let _ = pick(0);`, `pick(0);`) no longer counts as a free
+observation beside a macro-held call of the owner, which bumps the analyzer
+cache schema to 1.198. Move the portable unchanged-attempt snapshots to 1.198,
+recompute the `raw_json_placeholder_v1` artifact content commitment, then the
+dependent verify commitments and receipt byte hashes. Weak grip, unchanged
+movement, historical currentness, incomplete receipt status and fail-closed
+first-action routing remain the same. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.197 for chained owner-result locals (#16219)
+
+A local bound to an unwrapped or chained owner call whose only uses sit inside
+an inner macro the analyzer does not trust (`let r = pick(0).unwrap();
+assert_eq!(check_ok!(r), ..)`) now makes that assertion read as an unknown
+oracle for the owner, which bumps the analyzer cache schema to 1.197, above
+the 1.196 that #14116 already took on main. Move the
+portable unchanged-attempt snapshots to 1.197, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.196 for propagated fallible check helpers (#14116)
+
+A test-local check helper with a `?` now lends its assertion when every eager
+call in the test is `check(..)?`, which bumps the analyzer cache schema to
+1.196. Move the portable unchanged-attempt snapshots
+to 1.196, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain unchanged. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.195 for macro-held owner-result locals (#16192)
+
+A plain local bound to an owner call whose only uses sit inside an inner
+macro the analyzer does not trust (`let r = pick(0); assert_eq!(check_ok!(r),
+..)`) now makes that assertion read as an unknown oracle for the owner, which
+bumps the analyzer cache schema to 1.195. Move the
+portable unchanged-attempt snapshots to 1.195, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.194 for non-empty array loops (#14116)
+
+An assertion inside a `for` loop over any non-empty array now counts as run,
+not only one over a constant-row table, which bumps the analyzer cache schema
+to 1.194. Move the portable unchanged-attempt snapshots to 1.194, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.193 for macro-held owner calls (#16188)
+
+An assertion whose every call of the owner sits inside an inner macro the
+analyzer does not trust (a name outside the evaluating standard macros, or one
+the test file defines with `macro_rules!`) now reads as an unknown oracle for
+that owner, which bumps the analyzer cache schema to 1.193. Move the portable
+unchanged-attempt snapshots to 1.193, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
+## Pending — corpus cache generation 1.192 for manifest-rebound assertion roots (#10150)
+
+A `std::` or `core::` assertion whose root the test's own manifest binds to a
+Cargo package (`std = { package = .. }`) now reads as an unknown oracle, which
+bumps the analyzer cache schema to 1.192 (1.190 is left for #13041). Move the
+portable unchanged-attempt snapshots to 1.192, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent
+verify commitments and receipt byte hashes. Weak grip, unchanged movement,
+historical currentness, incomplete receipt status and fail-closed first-action
+routing remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.191 for env!-reading helper wrappers (#10357)
+
+A helper wrapper that reads `env!` or `option_env!` before calling its helper
+now forwards the helper's result, which bumps the analyzer cache schema to
+1.191 (1.190 is left for #13041). Move the portable unchanged-attempt snapshots
+to 1.191, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain unchanged. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.189 for std-rooted imports beside generated tests (#12876)
+
+A macro-generated test beside an import of std's own item under an exempt
+macro name (`use std::panic;`) keeps its invocation scopes, which bumps the
+analyzer cache schema to 1.189 (1.188 is left for #13041). Move the portable
+unchanged-attempt snapshots to 1.189, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
+## Pending — corpus cache generation 1.187 for attribute-macro generated tests (#12857)
+
+A macro-generated test that carries an unrecognised attribute macro takes no
+invocation scopes, which bumps the analyzer cache schema to 1.187. Move the
+portable unchanged-attempt snapshots to 1.187, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
+## Pending — explicit Cargo harness path identity (#15846)
+
+Classified cache generation 1.185 binds a harness flag to the selected Cargo
+target. The portable unchanged-attempt pair and its verification and receipt
+commitments were refreshed. The pair retains its original seam classifications.
+
+## Pending — corpus cache generation 1.184 for rebound std macro scopes (#12852)
+
+A macro-generated test that sits beside a rebound std macro name takes no
+invocation scopes, which bumps the analyzer cache schema to 1.184. Move the
+portable unchanged-attempt snapshots to 1.184, recompute the
+`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
+commitments and receipt byte hashes. Weak grip, unchanged movement, historical
+currentness, incomplete receipt status and fail-closed first-action routing
+remain unchanged. No other fixture output is regenerated.
+
+## Pending — corpus cache generation 1.182 after module-const reach (#13592)
+
+A module-level `const` read only by a same-module function gains a reader
+entry, which bumps the analyzer cache schema to 1.182. Move the portable
+unchanged-attempt snapshots to 1.182, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
+## Pending - branch-local return-value grip (#14496)
+
+A `return_value` seam inside a branch the pinned call does not take no longer
+keeps strong grip. In the portable unchanged-attempt snapshots the two tail
+`if`/`else` branch values now credit only the call that reaches them: the
+non-reaching oracle reads `weak` and sorts after the reaching one, so
+`related_tests`, `nearest_test_to_imitate`, `related_test` and the `reach`
+summary move for `src/lib.rs:3` and `src/lib.rs:5`. Refresh the artifact content
+commitment, then the dependent verify commitments and receipt byte hashes. The
+predicate seam, its weak grip, unchanged movement, historical currentness,
+incomplete receipt status and fail-closed first-action routing remain unchanged.
+No other fixture output is regenerated.
+
+## Pending - tail `if`/`else` branch-value seams (#14385)
+
+The portable unchanged-attempt snapshots now list the owner's two tail
+`if`/`else` branch values (`src/lib.rs:3` and `src/lib.rs:5`) as strongly
+gripped, non-headline `return_value` seams beside the predicate seam. Refresh the
+snapshot metrics and artifact content commitment, the verify artifact's
+unchanged seams and commitments, and the receipt byte hashes. The predicate seam,
+its weak grip, unchanged movement, historical currentness, incomplete receipt
+status and fail-closed first-action routing remain unchanged. No other fixture
+output is regenerated. The snapshots carry cache generation 1.181 from
+main (#12801).
+
+## Pending — corpus cache generation 1.181 after #12757 (#12801)
+
+Success-only assertions no longer discriminate a failure seam, which bumps the
+analyzer cache schema to 1.181. Move the portable unchanged-attempt snapshots
+to 1.181, recompute the `raw_json_placeholder_v1` artifact content commitment,
+then the dependent verify commitments and receipt byte hashes. Weak grip,
+unchanged movement, historical currentness, incomplete receipt status and
+fail-closed first-action routing remain unchanged. No other fixture output is
+regenerated.
+
+## Pending — corpus cache generation 1.180 after #14326
+
+A constructed field spelled with a logical-or no longer reads as an opaque
+closure, which bumps the analyzer cache schema to 1.180. Move the portable
+unchanged-attempt snapshots to 1.180, recompute the `raw_json_placeholder_v1`
+artifact content commitment, then the dependent verify commitments and receipt
+byte hashes. Weak grip, unchanged movement, historical currentness, incomplete
+receipt status and fail-closed first-action routing remain unchanged. No other
+fixture output is regenerated.
+
 ## Pending — corpus cache generation 1.177 after #13432 (#13956)
 
 #13432 bumped the analyzer cache schema to 1.177 but left the portable
@@ -1567,11 +1969,46 @@ commitments and receipt byte hashes. Weak grip, unchanged movement, historical
 currentness, incomplete receipt status and fail-closed first-action routing
 remain unchanged. No other fixture output is regenerated.
 
-## Pending — corpus cache generation 1.179 after #12541 (#5492)
+## Pending — boundary_gap (38)
 
-The producer-owned repo-seam reach limit bumps the analyzer cache schema to
-1.179. Move the portable unchanged-attempt snapshots to 1.179, recompute the
-`raw_json_placeholder_v1` artifact content commitment, then the dependent verify
-commitments and receipt byte hashes. Weak grip, unchanged movement, historical
-currentness, incomplete receipt status and fail-closed first-action routing
-remain unchanged. No other fixture output is regenerated.
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — boundary_gap (39)
+
+Reason:
+RIPR-SPEC-0008: SARIF alert messages are one plain line (#15374)
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/sarif.json`
+
+## Pending — boundary_gap (40)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — boundary_gap (41)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless boundary_gap --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

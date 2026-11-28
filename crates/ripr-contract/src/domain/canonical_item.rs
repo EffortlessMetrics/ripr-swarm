@@ -21,11 +21,17 @@ impl<'de> serde::Deserialize<'de> for CanonicalItemId {
     }
 }
 
+/// Why a value was refused as a [`CanonicalItemId`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CanonicalItemParseError {
+    /// The value was empty or only whitespace.
     Empty,
+    /// The value is not a `gap:rust:` id, a `gap:pr:` id, or `gap:` followed
+    /// by 16 hex digits.
     WrongClass {
+        /// The refused value, trimmed.
         value: String,
+        /// The field being parsed, such as `canonical_gap_id`.
         expected: &'static str,
     },
 }
@@ -54,6 +60,8 @@ impl CanonicalItemId {
         parse_gap_class(value, "gap_id alias")
     }
 
+    /// Returns the id string. An id built by a parser is trimmed, with its
+    /// case kept.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -76,7 +84,10 @@ fn parse_gap_class(
     if trimmed.starts_with("gap:rust:") || trimmed.starts_with("gap:pr:") {
         return Ok(CanonicalItemId(trimmed.to_string()));
     }
-    // Content-hash canonical gaps: `gap:` + 16 lowercase hex digits.
+    // Content-hash canonical gaps: `gap:` + 16 hex digits. The producer
+    // (`ripr::analysis::canonical_gap`) writes lowercase; uppercase is still
+    // accepted and kept as given, so a hand-copied id is never refused and
+    // never silently rewritten (#14070).
     let digest = trimmed.strip_prefix("gap:").unwrap_or("");
     if digest.len() == 16 && digest.chars().all(|ch| ch.is_ascii_hexdigit()) {
         return Ok(CanonicalItemId(trimmed.to_string()));
@@ -143,5 +154,39 @@ mod tests {
             .map_err(|error| error.to_string())?;
         assert_eq!(first, second);
         Ok(())
+    }
+
+    #[test]
+    fn content_hash_gap_needs_exactly_sixteen_hex_digits() {
+        for refused in [
+            "gap:67f9714ba37b396",
+            "gap:67f9714ba37b39670",
+            "gap:67f9714ba37b396g",
+            "gap:",
+        ] {
+            assert_eq!(
+                CanonicalItemId::from_canonical_gap_id(refused),
+                Err(CanonicalItemParseError::WrongClass {
+                    value: refused.to_string(),
+                    expected: "canonical_gap_id",
+                }),
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_hash_gap_accepts_either_hex_case_and_keeps_the_spelling() {
+        for accepted in ["gap:67f9714ba37b3967", "gap:67F9714BA37B3967"] {
+            assert_eq!(
+                CanonicalItemId::from_canonical_gap_id(accepted).map(|id| id.0),
+                Ok(accepted.to_string()),
+                "{accepted:?}"
+            );
+        }
+        assert_ne!(
+            CanonicalItemId::from_canonical_gap_id("gap:67F9714BA37B3967"),
+            CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967"),
+        );
     }
 }

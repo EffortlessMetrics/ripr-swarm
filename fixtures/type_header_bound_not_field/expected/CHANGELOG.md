@@ -216,3 +216,37 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — type_header_bound_not_field (18)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless type_header_bound_not_field --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — type_header_bound_not_field (19)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless type_header_bound_not_field --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — type_header_bound_not_field (20)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless type_header_bound_not_field --reason "..."`
+
+Updated:
+- `expected/human.txt`

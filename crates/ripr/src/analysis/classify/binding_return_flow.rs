@@ -190,7 +190,14 @@ pub(in crate::analysis) fn same_file_binding_helpers<'a>(
     index: &'a RustIndex,
 ) -> Option<Vec<&'a FunctionSummary>> {
     let facts = find_file_facts(index, &owner.file)?;
-    let named = |name: &str| facts.functions.iter().filter(|f| f.name == name).count();
+    // Counted once: a count per candidate walked every function of the file
+    // for every other function, for every changed owner (#11738).
+    let mut name_counts: std::collections::BTreeMap<&str, usize> =
+        std::collections::BTreeMap::new();
+    for function in facts.functions.iter() {
+        *name_counts.entry(function.name.as_str()).or_default() += 1;
+    }
+    let named = |name: &str| name_counts.get(name).copied().unwrap_or(0);
     if named(&owner.name) != 1 {
         return None;
     }

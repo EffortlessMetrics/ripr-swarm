@@ -308,7 +308,7 @@ artifact, is what tells status the attempt's outcome. The repair transaction
 writes it, and its ordering matters: the before phase captures the current
 checkout as its baseline, so the transaction must start **before** the focused
 test edit — run `ripr agent repair --phase before`, make the focused edit,
-then run the `--attempt ... --phase after` command it printed. The after phase
+then run the `ripr continue ... --attempt` command it printed. The after phase
 runs the verify and receipt plumbing, binds the receipt, and writes it to
 `target/ripr/reports/agent-receipt.json`. A transaction started only after the
 test has landed sees no repository movement between its phases and refuses

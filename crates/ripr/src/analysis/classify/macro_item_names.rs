@@ -18,7 +18,13 @@
 //!   bare argument (`emit!(suit_color)`, `emit!(inner!(suit_color))`) or
 //!   declares an item there (`emit!(fn suit_color() {})`). A call, path or method
 //!   use, or a mention nested in a braced body (`proptest! { fn t() {
-//!   f(suit_color(1)); } }`), binds nothing.
+//!   f(suit_color(1)); } }`), binds nothing; or
+//! - a statement-position invocation of a non-local macro spells an item
+//!   declaration of the name in its arguments (`emit!(fn suit_color() {});`
+//!   inside a test body, #8467). The expansion is unread, so whether the item
+//!   lands in the body is not known and the name counts as possibly rebound.
+//!   A bare mention or a call there (`emit!(suit_color(1));`) declares
+//!   nothing.
 //!
 //! The answer rides the shared same-name gate: both
 //! `ProbeContext::test_file_imports_foreign_callee_name` (memoized) and
@@ -166,7 +172,7 @@ impl MacroSites {
             } => (definitions, invocations),
         };
         invocations.iter().any(
-            |(macro_name, arguments, item_position, _statement_position, _qualified)| {
+            |(macro_name, arguments, item_position, statement_position, _qualified)| {
                 let mentions_name = contains_as_whole_word(arguments, name);
                 let bare_item_argument =
                     *item_position && passes_name_as_bare_argument(arguments, name);
@@ -177,12 +183,16 @@ impl MacroSites {
                     .collect::<Vec<_>>();
                 if local.is_empty() {
                     // An unread expansion can only receive the name through its
-                    // arguments, and only an item-position call defines items
-                    // for the whole file.
+                    // arguments. An item-position call defines items for the
+                    // whole file, so a bare name is enough there. A
+                    // statement-position call (#8467) counts only when its
+                    // arguments spell an item declaration of the name: a
+                    // bare mention or a call is ordinary expression use.
                     // A std expression macro defines no item; a body fragment
                     // (the helper-hop fallback source) parses its statement
                     // macros at "item position".
-                    return bare_item_argument
+                    let spelled_statement_item = *statement_position && declares_in_arguments;
+                    return (bare_item_argument || spelled_statement_item)
                         && !STD_EXPRESSION_MACROS.contains(&macro_name.as_str());
                 }
                 local.iter().any(|(_, definition)| {
@@ -211,7 +221,17 @@ pub(in crate::analysis) fn macro_may_define_item_named(source: &str, name: &str)
     if !contains_as_whole_word(source, name) && !source.contains("macro_rules!") {
         return false;
     }
-    MacroSites::scan(source).may_define(name)
+    // One scan answers every name. The helper-entry gate asks once per
+    // distinct entry name, so a diff that changes many functions of one file
+    // re-parsed that file once per changed function (#11738); within a run
+    // memo scope the file is scanned once.
+    crate::analysis::syntax::run_memo::memoize(
+        crate::analysis::syntax::run_memo::Product::MacroSites,
+        0,
+        source,
+        || std::rc::Rc::new(MacroSites::scan(source)),
+    )
+    .may_define(name)
 }
 
 /// Whether the file invokes an item- or statement-position macro whose body
@@ -311,6 +331,10 @@ fn forwards_arguments_verbatim(masked_definition: &str) -> bool {
 /// Standard-library macros that expand to expressions or statements and
 /// never define an item. A file-local `macro_rules!` of the same name is
 /// handled by the local-definition branch before this list is consulted.
+///
+/// `include!` is deliberately absent: at item position it expands to the
+/// items of the included file, so it stays an unread defining invocation.
+/// `include_str!` and `include_bytes!` expand to a literal.
 const STD_EXPRESSION_MACROS: &[&str] = &[
     "assert",
     "assert_eq",
@@ -333,6 +357,17 @@ const STD_EXPRESSION_MACROS: &[&str] = &[
     "todo",
     "unimplemented",
     "unreachable",
+    "concat",
+    "stringify",
+    "include_str",
+    "include_bytes",
+    "env",
+    "option_env",
+    "cfg",
+    "line",
+    "file",
+    "column",
+    "module_path",
 ];
 
 /// Whether masked macro text spells an item declaration of `name`.
@@ -635,6 +670,70 @@ mod tests {
         ] {
             assert!(!macro_may_define_item_named(source, "name"), "{source}");
         }
+    }
+
+    // #8467 finding 3.
+    #[test]
+    fn a_statement_position_external_macro_spelling_the_item_may_define_it() {
+        let body = |statement: &str| format!("#[test]\nfn t() {{\n    {statement}\n}}\n");
+        for statement in [
+            "emit!(fn name() {});",
+            "other::emit!(fn name(x: u8) -> u8 { x });",
+            "emit!(static mut name: u8 = 0);",
+        ] {
+            assert!(
+                macro_may_define_item_named(&body(statement), "name"),
+                "{statement}"
+            );
+        }
+        // Controls: a call, a bare mention, another item's name and a std
+        // expression macro spelling the item declare nothing.
+        for statement in [
+            "emit!(name(1));",
+            "emit!(name);",
+            "emit!(fn other() { name() });",
+            "emit!(fn name_total() {});",
+            "assert!(name(1));",
+            "stringify!(fn name() {});",
+            "let _ = emit!(fn name() {});",
+        ] {
+            assert!(
+                !macro_may_define_item_named(&body(statement), "name"),
+                "{statement}"
+            );
+        }
+    }
+
+    // #8467 finding 7.
+    #[test]
+    fn a_std_literal_macro_defines_nothing_and_include_stays_unread() {
+        // A body fragment parses its statement macros at item position.
+        for source in [
+            "stringify!(entry);\n",
+            "concat!(entry);\n",
+            "cfg!(entry);\n",
+            "env!(entry);\n",
+            "option_env!(entry);\n",
+            "include_str!(entry);\n",
+            "include_bytes!(entry);\n",
+            "line!(entry);\n",
+            "file!(entry);\n",
+            "column!(entry);\n",
+            "module_path!(entry);\n",
+        ] {
+            assert!(!macro_may_define_item_named(source, "entry"), "{source}");
+            assert!(
+                !file_has_non_local_defining_macro_invocation(source),
+                "{source}"
+            );
+        }
+        // Controls: a non-std macro in the same position may define it, and
+        // `include!` expands to the included file's items.
+        assert!(macro_may_define_item_named("emit!(entry);\n", "entry"));
+        assert!(macro_may_define_item_named("include!(entry);\n", "entry"));
+        assert!(file_has_non_local_defining_macro_invocation(
+            "include!(\"generated.rs\");\n"
+        ));
     }
 
     fn take_scans() -> usize {

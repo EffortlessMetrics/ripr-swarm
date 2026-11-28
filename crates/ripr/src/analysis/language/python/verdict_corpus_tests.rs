@@ -1587,6 +1587,32 @@ fn a_mock_passed_for_a_called_parameter_pins_its_arguments() -> Result<(), Strin
         on_parse_class(ON_PARSE, 2, ON_PARSE_OLD, returned)?,
         ExposureClass::Exposed
     );
+    let awaited = "async def test_on_parse():\n    m = await on_parse('1', Mock())\n    m.assert_called_once_with(1)\n";
+    assert_eq!(
+        on_parse_class(&format!("async {ON_PARSE}"), 2, ON_PARSE_OLD, awaited)?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        on_parse_class(ON_PARSE, 2, ON_PARSE_OLD, awaited)?,
+        ExposureClass::Exposed
+    );
+    for owner in [
+        format!("@wrapper\nasync {ON_PARSE}"),
+        format!(
+            "async {}",
+            ON_PARSE.replace("return handler", "handler = Mock()\n    return handler")
+        ),
+    ] {
+        assert_ne!(
+            on_parse_class(
+                &owner,
+                2 + usize::from(owner.starts_with('@')),
+                ON_PARSE_OLD,
+                awaited
+            )?,
+            ExposureClass::Exposed
+        );
+    }
     // The same mock reached through the local the test passed.
     assert_eq!(
         on_parse_class(
@@ -2794,5 +2820,73 @@ fn a_reexported_package_name_shadowed_by_a_plain_module_is_not_exposed() -> Resu
     assert_eq!(reexport_class(&package)?, ExposureClass::Exposed);
     let shadowed = [package[0], package[1], "svc/a/core.py"];
     assert_ne!(reexport_class(&shadowed)?, ExposureClass::Exposed);
+    Ok(())
+}
+
+const MODULE_CONSTANT_OWNER: &str = "DISCOUNT_THRESHOLD = 10_000\n\n\ndef discounted_total(amount):\n    if amount >= DISCOUNT_THRESHOLD:\n        return amount - amount // 10\n    return amount\n";
+const MODULE_CONSTANT_TEST: &str = "import pricing\nfrom svc.a.src.pricing import discounted_total\n\n\ndef test_below():\n    assert discounted_total(5_000) == 5_000\n\n\ndef test_above():\n    assert discounted_total(20_000) == 18_000\n\n\ndef test_at():\n    assert discounted_total(pricing.DISCOUNT_THRESHOLD) == 9_000\n";
+
+/// Classify the boundary change in `svc/a/src/pricing.py` for the module
+/// constant test at `test_file`, with every workspace file given to the
+/// src-ambiguity and test-local shadow passes as the workspace analysis does.
+fn module_constant_boundary_class(
+    workspace_files: &[&str],
+    test_file: &str,
+) -> Result<ExposureClass, String> {
+    let owner_file = Path::new("svc/a/src/pricing.py");
+    let mut owners = extract_owners(owner_file, MODULE_CONSTANT_OWNER);
+    let files = workspace_files
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect::<Vec<_>>();
+    related_tests::apply_src_module_ambiguity(
+        &mut owners,
+        files.iter().filter(|file| !is_test_file(file)),
+    );
+    related_tests::apply_test_local_shadows(&mut owners, files.iter());
+    let tests = extract_tests(Path::new(test_file), MODULE_CONSTANT_TEST);
+    classify::classify_change_with_context(
+        owner_file,
+        5,
+        "    if amount >= DISCOUNT_THRESHOLD:",
+        Some("    if amount > DISCOUNT_THRESHOLD:"),
+        &owners,
+        &tests,
+        classify::PythonNoBehaviorContext::default(),
+        None,
+    )
+    .map(|finding| finding.class)
+    .ok_or_else(|| "changed line should classify".to_string())
+}
+
+/// #14035: `import pricing; pricing.DISCOUNT_THRESHOLD` binds the boundary
+/// value only while `pricing` identifies the owner's module for the test. A
+/// test-local `pricing.py` ahead on `sys.path` (#13706) or a rival project's
+/// `src/pricing.py` (#4566) answers the attribute instead, so the call at the
+/// boundary is not credited.
+#[test]
+fn a_shadowed_module_constant_boundary_is_not_exposed() -> Result<(), String> {
+    let owner = "svc/a/src/pricing.py";
+    let test = "svc/a/tests/test_pricing.py";
+    // Unshadowed control: the call at the boundary credits.
+    assert_eq!(
+        module_constant_boundary_class(&[owner, test], test)?,
+        ExposureClass::Exposed
+    );
+    // A test-local helper module of the same name shadows `pricing`.
+    assert_ne!(
+        module_constant_boundary_class(&[owner, "svc/a/tests/pricing.py", test], test)?,
+        ExposureClass::Exposed
+    );
+    // A rival project's `pricing` answers the import in that project's tests.
+    let rival_test = "svc/b/tests/test_pricing.py";
+    assert_eq!(
+        module_constant_boundary_class(&[owner, rival_test], rival_test)?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        module_constant_boundary_class(&[owner, "svc/b/src/pricing.py", rival_test], rival_test)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }

@@ -112,11 +112,17 @@ is exactly one of:
 | `creusot_std::prelude::*` | creusot-std 0.14.0 |
 | `vstd::prelude::*` | vstd 0.0.0-2026-10-25-0158 |
 | `prusti_contracts::*` | prusti-contracts 0.3.3 |
+| `proptest::prelude::*` | proptest 1.12.0 |
+| `rayon::prelude::*` | rayon 1.12.0 |
 
 and the crate name resolves to its plain registry package for the importing
 file's manifest (the existing drop-in manifest authority, RIPR-SPEC-0197: no
 `package`, `path`, `git`, `registry`, `[patch]` or `.cargo` substitution) and
 is not shadowed by a workspace package, module or `extern crate` rename.
+A plain import that binds the crate name in the same file (`use other::vstd;`
+or `use other::vstd::{self};`) also takes the path over, as it does for the
+standard roots, so the glob stays foreign; an absolute `::vstd::prelude::*`
+still names the extern crate.
 
 Evidence for "exports no assertion macro", read from the published crate
 sources (the clones are not vendored):
@@ -135,6 +141,16 @@ sources (the clones are not vendored):
   `prusti_assert_eq!`, `prusti_assert_ne!`, `map!`, `seq!`, `set!`,
   `closure!` and `ghost!`. None is named `assert_eq`, `assert_ne` or any
   other trusted assertion.
+- `proptest::prelude` (#14116) re-exports `any`, `any_with`, `Arbitrary`,
+  strategy types, `ProptestConfig`, `TestCaseError`, `ProptestResultExt`,
+  the `rand` traits `Rng`, `RngExt` and `RngCore`, a `prop` module of
+  submodules, and the macros `prop_assert!`, `prop_assert_eq!`,
+  `prop_assert_ne!`, `prop_assume!`, `prop_compose!`, `prop_oneof!` and
+  `proptest!`. None is named like a trusted assertion.
+- `rayon::prelude` (#14116) is only `pub use` of thirteen parallel-iterator
+  traits (`ParallelIterator`, `IntoParallelIterator`, `ParallelSlice`, ...)
+  and exports no macro at all. On ripr's own repository these two globs were
+  the cited refusal on 68 of 72 uncredited assertions across three commits.
 
 The audit is of the listed versions only. The glob keeps assertion credit only
 when the nearest `Cargo.lock` at or above the analysis root locks the crate
@@ -144,15 +160,21 @@ unlocked crate, a missing or unreadable lockfile, a newer, older or unknown
 version, a path, git or other-registry package, a workspace member of the same
 name, or several locked versions of the crate refuse credit with the same named
 macro-binding refusal as before this spec; the refusal text does not name the
-version. A future release that exports a trusted assertion name is never
+version. Since #16060 that refusal covers only the names a glob can bind
+(`vec!`, `format!`, the claims and expect-test macros, `json!`): a bare core
+prelude assertion is credited beside any glob, audited or not (see "A glob
+cannot rebind a core prelude macro" below). A future release that exports a trusted assertion name is never
 covered by this entry until it is re-read and added.
 
 New-audit procedure: re-read the published crate's prelude export list at the
 exact version (no macro named like a trusted assertion), add that exact version
 string to `AUDITED_PRELUDE_VERSIONS` in `analysis/facts/drop_in.rs` and to the
-table above, extend `verification_prelude_globs_credit_only_audited_locked_versions`,
-and bump `CACHE_SCHEMA_VERSION`. Remove a version the same way if a re-read finds
-an assertion-like export.
+table above, and extend `verification_prelude_globs_credit_only_audited_locked_versions`.
+Remove a version the same way if a re-read finds an assertion-like export. No
+`CACHE_SCHEMA_VERSION` bump is needed: persisted classifications key on the
+analyzer build identity (`build_identity::cache_identity`, the commit or a
+source digest), so a build with a different audit table never reads entries
+another build wrote (#14116).
 
 This grants no credit of its own: an assertion in a file
 with such a glob is credited exactly as it would be without the glob, and a
@@ -170,15 +192,238 @@ file. It stays foreign when the module is inline (its imports are scoped to it),
 mounted with `#[path]`, declared twice (for example under exclusive `cfg`s),
 shadowed by an `extern crate`, `use` or other item of the same name, written
 with a longer path, a group or a leading `::`, nested in a module, reached next
-to an item-position macro, or one of `std`/`core`/`alloc`. Without this a
+to an item-position macro. Without this a
 re-export facade (`mod global_rng; pub use global_rng::*;`) made every assertion
 in the crate's tests macro-binding unestablished.
+
+A module declared under a standard crate's name qualifies like any other
+(#14116): in `mod core; use core::*;` the declared module shadows the extern
+prelude, so the glob reads the local module and never the standard crate.
+The standard-root rule declines such a file because the module takes the
+root's name, so before this the glob was foreign under both rules. Every other
+standard-root spelling keeps the standard-root rule, and so does a declaration
+under `cfg` or `cfg_attr`: compiled out, it leaves the glob reading the standard
+name, which a renamed dependency can hold.
+
+An import path that only reads the module name does not shadow it (#14116):
+`pub(crate) use name::{A, B};`, a member renamed to another name, or an import
+renamed to `_` leaves the local glob intact. Actual leaf bindings, including
+grouped `self` and aliases to the module name, still refuse. An opaque import
+that mentions the module name keeps the prior refusal; this includes absolute
+grouped paths whose bound name is not established. Unrelated absolute imports
+do not shadow the module. This does not relax unresolved-include placement refusal or
+hide public macro imports in the module being globbed.
+
+Std's `thread_local!` and `compile_error!` (bare or `std::`) are not
+item-position macros that refuse the local glob (#14116): their expansions
+declare no module, as the module-tree scan already reads them. The call still
+refuses when its tokens spell the module name, when the file may bind the
+macro's name, or for a `std::` call the name `std` (a same-named
+`macro_rules!` or `macro` at any depth, since a nested `#[macro_export]` one
+lands in the crate root's scope; a top-level same-named `mod` or
+`extern crate` alias, import of that name, or any `#[macro_use]` item), or
+when the file has another top-level glob. `core::` and `::std::` spellings
+keep the refusal. Without this, a file holding `mod inner; use
+inner::*;` beside a `thread_local!` lost the `assert_eq!` credit of every test
+in it. As in the module-tree scan, a shadowing macro or crate name from
+outside the file is not modeled: an `extern crate dep as std;` at the crate
+root, or a `std` or `thread_local` the globbed module itself re-exports.
 
 The rule reads the glob with 2018 path semantics at the top level of any file
 and does not consult the edition. In a 2015-edition crate a non-root file's
 `mod name; pub use name::*;` names a crate-root item instead, so a crate-root
 `extern crate dep as name;` could hide a foreign glob there. That is an accepted
 residual; the scan has no edition input.
+
+### A glob cannot rebind a core prelude macro (#16060)
+
+rustc rejects a bare macro call whose name both a glob import and the macro
+prelude supply: `error[E0659]: ... is ambiguous` ("a conflict between a name
+from a glob import and an outer scope"). This holds in every edition (2015,
+2018, 2021 and 2024 were checked with rustc 1.100), for a glob at file level,
+in a module reached through `use super::*` or another glob chain, for a glob
+of a workspace module or an outside crate, and under `#![no_std]`, whose
+prelude keeps `core`'s macros. A glob that brings an attribute named `test`
+fails the same way for `#[test]`, and so does a glob that brings a module
+named like an extern-prelude crate for a qualified `pretty_assertions::`
+call.
+
+So in a crate that compiles, a glob cannot silently replace the trusted names
+of `core`'s macro prelude at a bare call: `assert`, `assert_eq`, `assert_ne`,
+`cfg`, `column`, `concat`, `debug_assert`, `debug_assert_eq`,
+`debug_assert_ne`, `env`, `file`, `format_args`, `include_bytes`,
+`include_str`, `line`, `matches`, `module_path`, `option_env`, `panic`,
+`stringify`, `todo`, `unimplemented`, `unreachable`, `write` and `writeln`
+(each checked with rustc beside a glob, std and `#![no_std]`). The list is
+one code constant, `CORE_PRELUDE_MACROS`, and a test requires every trusted
+name to sit either there or on the glob-bindable side. A foreign glob reports
+no binding site for them, so it no longer refuses a test's standard
+assertions, a test that reads `env!` or `concat!`, or makes a standard
+wrapper call (`assert!` around `assert_eq!`) a named wrapper. It still
+reports every other trusted name: `vec`, `format`, `print`, `println`,
+`eprint`, `eprintln` and `dbg`, which a `#![no_std]` prelude lacks, the
+claims and expect-test macros, and `json`. The rule covers bare calls beside
+a glob only: an explicit `use std::concat;` keeps its import site, since in a
+`#![no_std]` target a glob may supply a module named `std`. The
+assertion-family imports keep the #15263 reading.
+
+The rule does not reach a scope under `#[no_implicit_prelude]`, where a glob
+does bind the name without error; that attribute reports its own site for
+every trusted name. An explicit import, a `macro_rules!` definition, a
+`#[macro_use]` crate and an item-position macro keep their sites. `#![no_core]`
+crates (unstable, rustc-internal) are not modeled.
+
+An item-position `include!` (at a file's top level or in an inline module,
+any spelling: `std::include!`, `r#include!`) whose path is not one string
+literal reports a site for every trusted name. A literal path names a
+workspace file, which the index reads and the include resolver composes. The included file, often a build-script output read through
+`concat!(env!("OUT_DIR"), ..)`, may hold `macro_rules! assert_eq`, which
+shadows the prelude macro for the code after it without any ambiguity
+error. Before this rule a foreign glob in the same crate hid that gap (serde's
+`serde_core/src/lib.rs`, verdict corpus case `serde-format-u8-hundreds`). An
+expression-position `include!` is a block inside its function and is read
+there. The stored per-file binding candidates read such a file as `Any`, so
+the file-fact cache moves to 1.66.
+
+A workspace with a foreign glob no longer saturates the binding-site scan from
+the glob alone, so the scan reads the rest of the index when no other site
+binds the core names.
+
+### Audited pass-through wrappers confine their argument mentions (#14116)
+
+A trusted name mentioned in another macro's arguments is a binding site for
+the whole workspace (RIPR-SPEC-0197), because the expansion may emit a
+definition or import of that name anywhere. Three registry macros paste their
+arguments only into generated function bodies, closures and expressions:
+
+- `proptest!` (proptest 1.12.0 `src/sugar.rs`): each `fn` item becomes a
+  generated `fn` whose body holds the caller's body; strategies become `let`
+  initializers; the closure form becomes a closure.
+- `prop_assert!`, `prop_assert_eq!`, `prop_assert_ne!`, `prop_assume!` and
+  `prop_oneof!` (the same crate): expressions over the caller's tokens.
+- `serde_json::json!` (the audited literal `json!` identity): an expression
+  over the caller's tokens.
+- The standard `pin!` (`std::pin::pin!`, the same macro as
+  `core::pin::pin!`): it places its argument in an expression,
+  `Pin { __pointer: &mut { $value } }`. It ships with the toolchain, so it
+  needs no locked-version audit.
+- `tokio::select!` (tokio 1.54.1 `src/macros/select.rs`): branch patterns,
+  futures, `if` preconditions, handlers and the `else` arm are captured as
+  `pat`, `expr` and `block` fragments and placed in a `match`, a tuple and
+  `if` conditions; the `mod __tokio_select_util` it emits receives only the
+  branch count.
+
+A wrapper whose expansion changes between releases is trusted only at the
+locked versions it was read at. The drop-in authority checks the nearest
+`Cargo.lock` against this table, which
+`spec_wrapper_version_table_matches_the_code_authority` keeps equal to the
+code's `AUDITED_WRAPPER_VERSIONS`:
+
+| Wrapper | Audited lock package and version |
+| --- | --- |
+| tokio::select! | tokio 1.54.1 |
+
+Inside such a body a `use` or a non-exported `macro_rules!` binds only within
+the call's own text. So the argument site of such a call is scoped to the
+call's line and byte range and kept to its crate, and it no longer refuses a
+test elsewhere, when all of these hold:
+
+- The call is spelled `proptest::proptest!`, `serde_json::json!` or
+  `tokio::select!` (each with or without a leading `::`), or `proptest::` and one of the other `proptest`
+  wrappers above on its own, such as `proptest::prop_oneof!` building a
+  strategy in a helper outside `proptest!`, and the crate root passes the
+  drop-in authority
+  (audited locked version and plain registry manifest, not shadowed by a
+  workspace package, module or rename, and not taken over by a plain import
+  of the root name unless the path is absolute); or it is a bare
+  `proptest!`, or a bare call of another of those wrappers, whose module (the file, or the inline module holding the call)
+  has an admitted exact `proptest::prelude::*` glob.
+- Or it is the standard `pin!`, spelled `std::pin::pin!` or
+  `core::pin::pin!` (either with a leading `::`) with that root not bound
+  to another package by any manifest, not shadowed by a workspace package,
+  module or rename, and not taken over by a plain import of the root name
+  unless the path is absolute. Or it is a bare
+  `pin!` whose module holds exactly one import binding `pin` anywhere in the
+  file: a plain `use std::pin::pin;` or `use core::pin::pin;` (the root
+  under the same shadowing conditions), with no rename. The file must have
+  no `macro_rules!` or `macro` named `pin`, no glob in a block or inline
+  module between the call and its module, and no item-position macro call
+  there. A pasting `pin` definition anywhere reports its own wrapper
+  redefinition site, since textual scope outranks the import.
+- For a bare `proptest!`: the file has no plain import and no `macro_rules!`
+  or `macro` of any of the wrapper names above, no glob in a block or inline
+  module between the call and its module (an inner glob would shadow the
+  module's), and no other item-position macro call there that might expand
+  to such an import.
+- No parsed import anywhere in the file binds a `prop_*` macro name above or
+  one of the inert attribute names below, either directly or by a rename
+  (`use helper as prop_assert;` makes `prop_assert!` a call of `helper`), and
+  no rename binds `proptest`.
+- The arguments hold no `macro_rules`, `macro`, `mod`, `extern` or `include`
+  token, since a nested `#[macro_export]` definition, a module or pasted file
+  text can leave a function body.
+- Every `use` item in the arguments ends in `;`, is not a glob or a rename,
+  and names no trusted assertion-context macro, wrapper above, `serde_json`
+  or inert attribute below anywhere in its path. Such an item (`use
+  std::os::unix::ffi::OsStrExt;`) binds a trait or item inside the generated
+  body only; a glob, a rename (`use helper as prop_assert;`) or an import of
+  a trusted name can redirect a nested call the confinement trusts by name.
+- Every attribute in the arguments is a single-segment built-in that runs no
+  expander: `test`, `ignore`, `should_panic`, `allow`, `expect`, `warn`,
+  `deny`, `forbid`, `doc`, `inline`, `cfg`, `must_use`, `track_caller`, or
+  proptest's own `proptest_config` header. A `derive`, `cfg_attr` or path
+  attribute (`#[dep::define(..)]`) may invoke a procedural macro that emits
+  an exported definition beside the item it decorates.
+- Every nested macro call in the arguments is a single-segment trusted
+  assertion-context name, one of the wrapper macros above spelled bare or
+  under the `proptest` root (`proptest::prop_oneof!`, `::proptest::prop_assert!`),
+  `serde_json::json!` or `::serde_json::json!` (the same expression-only
+  wrapper, needing the same drop-in proof of the `serde_json` root as an
+  outer call), or one whose own arguments mention no trusted name. A nested
+  call of that last kind is accepted on that ground alone, so it adds no
+  root that needs proof. Any other path, such as
+  `dep::prop_assert!` or `crate::prop_assert!`, names whatever that module
+  exports. Any other nested call could define a name from its arguments
+  where the call's scope cannot bound it. When a nested bare `prop_*` call is
+  trusted by name under a qualified outer call, the bare `proptest!`
+  conditions above must also hold, so the name reaches the audited prelude.
+  A nested call under the `proptest` root needs the same drop-in proof of
+  that root as a qualified outer call: audited locked version, not shadowed,
+  and, for a path without a leading `::`, no plain import of `proptest`.
+  Only `::` joins a path: a lone `:` before the call, such as a struct
+  field's (`Check { strategy: proptest::prop_oneof![..] }`), ends it, so the
+  call reads as bare or as rooted as it is spelled.
+
+A leading `::` is read as an extern-crate path, for the outer call and for a
+nested one, and does not consult the edition. In a 2015-edition crate
+`::proptest` names a crate-root item instead, so a root module of that name
+could supply a different `prop_*` macro. That is an accepted residual, as for
+the glob rule above; the scan has no edition input.
+
+A confined argument mention rebinds nothing outside the call, so it does not
+make the trusted calls nested in the arguments (`assert_eq!(v, vec![1])`)
+opaque elsewhere in the file. A name the file genuinely rebinds still makes
+every one of its calls, inside the confined call too, a workspace-wide site
+for what its arguments mention.
+
+A `macro_rules!` or `macro` definition that takes one of the wrapper names
+and whose transcriber pastes caller tokens that may carry an item or
+statement is itself a binding site
+for every trusted name in its crate
+(`WrapperRedefinition`): through textual scope it may replace the audited
+macro for calls below it, including in child modules declared in other files,
+which the calling file cannot see. A transcriber pastes such tokens when it
+names a metavariable that its arm's matcher does not declare as `expr`,
+`expr_2021`, `ty`, `pat`, `pat_param`, `literal`, `lifetime` or `block`
+(`$crate` and a repetition's `$(` excepted); rustc pastes those fragments as
+one node, so a definition inside one stays scoped to it. A definition whose
+transcribers paste nothing, or only those fragments, adds nothing a call's
+arguments can bind and reports no such site. A `macro` item's body is read
+whole, so any `$` in it counts.
+
+Any other spelling, version, source, argument shape or local redefinition
+keeps the workspace-wide argument site. A test inside the call keeps the
+scoped site, so a generated test is not credited by this rule.
 
 ## Non-Goals
 

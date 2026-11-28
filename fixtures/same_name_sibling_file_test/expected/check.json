@@ -37,7 +37,7 @@
       "ripr": {
         "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach delay: cold_delay"},
         "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
-        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: Mode::Warm =>"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence match arm result: 2 + 3"},
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
@@ -48,11 +48,11 @@
         {"stage":"observe","state":"yes","confidence":"medium"},
         {"stage":"discriminate","state":"weak","confidence":"medium"}
       ],
-      "evidence_path": ["reach yes: Related tests appear to reach delay: cold_delay", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: Mode::Warm =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: Mode::Warm => (line 9)", "related test src/heaters.rs:19 cold_delay uses strong exact value oracle: assert_eq!(delay(Mode::Cold), 50);", "source assertion argument value 50 at line 20", "source enum variant value Mode::Cold at line 20"],
+      "evidence_path": ["reach yes: Related tests appear to reach delay: cold_delay", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Changed behavior appears to influence match arm result: 2 + 3", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: 2 + 3 (line 9)", "related test src/heaters.rs:19 cold_delay uses strong exact value oracle: assert_eq!(delay(Mode::Cold), 50);", "source assertion argument value 50 at line 20", "source enum variant value Mode::Cold at line 20"],
       "flow_sinks": [
-        {"kind":"match_arm","text":"Mode::Warm =>","line":9}
+        {"kind":"match_arm","text":"2 + 3","line":9}
       ],
-      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: Mode::Warm =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach delay: cold_delay"],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: 2 + 3", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach delay: cold_delay"],
       "missing": ["No strong discriminator was detected"],
       "assertion_texts": {
         "20": "assert_eq!(delay(Mode::Cold), 50);"
@@ -105,8 +105,8 @@
       "stop_reasons": [],
       "oracle_kind": "exact_value",
       "oracle_strength": "strong",
-      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
-      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "recommended_next_step": "The related test `cold_delay` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If an input selects the arm but its result is replaced before the assertion, assert that result where it is still observable or test the arm separately. If no related input selects the arm, add one and assert the exact value the arm produces.",
+      "suggested_next_action": "The related test `cold_delay` already asserts an exact value; the gap is not the assertion shape. Check whether the value that test asserts comes from the changed arm. If it does, the assertion may already notice this change, which ripr could not confirm from the source. If an input selects the arm but its result is replaced before the assertion, assert that result where it is still observable or test the arm separately. If no related input selects the arm, add one and assert the exact value the arm produces.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

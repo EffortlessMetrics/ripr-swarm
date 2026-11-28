@@ -488,19 +488,14 @@ fn run_ripr_check(
     let diff_arg = diff_path.display().to_string();
     let root_arg = command_root_arg(repo, &options.root);
     let timeout = Duration::from_secs(pr_evidence_timeout_secs()?);
-    let ripr_args = ripr_check_command_args(root_arg, options.base.clone(), diff_arg, timeout);
+    let ripr_args = ripr_check_command_args(root_arg, options.base.clone(), diff_arg);
     // The caller's preparer owns binary resolution: a failed resolution must
     // reach the evidence packet, not a silent env rebuild.
     let binary = binary.map_err(str::to_string)?;
     run_ripr_check_binary_with_env(binary, ripr_args, options, timeout, child_env)
 }
 
-fn ripr_check_command_args(
-    root: String,
-    base: String,
-    diff: String,
-    timeout: Duration,
-) -> Vec<String> {
+fn ripr_check_command_args(root: String, base: String, diff: String) -> Vec<String> {
     vec![
         "check".to_string(),
         "--root".to_string(),
@@ -511,11 +506,9 @@ fn ripr_check_command_args(
         diff,
         "--format".to_string(),
         "json".to_string(),
-        // `ripr check` has its own 600s default (`RIPR_CHECK_TIMEOUT`). Without
-        // this, CI's 3600s producer wrapper still loses to that inner budget
-        // and reports only truncated progress lines.
-        "--timeout".to_string(),
-        timeout.as_secs().to_string(),
+        // Do not pass the wrapper's timeout to `ripr check`: an explicit CLI
+        // timeout suppresses RIPR_CHECK_TIMEOUT, whose earlier deadline must
+        // emit its typed refusal before the wrapper kills the process (#14564).
     ]
 }
 
@@ -2042,21 +2035,15 @@ mod tests {
     }
 
     #[test]
-    fn ripr_pr_forwards_the_producer_timeout_to_check() {
+    fn ripr_check_lets_inner_deadline_precede_producer_wrapper() {
         let args = ripr_check_command_args(
             ".".to_string(),
             "origin/main".to_string(),
             "target/ripr/pr/pr.diff".to_string(),
-            Duration::from_hours(1),
         );
-        let timeout = args
-            .windows(2)
-            .find(|pair| pair[0] == "--timeout")
-            .map(|pair| pair[1].as_str());
-        assert_eq!(
-            timeout,
-            Some("3600"),
-            "producer budget must reach ripr check: {args:?}"
+        assert!(
+            !args.iter().any(|arg| arg == "--timeout"),
+            "an explicit outer wall-clock timeout must not mask the workflow's earlier inner deadline: {args:?}"
         );
         assert!(args.windows(2).any(|pair| pair == ["--format", "json"]));
     }

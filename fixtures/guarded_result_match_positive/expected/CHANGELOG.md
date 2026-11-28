@@ -395,3 +395,37 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — guarded_result_match_positive (33)
+
+Reason:
+RIPR-SPEC-0122: the all-clear Start here says no test gap was found and that nothing is needed (#14080); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless guarded_result_match_positive --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — guarded_result_match_positive (34)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless guarded_result_match_positive --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — guarded_result_match_positive (35)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless guarded_result_match_positive --reason "..."`
+
+Updated:
+- `expected/human.txt`

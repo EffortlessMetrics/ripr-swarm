@@ -1,3 +1,7 @@
+//! Language-neutral domain DTOs: findings, evidence, probes, identities,
+//! summaries and the refusal and verification records that adapters, the
+//! facade and renderers exchange.
+
 pub mod analysis_execution_identity;
 pub mod candidate_relation;
 pub mod canonical_item;
@@ -64,7 +68,8 @@ pub use command_spec::{
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
 pub use command_spec::{
-    command_tokens, python_pytest_verify_display, python_unittest_verify_display,
+    command_tokens, python_pytest_verify_display, python_pytest_verify_display_for,
+    python_unittest_verify_display,
 };
 pub use confidence_basis::ConfidenceCap;
 pub use confidence_basis::{
@@ -109,9 +114,13 @@ pub use intervention_study::{
 pub use language::perl_fact_packet_guidance;
 pub use language::{LanguageId, LanguageStatus, OwnerKind, StaticLimitKind};
 pub use language::{
-    PERL_FACT_EXPORTER, enablement_tip_languages, format_languages_enabled_toml, rust_markers_at,
+    PERL_FACT_EXPORTER, enablement_tip_keeps_rust, enablement_tip_languages,
+    format_languages_enabled_toml, rust_markers_at,
 };
-pub use language::{PYTEST_VERIFY_PROGRAM, is_pytest_verify_command};
+pub use language::{
+    PYTEST_VERIFY_INTERPRETERS, PYTEST_VERIFY_PROGRAM, is_pytest_verify_command,
+    pytest_verify_interpreter,
+};
 pub use probe::{
     ARM_UNSELECTED_REASON_PREFIX, GUARD_UNENTERED_REASON_PREFIX, STRONG_CHECK_UNTIED_NEXT_STEP,
     exact_assertion_fact, input_boundary_fact, is_unselected_input_reason,
@@ -128,8 +137,10 @@ pub use refusal_remedy::RefusalRemedy;
 // Public so the `ripr` facade can re-export it; not part of a product API (ADR 0027).
 pub use probe::LIVE_PYTHON_TRUTHINESS_ALIGNMENT;
 pub use probe::MISSING_DISCRIMINATOR_VALUE_PREFIX;
+pub use probe::UNREFERENCED_IN_WORKSPACE;
 pub use probe::boundary_input_observed_with_weak_oracle;
 pub use probe::declared_const_name;
+pub use probe::first_observing_related_test;
 pub use project_facts::{
     CanonicalSourceRole, FactCurrentnessV1, PROJECT_FACTS_SCHEMA_VERSION, ProjectFactsV1,
     SourceUnitFactV1, TestEnvironmentFactV1,

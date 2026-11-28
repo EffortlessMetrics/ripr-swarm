@@ -1,0 +1,13 @@
+# Registers the typed repair/continue refusal document under --json (#14931) under RIPR-SPEC-0241.
+[[extend]]
+id = "RIPR-SPEC-0241"
+tests = [
+  "crates/ripr/tests/task_first_facade.rs::typed_facade_refusals_under_json_write_code_and_disposition",
+  "crates/ripr/src/app/task_first.rs::tests::cli_refusal_schema_names_every_refusal_code_and_disposition",
+  "crates/ripr/src/app/task_first.rs::tests::split_stderr_line_inverts_message_with_stderr_line_for_every_code",
+  "crates/ripr/tests/cli_smoke.rs::agent_repair_before_requires_effective_cargo_build_directory_ignore",
+]
+code = [
+  "crates/ripr/src/cli/usage_refusal.rs",
+  "crates/ripr/src/cli/mod.rs",
+]

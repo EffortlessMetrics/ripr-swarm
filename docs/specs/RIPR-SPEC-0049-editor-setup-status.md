@@ -157,6 +157,25 @@ Setup ok:
   default, and fresh artifacts exist, status shows the binary, workspace,
   enabled languages, artifact state, and next safe action.
 
+Activation and expected version:
+
+- Given a workspace folder whose root holds any project marker the extension
+  checks before analysis (Rust, `ripr.toml`, Python or TypeScript markers),
+  the manifest activates the extension for it; the `workspaceContains`
+  activation list and that marker set are the same.
+- Given `ripr.server.version` is empty, the expected server version and the
+  extension version shown in status come from the extension's own manifest,
+  never from a fixed release number.
+
+Named commands:
+
+- Given a status message, setup report or setting description tells the user
+  to run a ripr command, it names the command by the title the Command Palette
+  shows (for the refresh command, the contributed title of
+  `ripr.refreshDiagnostics`), and the command lists in
+  `docs/EDITOR_EXTENSION.md` and `docs/CONFIGURATION.md` match the contributed
+  commands.
+
 Server missing:
 
 - Given no usable server binary is resolved, status explains that the server is
@@ -174,6 +193,39 @@ Server download unreachable:
   guidance and does not suggest that the machine is offline.
 - This spec owns only how the unavailable state is explained; the download
   itself stays outside it (see Non-Goals).
+
+Mirror address:
+
+- Given `ripr.server.autoDownload` is on and `ripr.server.downloadBaseUrl`
+  is set to something that is not a plain `https://` folder address (not a
+  URL, another scheme, a query or fragment, or the manifest file itself), the
+  extension skips the managed download instead of trying it, a usable `ripr`
+  on `PATH` still starts as before, and otherwise the unavailable-server
+  message names the setting, quotes the value, says what is wrong with it,
+  and asks for the `https://` folder address or an empty value. It does not
+  suggest that the machine is offline.
+
+First-run walkthrough setup check:
+
+- Given the `ripr: Get Started` walkthrough, a step between opening a Rust
+  file and reading the first finding points at `ripr: Diagnose Setup`, and its
+  page names the `ripr: server missing` status and both fixes
+  (`ripr.server.path`, `ripr.server.downloadBaseUrl`) plus
+  `ripr: Restart Server`.
+- Every command link and completion event in that step is a contributed
+  command, and every setting the page names is a contributed setting.
+
+Configured server path:
+
+- Given `ripr.server.path` starts with `~` followed by a path separator (or is
+  `~` alone), the server is looked up under the user's home directory. `~user`
+  and a `~` elsewhere in the path are left as written.
+- Given `ripr.server.path` is a relative path with a directory part, no server
+  is probed and the unavailable-server message names the setting and asks for
+  the full path. A bare command name is still looked up on `PATH`.
+- On Windows, a drive-relative value (`C:ripr.exe`) and a rooted value
+  without a drive (`\tools\ripr.exe`) are refused the same way; a drive plus
+  separator or a UNC root is accepted.
 
 Preview disabled:
 

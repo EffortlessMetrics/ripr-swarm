@@ -430,3 +430,62 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_boundary_oracle_refused (34)
+
+Reason:
+RIPR-SPEC-0122: the check digest states each fact once (no Why hint the Analyzer limit line repeats; no stage detail that repeats the missing-evidence line)
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_boundary_oracle_refused (35)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — predicate_boundary_oracle_refused (36)
+
+Reason:
+RIPR-SPEC-0224: inert row names the construct its refusals agree on (#15337)
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_boundary_oracle_refused (37)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — predicate_boundary_oracle_refused (38)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless predicate_boundary_oracle_refused --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

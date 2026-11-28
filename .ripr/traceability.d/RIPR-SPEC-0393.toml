@@ -11,6 +11,8 @@ fixtures = [
 code = []
 outputs = [
   "docs/specs/RIPR-SPEC-0393-dotnet-shared-project-and-language-evidence-contracts.md",
+  "docs/spec-index.d/RIPR-SPEC-0393.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0393.toml",
 ]
 metrics = [
   "boundary_disclosure",

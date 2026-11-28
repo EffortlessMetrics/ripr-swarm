@@ -6,8 +6,8 @@ use crate::cli::suggest::unknown_argument;
 use crate::output;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_JSON: &str = "target/ripr/reports/kani.json";
-const DEFAULT_MARKDOWN: &str = "target/ripr/reports/kani.md";
+const DEFAULT_JSON: &str = "target/ripr/reports/kani-import.json";
+const DEFAULT_MARKDOWN: &str = "target/ripr/reports/kani-import.md";
 
 /// Help route these argument errors point at. The kani options are documented
 /// only behind the command's own `--help` (#13237); the top-level `ripr help`
@@ -53,8 +53,9 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         crate::atomic_file::ensure_relative_output_contained(path)?;
         output::file_write::validate_destination(path).map_err(|error| {
             format!(
-                "reports kani output {} is unavailable: {error}",
-                output::outcome::display_path(path)
+                "reports kani output {} is unavailable: {error}; choose a writable --out or --out-md path; see `{}`",
+                output::outcome::display_path(path),
+                help_pointer()
             )
         })?;
     }
@@ -125,10 +126,18 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         index += 1;
     }
 
-    let input =
-        input.ok_or_else(|| format!("reports kani requires --input PATH; see `{pointer}`"))?;
-    let binding =
-        binding.ok_or_else(|| format!("reports kani requires --binding PATH; see `{pointer}`"))?;
+    let input = input.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required(
+            "--input",
+            &format!("reports kani requires --input PATH; see `{pointer}`"),
+        )
+    })?;
+    let binding = binding.ok_or_else(|| {
+        crate::cli::usage_refusal::missing_required(
+            "--binding",
+            &format!("reports kani requires --binding PATH; see `{pointer}`"),
+        )
+    })?;
     let root = root.unwrap_or_else(|| PathBuf::from("."));
     let uses_default_output = out.is_none() || out_md.is_none();
     let out = out.unwrap_or_else(|| root.join(DEFAULT_JSON));
@@ -145,11 +154,17 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
 
 fn read_input(path: &Path, flag: &str, limit: u64) -> Result<String, String> {
     crate::bounded_input::read_to_string_with_limit(path, limit).map_err(|error| {
-        format!(
-            "reports kani read {flag} {} failed: {}",
-            output::outcome::display_path(path),
-            crate::bounded_input::read_failure_detail(&error)
-        )
+        let detail = crate::bounded_input::read_failure_detail(&error);
+        let mut message = format!(
+            "reports kani read {flag} {} failed: {detail}",
+            output::outcome::display_path(path)
+        );
+        // A directory or an oversized file already names its own next step in
+        // the detail; do not stack a second one on it.
+        if !detail.contains("; ") {
+            message.push_str(&format!("; pass an existing, readable {flag} file"));
+        }
+        message
     })
 }
 
@@ -165,7 +180,7 @@ fn validate_output_paths(options: &Options, checked_sources: &[PathBuf]) -> Resu
     for (flag, input) in [("--input", &options.input), ("--binding", &options.binding)] {
         let identity = std::fs::canonicalize(input).map_err(|error| {
             format!(
-                "reports kani resolve {flag} {} failed: {error}",
+                "reports kani resolve {flag} {} failed: {error}; pass an existing, readable {flag} file",
                 output::outcome::display_path(input)
             )
         })?;
@@ -237,7 +252,7 @@ fn output_identity(path: &Path) -> Result<PathBuf, String> {
         suffix.push(name.to_os_string());
         cursor = cursor.parent().ok_or_else(|| {
             format!(
-                "reports kani output {} has no existing parent",
+                "reports kani output {} has no existing parent; use an existing parent without unresolved '..' components",
                 path.display()
             )
         })?;

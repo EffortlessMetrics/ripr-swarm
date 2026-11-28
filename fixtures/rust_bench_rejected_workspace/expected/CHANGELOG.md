@@ -1,0 +1,36 @@
+# Golden Output Changes
+
+## Pending — rust_bench_rejected_workspace (1)
+
+Reason:
+RIPR-SPEC-0356: Cargo rejects this bare package from its enclosing workspace, so its bench cannot supply a runnable test (#15620)
+
+Command:
+`cargo xtask goldens bless rust_bench_rejected_workspace --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_bench_rejected_workspace (2)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_bench_rejected_workspace --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_bench_rejected_workspace (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_bench_rejected_workspace --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -47,17 +47,17 @@ owner under [the release transaction](RELEASE_TRANSACTION.md) and
 | Level | Meaning | Criterion (working default) | Instrument |
 | --- | --- | --- | --- |
 | R0 installable and honest | A new user installs it, gets a first result, and is not misled. | False verdict rate at most 1% (stricter than the 5% public-proof ceiling in [PUBLIC_PROOF](PUBLIC_PROOF.md)). | Verdict corpus (`cargo xtask verdict-corpus check`); registry install time (not first result) and channel coverage: `cargo xtask install-receipt --check` over `metrics/install/receipt.json`. |
-| | | Install to first useful result at most 300 s on Linux, macOS and Windows for every shipped prebuilt channel (release archive, npm and PyPI wheels where shipped, and `cargo binstall` once a release carries its metadata), and a `cargo install` source build at most 900 s, judged on the median of at least 3 runs per platform. Verified against the published version. | `first_run` board; weekly published-install matrix ([#12938](https://github.com/EffortlessMetrics/ripr-swarm/pull/12938)). |
+| | | Install to first useful result at most 300 s on Linux, macOS and Windows for every shipped prebuilt channel (release archive, npm and PyPI wheels where shipped, and `cargo binstall` once a release carries its metadata), and a `cargo install` source build at most 900 s, judged on the median of at least 3 runs per platform. Verified against the published version. | `first_run` board; on-demand published-install matrix ([#12938](https://github.com/EffortlessMetrics/ripr-swarm/pull/12938)). |
 | | | No crash, hang or silent clean result on messy repositories. | Robustness corpus ([#11524](https://github.com/EffortlessMetrics/ripr-swarm/issues/11524), [#12924](https://github.com/EffortlessMetrics/ripr-swarm/issues/12924)). |
 | R1 reliable | Same answer on every surface, fast and small enough to leave on. | Warm `ripr check` p50 under 1 s and p95 under 3 s up to about 1,000 Rust files. | `cargo xtask dx-scoreboard`: `speed.warm_check_p50_ms` and `speed.warm_check_p95_ms` (nearest rank over `--samples`, default 3; p95 is the maximum below 20 samples). |
 | | | Peak memory under 150 MB for 100 to 800 Rust files, under 512 MB for 3,000-file Python/TypeScript repositories, hard cap 1 GiB. | `dx-scoreboard` `speed.warm_check_peak_rss_mb` (maximum over the warm samples), held per `[[size_tier]]` ceiling in `scoreboards.toml`. |
 | | | Zero contradictory refusals for one item across CLI, LSP, MCP and agent output. | The manual consistency matrix, until an automated check exists ([#10712](https://github.com/EffortlessMetrics/ripr-swarm/issues/10712)). |
 | | | The classification and fail-closed core is proved on every pull request (target; the lane is advisory today). | Kani lane (`cargo xtask kani`), required ([#12904](https://github.com/EffortlessMetrics/ripr-swarm/issues/12904)). |
 | | | Flake rate under 1% on required lanes. | Test-analytics flake ledger. |
-| R2 useful | People and agents finish the loop: gap, repair, verified. | Repair starts on at least 80% of gaps `check` reports. | `cargo xtask repair-start-page --ripr <binary>` (nightly `Outcome Page` lane; dated receipts `repair-start-<date>.json`; per language on the pinned small-diff set, [#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903)). Real-repository repair start (click, the TypeScript set) has no checked-in instrument yet. |
+| R2 useful | People and agents finish the loop: gap, repair, verified. | Repair starts on at least 80% of gaps `check` reports. | `cargo xtask repair-start-page --ripr <binary>` (on-demand `Outcome Page` lane; dated receipts `repair-start-<date>.json`; per language on the pinned small-diff set, [#12903](https://github.com/EffortlessMetrics/ripr-swarm/issues/12903)). Real-repository repair start (click, the TypeScript set) has no checked-in instrument yet. |
 | | | Precision of "discriminator" claims at least 97% against real mutants, published by language and operator. | `cargo xtask mutation-spot-check`; receipt `metrics/public-proof/mutation-spot-check.json` ([#12900](https://github.com/EffortlessMetrics/ripr-swarm/issues/12900)). |
 | | | Recall of runtime survivors flagged as a gap or an honest unknown at least 80%, published by language. | `cargo xtask mutation-spot-check`, same receipt (`recall_of_missed`; [#12901](https://github.com/EffortlessMetrics/ripr-swarm/issues/12901)). |
-| | | Every verdict class has locked-in goldens per language. | Lock-in matrix ([#12922](https://github.com/EffortlessMetrics/ripr-swarm/issues/12922)). |
+| | | Every emitted verdict class has locked-in goldens per language; classes an adapter never emits have enforceable non-emission evidence instead (see the full-coverage definition). | Lock-in matrix ([#12922](https://github.com/EffortlessMetrics/ripr-swarm/issues/12922)). |
 | R3 critical | Nobody wants to be without it. | Agents with ripr beat agents without it by a statistically clear margin on a public task suite. | With/without cohort ([#12902](https://github.com/EffortlessMetrics/ripr-swarm/issues/12902)). |
 | | | Under a Kani or Verus harness, a changed line gets a source-bound answer that tells a strong harness from a vacuous one. | FV cohort ([#10745](https://github.com/EffortlessMetrics/ripr-swarm/issues/10745)). |
 | | | Installed users act on at least 30% of findings and suppress under 20%. | None: telemetry is an owner decision and is not started. |
@@ -78,7 +78,12 @@ adding a roadmap entry does not promote a tier.
 | `stable building block` | Fixture-backed inside its documented scope; the ladder does not apply. |
 
 The bars apply per language, not to the product average. Unmeasured is not
-met.
+met. Per-language "full coverage" (every emitted verdict class pinned by a
+golden, a `must_not_promote` honesty control, and a mapped discriminating
+test, with enforceable non-emission evidence for classes an adapter never
+emits, on top of these ladder bars) is defined in
+[Support Tiers](status/SUPPORT_TIERS.md#full-coverage-definition) and is
+currently adopted for Rust, TypeScript, and Python.
 
 ### Position on 2026-11-04
 
@@ -168,6 +173,22 @@ the regression gate, and runs nightly. See
 [benchmarks/dx_scoreboard/README.md](../benchmarks/dx_scoreboard/README.md)
 for boards, instruments, and the ingest format, and
 `metrics/dx-scoreboard/baseline.json` for the committed baseline.
+
+Each nightly run also keeps one dated receipt and renders one trend page
+(`cargo xtask dx-trend`, [#14795](https://github.com/EffortlessMetrics/ripr-swarm/issues/14795)).
+The page ranks every measured metric by its distance from the target declared
+in `scoreboards.toml`, farthest first, with the previous comparable night, the
+value a week earlier and a sparkline over the last 14 nights. Wall time and
+memory compare only with receipts from the same runner class, and a
+per-repository metric compares only with nights that measured the same
+repositories at the same pinned workloads. A scoreboard `below_target` verdict
+stays off the bar even when the rounded value equals the target, and partially
+measured passes are counted and marked. Failed,
+incomplete and not-measured metrics are listed by board and never count as at
+the bar; an unreadable old receipt is skipped with a warning. The
+page is in the run's job summary and the `dx-trend` artifact; receipts
+accumulate in the `dx-trend-receipts` artifact (newest 120 kept). It adds no
+gate.
 
 ## Current Baseline
 

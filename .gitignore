@@ -24,6 +24,9 @@ packaging/npm/**/*.tgz
 .claude/
 .zcode/
 crates/ripr/examples/**/target/
+# `ripr check` and `cargo test` in a starter example write under its project.
+examples/**/target/
+examples/**/node_modules/
 
 # Test-run residue: ripr tests spawn the binary with cwd=crates/ripr,
 # which writes target/ under that directory (see #2157).
@@ -35,3 +38,6 @@ editors/vscode/target/
 __pycache__/
 *.pyc
 .github/ovsx/node_modules/
+
+# Tier 2 evals workspace build output (#14643)
+/evals/target/

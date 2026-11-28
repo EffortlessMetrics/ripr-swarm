@@ -1,0 +1,237 @@
+{
+  "baseline_source": "46b62971d1ea2e06d916c09e35212c10fe4c7835",
+  "cases": [
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "admission_scope_cannot_remove_the_main_push_cache_writer",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::admission_scope_cannot_remove_the_main_push_cache_writer",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "broadening_saves_is_not_a_trusted_default_scope_writer",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::broadening_saves_is_not_a_trusted_default_scope_writer",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "current_source_preserves_a_main_scope_writer_opportunity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::current_source_preserves_a_main_scope_writer_opportunity",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "disabled_hosted_job_or_filtered_push_is_not_writer_continuity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::disabled_hosted_job_or_filtered_push_is_not_writer_continuity",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "disabled_producer_or_additional_cache_is_not_writer_continuity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::disabled_producer_or_additional_cache_is_not_writer_continuity",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "missing_caller_dependencies_cannot_supply_guard_outputs",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::missing_caller_dependencies_cannot_supply_guard_outputs",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "missing_or_rebound_producer_is_not_a_writer_opportunity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::missing_or_rebound_producer_is_not_a_writer_opportunity",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "hosted_cache_continuity",
+      "old_test": "retiring_main_push_is_not_cache_continuity",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::hosted_cache_continuity::retiring_main_push_is_not_cache_continuity",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "malformed_retry_delay_falls_back_without_changing_retries",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::malformed_retry_delay_falls_back_without_changing_retries",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "persistent_failure_retries_three_times_then_reports_without_error_text",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::persistent_failure_retries_three_times_then_reports_without_error_text",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "rejected_inventory_token_is_a_warning_not_a_failure",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::rejected_inventory_token_is_a_warning_not_a_failure",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "successful_empty_inventory_records_zero_without_changing_route",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::successful_empty_inventory_records_zero_without_changing_route",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "successful_inventory_preserves_capability_selection",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::successful_inventory_preserves_capability_selection",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "summary_reports_the_final_failed_attempts_http_status",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::summary_reports_the_final_failed_attempts_http_status",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "transient_failures_recover_within_the_retry_bound",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::transient_failures_recover_within_the_retry_bound",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "unauthorized_after_transient_failure_stops_at_that_attempt",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::unauthorized_after_transient_failure_stops_at_that_attempt",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "unauthorized_inventory_stops_before_retry_or_sleep",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::unauthorized_inventory_stops_before_retry_or_sleep",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "runner_inventory_diagnostics",
+      "old_test": "untrusted_pr_never_queries_or_claims_a_command_status",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::runner_inventory_diagnostics::untrusted_pr_never_queries_or_claims_a_command_status",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "unlocked_install",
+      "old_test": "unlocked_prerequisite_failure_unavailable_and_timeout_never_reach_later_commands",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::unlocked_install::unlocked_prerequisite_failure_unavailable_and_timeout_never_reach_later_commands",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "unlocked_install",
+      "old_test": "unlocked_success_resolves_identity_once_and_checks_only_regenerated_package",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::unlocked_install::unlocked_success_resolves_identity_once_and_checks_only_regenerated_package",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "wheel_trap_markers",
+      "old_test": "wheel_traps_preserve_literal_marker_paths_and_native_status",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::wheel_trap_markers::wheel_traps_preserve_literal_marker_paths_and_native_status",
+      "ignored": false,
+      "linux_only": true
+    },
+    {
+      "old_binary": "workflow_action_pins",
+      "old_test": "burn_down_pins_preserve_step_local_tool_selections",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::workflow_action_pins::burn_down_pins_preserve_step_local_tool_selections",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "workflow_action_pins",
+      "old_test": "first_run_main_composition_keeps_both_new_actions_pinned",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::workflow_action_pins::first_run_main_composition_keeps_both_new_actions_pinned",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "workflow_action_pins",
+      "old_test": "fixed_toolchain_revision_rejects_ignored_override_inputs",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::workflow_action_pins::fixed_toolchain_revision_rejects_ignored_override_inputs",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "workflow_action_pins",
+      "old_test": "pin_contract_rejects_inputs_in_other_step_mappings",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::workflow_action_pins::pin_contract_rejects_inputs_in_other_step_mappings",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "workflow_action_pins",
+      "old_test": "pin_contract_rejects_missing_wrong_or_neighboring_inputs",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::workflow_action_pins::pin_contract_rejects_missing_wrong_or_neighboring_inputs",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "workflow_action_pins",
+      "old_test": "pin_contract_rejects_uses_headers_in_step_data",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::workflow_action_pins::pin_contract_rejects_uses_headers_in_step_data",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "workflow_action_pins",
+      "old_test": "test_support::tests::custody_distinguishes_manifest_and_source_digest_mismatches",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::workflow_action_pins::test_support::tests::custody_distinguishes_manifest_and_source_digest_mismatches",
+      "ignored": false,
+      "linux_only": false
+    },
+    {
+      "old_binary": "workflow_action_pins",
+      "old_test": "test_support::tests::runner_paths_never_fall_back_or_accept_relative_paths",
+      "new_binary": "workflow_contracts",
+      "new_test": "workflow_contracts::workflow_action_pins::test_support::tests::runner_paths_never_fall_back_or_accept_relative_paths",
+      "ignored": false,
+      "linux_only": false
+    }
+  ]
+}

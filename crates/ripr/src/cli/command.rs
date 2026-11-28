@@ -28,6 +28,9 @@ pub(super) enum CliCommand {
     CoverageGrip(Vec<String>),
     AssistantLoop(Vec<String>),
     FirstPr(Vec<String>),
+    /// The `start-here` alias of `first-pr`: same behavior, but refusals name
+    /// the command the caller actually ran (#15249).
+    StartHere(Vec<String>),
     FirstAction(Vec<String>),
     Reports(Vec<String>),
     Calibrate(Vec<String>),
@@ -72,9 +75,7 @@ impl CliCommand {
             // arguments so an extra token is never silently discarded (#9867).
             Some("--help" | "-h") if wants_all(&command_args) => match command_args.len() {
                 1 => Ok(Self::HelpAll),
-                _ => Err(
-                    "usage: ripr --help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands".to_string(),
-                ),
+                _ => Err(strict_route_usage("--help --all", &command_args[1..])),
             },
             None | Some("--help" | "-h") => Ok(Self::Help),
             // `ripr help` (no subcommand) prints the top-level help, identical
@@ -83,16 +84,13 @@ impl CliCommand {
             // `ripr <command> --help [args...]` — i.e. the rest of the args are
             // preserved with `--help` prepended, so each command's existing
             // `--help` branch prints its own help. `help` followed by an
-            // unknown command still returns the unknown-command error so a
+            // unknown topic still refuses, as an unknown help topic, so a
             // typo is not silently swallowed.
             Some("help") => {
                 if wants_all(&command_args) {
                     return match command_args.len() {
                         1 => Ok(Self::HelpAll),
-                        _ => Err(
-                            "usage: ripr help --all (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
-                                .to_string(),
-                        ),
+                        _ => Err(strict_route_usage("help --all", &command_args[1..])),
                     };
                 }
                 // `ripr help --json` is the versioned machine-discovery route
@@ -100,10 +98,7 @@ impl CliCommand {
                 if command_args.first().is_some_and(|arg| arg == "--json") {
                     return match command_args.len() {
                         1 => Ok(Self::HelpJson),
-                        _ => Err(
-                            "usage: ripr help --json (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
-                                .to_string(),
-                        ),
+                        _ => Err(strict_route_usage("help --json", &command_args[1..])),
                     };
                 }
                 // `ripr help workflow [name]` is the bounded workflow-discovery
@@ -112,10 +107,22 @@ impl CliCommand {
                 if command_args.first().is_some_and(|arg| arg == "workflow") {
                     return help_workflow_command(&command_args[1..]);
                 }
+                // A flag here is a slip on one of help's own two options. The
+                // command-position rewrite below would answer `help --al`
+                // with "options go after the command, e.g. `ripr check --al`",
+                // advice that names a flag `check` does not have.
+                if let Some(first) = command_args.first()
+                    && let Some(error) = help_option_typo_error(first)
+                {
+                    return Err(error);
+                }
                 let (target, rest) = match command_args.split_first() {
                     Some((target, rest)) => (target.clone(), rest.to_vec()),
                     None => return Ok(Self::Help),
                 };
+                if let Some(error) = unknown_help_topic_error(&target) {
+                    return Err(error);
+                }
                 Self::from_parts(Some(&target), help_request_args(rest))
             }
             Some("--version" | "-V") => Ok(Self::Version),
@@ -125,9 +132,23 @@ impl CliCommand {
             Some(command) => match crate::cli::command_catalog::resolve_top_level(command) {
                 Some(entry) => {
                     reject_unsupported_extended_help(entry.dispatch, command, &command_args)?;
-                    Ok(cli_command_from_dispatch(entry.dispatch, command_args))
+                    Ok(
+                        match cli_command_from_dispatch(entry.dispatch, command_args) {
+                            CliCommand::FirstPr(args) if command == "start-here" => {
+                                CliCommand::StartHere(args)
+                            }
+                            other => other,
+                        },
+                    )
                 }
-                None => Err(unknown_command_error(command)),
+                None => {
+                    // `ripr --bogus check` typed a command after the stray
+                    // option; `ripr --bogus` typed none (#15257).
+                    let command_typed = command_args
+                        .iter()
+                        .any(|arg| crate::cli::command_catalog::resolve_top_level(arg).is_some());
+                    Err(unknown_command_error(command, command_typed))
+                }
             },
         }
     }
@@ -193,6 +214,23 @@ fn help_workflow_command(args: &[String]) -> Result<CliCommand, String> {
             "usage: ripr help workflow [<workflow-name>] (this route accepts no flags); drop the flags, or run `ripr help workflow` to list workflows".to_string(),
         ),
     }
+}
+
+/// The options `ripr help` itself accepts in first position.
+const HELP_OPTIONS: &[&str] = &["--all", "--json"];
+
+/// The error for a near miss on one of [`HELP_OPTIONS`], or `None` when the
+/// token is not flag-shaped, is a top-level flag slip (`--hlep` keeps its
+/// `--help` suggestion), or is close to neither option.
+fn help_option_typo_error(arg: &str) -> Option<String> {
+    if !arg.starts_with('-') || closest_flag(arg).is_some() {
+        return None;
+    }
+    let option = crate::accepted_value::closest(arg, HELP_OPTIONS.iter().copied())?;
+    let message =
+        format!("unknown help argument {arg:?}. Did you mean `{option}`? Run `ripr --help`.");
+    crate::cli::usage_refusal::note_unknown_argument(arg, &message, "ripr --help");
+    Some(message)
 }
 
 /// Arguments for `ripr help <command> [words...] [flags...]` (#4378).
@@ -271,14 +309,61 @@ fn cli_command_from_dispatch(
     }
 }
 
-fn unknown_command_error(command: &str) -> String {
-    let message = unknown_command_message(command);
+/// The usage refusal of a strict one-flag route (`--help --all`, `help --all`,
+/// `help --json`). `extras` are the arguments after the route's own flag; the
+/// first is recorded as a stray argument, so a JSON-requested run gets the
+/// `cli_refusal` document the contract promises for that class (#16072).
+pub(super) fn strict_route_usage(route: &str, extras: &[String]) -> String {
+    let message = format!(
+        "usage: ripr {route} (this route accepts no other arguments); drop the extra arguments, or run `ripr --help` to list commands"
+    );
+    if let Some(extra) = extras.first() {
+        crate::cli::usage_refusal::note_unknown_argument(extra, &message, "ripr --help");
+    }
+    message
+}
+
+fn unknown_command_error(command: &str, command_typed: bool) -> String {
+    let message = unknown_command_message(command, command_typed);
     // #11584: typed code and token for a JSON-requested boundary.
     crate::cli::usage_refusal::note_unknown_command(command, &message);
     message
 }
 
-fn unknown_command_message(command: &str) -> String {
+/// `ripr help <topic>` where the topic is a plain word that is neither a
+/// command nor a near miss the command-position message already answers
+/// (`version`, a nested subcommand, the workflow route). The request was for
+/// help, so the refusal says so instead of claiming the user ran an unknown
+/// command (#16374). `ripr help` with no topic prints the same overview as
+/// `ripr --help`, and `ripr help workflow` lists workflows.
+fn unknown_help_topic_error(topic: &str) -> Option<String> {
+    if topic.trim().is_empty()
+        || topic.starts_with('-')
+        || topic == "version"
+        || crate::cli::command_catalog::resolve_top_level(topic).is_some()
+        || crate::cli::command_catalog::nested_route_for_subcommand(topic).is_some()
+        || closest_of(topic, &["workflow"]).is_some()
+    {
+        return None;
+    }
+    let hint = match closest_command(topic) {
+        Some(suggestion) => format!(" Did you mean `ripr help {suggestion}`?"),
+        None => String::new(),
+    };
+    let message = format!(
+        "unknown help topic {topic:?}.{hint} Run `ripr help` to list commands, or `ripr help workflow` to list workflows."
+    );
+    crate::cli::usage_refusal::note_unknown_help_topic(topic, &message);
+    Some(message)
+}
+
+fn unknown_command_message(command: &str, command_typed: bool) -> String {
+    // An empty command name is nearly always an unset shell variable
+    // (`ripr $CMD`). Echoing `""` back says nothing about that (#15985).
+    if command.trim().is_empty() {
+        return "the command name is empty, which usually means an unset shell variable. Run `ripr --help` to list commands."
+            .to_string();
+    }
     // A flag in command position means options were put before the command.
     if command.starts_with('-') {
         if let Some(flag) = closest_flag(command) {
@@ -286,24 +371,57 @@ fn unknown_command_message(command: &str) -> String {
                 "unknown command {command:?}. Did you mean `{flag}`? Run `ripr --help`."
             );
         }
-        let example = if command == "--root" {
-            "--root .".to_string()
-        } else {
-            format!("{command} ...")
+        // The example names `ripr check`, so only a spelling `check` accepts
+        // may appear in it: `ripr -q check` used to be told to run
+        // `ripr check -q ...`, which `check` then rejects.
+        use crate::cli::suggest::FlagPlacement;
+        return match crate::cli::suggest::flag_placement("check", command) {
+            FlagPlacement::Documented => {
+                let example = if command == "--root" {
+                    "--root .".to_string()
+                } else {
+                    format!("{command} ...")
+                };
+                format!(
+                    "unknown command {command:?}; options go after the command, e.g. `ripr check {example}`"
+                )
+            }
+            FlagPlacement::Near(flag) => format!(
+                "unknown command {command:?}; options go after the command. Did you mean `ripr check {flag}`? Run `ripr --help`."
+            ),
+            // No command was typed, so naming `ripr check` would claim a
+            // command the user never ran (#15257).
+            FlagPlacement::Unknown if !command_typed => {
+                format!("unknown option {command}; run `ripr --help` to list commands and options")
+            }
+            FlagPlacement::Unknown => format!(
+                "unknown command {command:?}; options go after the command, and `ripr check` has no `{}` option. Run `ripr --help`.",
+                crate::cli::suggest::flag_name(command)
+            ),
         };
-        return format!(
-            "unknown command {command:?}; options go after the command, e.g. `ripr check {example}`"
-        );
     }
     // Version is a flag here, not a subcommand; say so instead of a bare refusal.
     if command == "version" {
         return "unknown command \"version\". Did you mean `--version`? Run `ripr --help`."
             .to_string();
     }
+    // A word that is exactly a family's subcommand (`ripr ci-summary`) is that
+    // nested command typed without its family; name the full path.
+    if let Some(path) = crate::cli::command_catalog::nested_route_for_subcommand(command) {
+        return format!(
+            "unknown command {command:?}. Did you mean `ripr {path}`? Run `ripr --help`."
+        );
+    }
     match closest_command(command) {
         Some(suggestion) => {
             format!("unknown command {command:?}. Did you mean `{suggestion}`? Run `ripr --help`.")
         }
+        // Workflows are listed by `ripr help workflow`, not by a command of
+        // their own, so `ripr workflow` and `ripr help workflows` are sent
+        // there instead of to the bare command list.
+        None if closest_of(command, &["workflow"]).is_some() => format!(
+            "unknown command {command:?}. Did you mean `ripr help workflow`? Run `ripr --help`."
+        ),
         None => format!("unknown command {command:?}. Run `ripr --help`."),
     }
 }
@@ -384,7 +502,10 @@ fn edit_distance(left: &str, right: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{CliCommand, closest_command, known_commands, unknown_command_error};
+    use super::{
+        CliCommand, closest_command, known_commands, unknown_command_error,
+        unknown_help_topic_error,
+    };
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
@@ -538,8 +659,8 @@ mod tests {
         let typo = CliCommand::from_parts(Some("help"), args(&["chekc", "--all"]));
         assert_eq!(
             typo,
-            Err(unknown_command_error("chekc")),
-            "`ripr help <typo> --all` should still report the typo"
+            Err(unknown_help_topic_error("chekc").unwrap_or_default()),
+            "`ripr help <typo> --all` should still report the typo (as a help topic, #16374)"
         );
     }
 
@@ -577,7 +698,7 @@ mod tests {
                 CliCommand::AssistantLoop(Vec::new()),
             ),
             (Some("first-pr"), CliCommand::FirstPr(Vec::new())),
-            (Some("start-here"), CliCommand::FirstPr(Vec::new())),
+            (Some("start-here"), CliCommand::StartHere(Vec::new())),
             (Some("first-action"), CliCommand::FirstAction(Vec::new())),
             (Some("reports"), CliCommand::Reports(Vec::new())),
             (Some("calibrate"), CliCommand::Calibrate(Vec::new())),
@@ -623,9 +744,22 @@ mod tests {
             )
         );
         assert_eq!(
-            unknown_command_error("--base"),
+            unknown_command_error("--base", false),
             "unknown command \"--base\"; options go after the command, e.g. `ripr check --base ...`"
         );
+    }
+
+    /// #15985: an empty or whitespace-only command name is named as empty
+    /// instead of echoed back as `unknown command ""`.
+    #[test]
+    fn an_empty_command_name_is_named_as_empty() {
+        for typed in ["", " ", "\t"] {
+            assert_eq!(
+                CliCommand::from_parts(Some(typed), Vec::new()),
+                Err("the command name is empty, which usually means an unset shell variable. Run `ripr --help` to list commands.".to_string()),
+                "{typed:?}"
+            );
+        }
     }
 
     #[test]
@@ -658,23 +792,38 @@ mod tests {
                 "unknown command \"--hepl\". Did you mean `--help`? Run `ripr --help`.".to_string()
             )
         );
-        // Valid command-local options keep the placement guidance.
-        for option in ["--head", "--reason"] {
+        // An option `check` does not take is never offered as a `ripr check`
+        // example: the suggested command would fail on the same token.
+        for option in ["--reason", "--bogus", "-x"] {
             assert_eq!(
                 CliCommand::from_parts(Some(option), Vec::new()),
                 Err(format!(
-                    "unknown command {option:?}; options go after the command, e.g. `ripr check {option} ...`"
+                    "unknown option {option}; run `ripr --help` to list commands and options"
                 ))
             );
         }
-        // A flag nowhere near a top-level flag gets no invented suggestion.
+        // With a command typed after the stray option, `ripr check` is the
+        // command the user meant, so the placement advice stays.
         assert_eq!(
-            CliCommand::from_parts(Some("--bogus"), Vec::new()),
-            Err(
-                "unknown command \"--bogus\"; options go after the command, e.g. `ripr check --bogus ...`"
-                    .to_string()
-            )
+            CliCommand::from_parts(Some("--bogus"), vec!["check".to_string()]),
+            Err("unknown command \"--bogus\"; options go after the command, and `ripr check` has no `--bogus` option. Run `ripr --help`.".to_string())
         );
+    }
+
+    #[test]
+    fn leading_flag_near_a_check_flag_names_the_spelling_check_accepts() {
+        for (typed, accepted) in [
+            ("-q", "--quiet"),
+            ("--quite", "--quiet"),
+            ("--bsae", "--base"),
+        ] {
+            assert_eq!(
+                CliCommand::from_parts(Some(typed), Vec::new()),
+                Err(format!(
+                    "unknown command {typed:?}; options go after the command. Did you mean `ripr check {accepted}`? Run `ripr --help`."
+                ))
+            );
+        }
     }
 
     #[test]
@@ -717,6 +866,18 @@ mod tests {
             Some("impacted-evidence")
         );
         assert_eq!(closest_command("pls"), Some("plus"));
+    }
+
+    #[test]
+    fn nested_subcommand_at_top_level_suggests_full_path() {
+        assert_eq!(
+            unknown_command_error("ci-summary", false),
+            "unknown command \"ci-summary\". Did you mean `ripr reports ci-summary`? Run `ripr --help`."
+        );
+        assert_eq!(
+            unknown_command_error("ci-packet", false),
+            "unknown command \"ci-packet\". Did you mean `ripr reports ci-packet`? Run `ripr --help`."
+        );
     }
 
     #[test]
@@ -767,7 +928,7 @@ mod tests {
         // start-here alias should also work via help.
         assert_eq!(
             CliCommand::from_parts(Some("help"), args(&["start-here"])),
-            Ok(CliCommand::FirstPr(args(&["--help"])))
+            Ok(CliCommand::StartHere(args(&["--help"])))
         );
     }
 
@@ -802,16 +963,108 @@ mod tests {
     }
 
     #[test]
-    fn help_with_unknown_subcommand_returns_unknown_command_error() {
-        // A typo after `help` should produce the same unknown-command error as
-        // the typo would without `help`, including a typo suggestion.
+    fn help_with_unknown_subcommand_returns_unknown_help_topic_error() {
+        // A typo after `help` is a help-topic refusal (#16374), with the typo
+        // suggestion kept.
         assert_eq!(
             CliCommand::from_parts(Some("help"), args(&["nonexistent"])),
-            Err("unknown command \"nonexistent\". Run `ripr --help`.".to_string())
+            Err("unknown help topic \"nonexistent\". Run `ripr help` to list commands, or `ripr help workflow` to list workflows.".to_string())
         );
         assert_eq!(
             CliCommand::from_parts(Some("help"), args(&["chekc"])),
+            Err("unknown help topic \"chekc\". Did you mean `ripr help check`? Run `ripr help` to list commands, or `ripr help workflow` to list workflows.".to_string())
+        );
+        // A bare unknown command keeps the command wording.
+        assert_eq!(
+            CliCommand::from_parts(Some("chekc"), Vec::new()),
             Err("unknown command \"chekc\". Did you mean `check`? Run `ripr --help`.".to_string())
+        );
+    }
+
+    /// `ripr help` owns two options. A near miss on one names it, instead of
+    /// the command-position advice to move the flag behind `check`.
+    #[test]
+    fn help_option_typos_name_the_help_option() {
+        for (typo, option) in [
+            ("--al", "--all"),
+            ("--alll", "--all"),
+            ("-all", "--all"),
+            ("--jsn", "--json"),
+            ("--jsno", "--json"),
+            ("-json", "--json"),
+        ] {
+            assert_eq!(
+                CliCommand::from_parts(Some("help"), args(&[typo])),
+                Err(format!(
+                    "unknown help argument {typo:?}. Did you mean `{option}`? Run `ripr --help`."
+                )),
+                "{typo}"
+            );
+        }
+        // The exact spellings still select their routes.
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["--all"])),
+            Ok(CliCommand::HelpAll)
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["--json"])),
+            Ok(CliCommand::HelpJson)
+        );
+        // A top-level flag slip keeps its own suggestion, and help flags
+        // themselves still work after `help`.
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["--hlep"])),
+            Err(
+                "unknown command \"--hlep\". Did you mean `--help`? Run `ripr --help`.".to_string()
+            )
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["--help"])),
+            Ok(CliCommand::Help)
+        );
+        // A flag close to neither option keeps the command-position message.
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["--root"])),
+            Err(
+                "unknown command \"--root\"; options go after the command, e.g. `ripr check --root .`"
+                    .to_string()
+            )
+        );
+        // Outside `help`, the same token is not a help option.
+        assert_eq!(
+            unknown_command_error("--al", false),
+            "unknown option --al; run `ripr --help` to list commands and options"
+        );
+    }
+
+    /// Workflows have no command of their own; a reach for one is sent to
+    /// the route that lists them.
+    #[test]
+    fn a_reach_for_a_workflow_command_names_help_workflow() {
+        let expected = |typed: &str| {
+            Err(format!(
+                "unknown command {typed:?}. Did you mean `ripr help workflow`? Run `ripr --help`."
+            ))
+        };
+        for typed in ["workflow", "workflows", "workflw"] {
+            assert_eq!(
+                CliCommand::from_parts(Some(typed), Vec::new()),
+                expected(typed),
+                "{typed}"
+            );
+        }
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["workflows"])),
+            expected("workflows")
+        );
+        // The real route is untouched, and an unrelated word gets no hint.
+        assert_eq!(
+            CliCommand::from_parts(Some("help"), args(&["workflow"])),
+            Ok(CliCommand::HelpWorkflow(None))
+        );
+        assert_eq!(
+            CliCommand::from_parts(Some("works"), Vec::new()),
+            Err("unknown command \"works\". Run `ripr --help`.".to_string())
         );
     }
 

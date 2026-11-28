@@ -130,6 +130,17 @@ pub(crate) fn release_server_archive(args: &[String]) -> Result<(), String> {
         }
     }
 
+    let archive_size_bytes = payload::check_archive_file_size_budget(&asset_path)?;
+    let size_summary = staged.identity.size_summary()?;
+    eprintln!(
+        "server archive size: {archive_size_bytes} bytes (budget {} bytes)",
+        payload::MAX_ARCHIVE_SIZE_BYTES
+    );
+    eprintln!(
+        "payload total size: {} bytes; executable size: {} bytes",
+        size_summary.total_bytes, size_summary.executable_bytes
+    );
+
     let sha = sha256_file(&asset_path)?;
     fs::write(
         dist_dir.join(format!("{asset_name}.sha256")),
@@ -495,6 +506,8 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
     let mut writer = zip::ZipWriter::new(file);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
+        // Same bytes on every build host: the crate would record DOS attributes on Windows.
+        .system(zip::System::Unix)
         .unix_permissions(0o644);
 
     let entries = fs::read_dir(package_dir)
@@ -518,12 +531,9 @@ pub(crate) fn create_zip_archive(package_dir: &Path, asset_path: &Path) -> Resul
             .and_then(|name| name.to_str())
             .ok_or_else(|| format!("invalid file name in {}", path.display()))?
             .to_string();
-        let entry_options = if file_name.ends_with(".exe") {
-            options.unix_permissions(0o755)
-        } else if metadata.permissions().readonly() {
-            options
-        } else if !file_name.contains('.') {
-            // Best-effort executable bit for Unix-style binaries (ripr) without an extension.
+        // Only the server executable is runnable; licenses and the notice stay
+        // 0644 so an extraction on Linux/macOS does not mark them executable.
+        let entry_options = if file_name.ends_with(".exe") || file_name == "ripr" {
             options.unix_permissions(0o755)
         } else {
             options

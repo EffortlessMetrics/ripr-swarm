@@ -110,6 +110,7 @@ pub(crate) fn measurement_witness() -> DiagnosticWitness {
         probe_family: "predicate_boundary".to_string(),
         changed_expression: "amount >= discount_threshold".to_string(),
         before: Some("amount - 10".to_string()),
+        before_condition: None,
         after: Some("amount - 20".to_string()),
         expected_sink: Some("return_value".to_string()),
         missing_discriminators: vec![MissingDiscriminatorFact {
@@ -238,6 +239,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
         witness: profile.witness.as_ref(),
         finding_id,
         finding_gap_id: None,
+        unreferenced_new_function: false,
         attempt: attempt.as_ref(),
         packet_json: &packet_json,
         repository_head: "abc123",

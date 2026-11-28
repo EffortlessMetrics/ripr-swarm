@@ -301,9 +301,30 @@ impl<'a> Parser<'a> {
 }
 
 impl ClosedOwner {
+    /// [`Self::read`] of an owner's current text, read once per run scope
+    /// (#11738). The owner-return pin reads the current owner for every
+    /// changed line it pins and every repo seam it audits, so a long owner
+    /// with many changed lines paid a mask and lex of its whole text each
+    /// time. The reading is a pure function of the text and the name, which
+    /// key the entry. A reconstructed pre-change text is new for every
+    /// changed line and is still read by [`Self::read`] directly.
+    pub(super) fn read_current(definition: &str, name: &str) -> Option<Self> {
+        crate::analysis::syntax::run_memo::memoize_with(
+            crate::analysis::syntax::run_memo::Product::ClosedOwnerRead,
+            0,
+            name,
+            definition,
+            || std::rc::Rc::new(Self::read(definition, name)),
+        )
+        .as_ref()
+        .clone()
+    }
+
     /// Read `definition` (the owner's `fn` text) as the closed subset, or
     /// `None` when any part of it is outside it.
     pub(super) fn read(definition: &str, name: &str) -> Option<Self> {
+        #[cfg(test)]
+        CLOSED_OWNER_READS.with(|reads| reads.set(reads.get() + 1));
         let masked = crate::analysis::extract::mask_comments_and_strings(definition);
         // Attributes and visibility before `fn` are not part of the subset's
         // concern: the reading starts at the `fn <name>` item itself.
@@ -360,18 +381,45 @@ impl ClosedOwner {
             parameters: &parameters,
         };
         let mut guards = Vec::new();
+        let mut tail = None;
         while parser.eat_ident("if") {
             let cond = parser.cond()?;
-            if !(parser.eat_sym("{") && parser.eat_ident("return")) {
+            if !parser.eat_sym("{") {
                 return None;
             }
+            if parser.eat_ident("return") {
+                let ret = parser.ret()?;
+                if !(parser.eat_sym(";") && parser.eat_sym("}")) {
+                    return None;
+                }
+                guards.push((cond, ret));
+                continue;
+            }
+            // #14387: a tail `if C { A } else if D { B } else { E }` runs as
+            // the guards `C -> A`, `D -> B` and the tail `E`: each branch
+            // block holds only its value, and the chain ends the body.
             let ret = parser.ret()?;
-            if !(parser.eat_sym(";") && parser.eat_sym("}")) {
+            if !(parser.eat_sym("}") && parser.eat_ident("else")) {
                 return None;
             }
             guards.push((cond, ret));
+            if parser.peek() == Some(&Token::Ident("if".to_string())) {
+                continue;
+            }
+            if !parser.eat_sym("{") {
+                return None;
+            }
+            let last = parser.ret()?;
+            if !parser.eat_sym("}") {
+                return None;
+            }
+            tail = Some(last);
+            break;
         }
-        let tail = parser.ret()?;
+        let tail = match tail {
+            Some(tail) => tail,
+            None => parser.ret()?,
+        };
         (parser.at == body.len()).then_some(Self {
             parameters,
             range,
@@ -508,7 +556,7 @@ impl ClosedChange {
         let mut lines: Vec<&str> = definition.lines().collect();
         *lines.get_mut(changed_line)? = before.trim_end();
         Some(Self {
-            after: ClosedOwner::read(definition, name)?,
+            after: ClosedOwner::read_current(definition, name)?,
             before: ClosedOwner::read(&lines.join("\n"), name)?,
         })
     }
@@ -620,11 +668,36 @@ impl ClosedChange {
     /// diff (the repo-wide audit, #12394 item 3): a literal the current owner
     /// provably does not return is unpinned.
     pub(super) fn current(definition: &str, name: &str) -> Option<Self> {
-        let owner = ClosedOwner::read(definition, name)?;
+        let owner = ClosedOwner::read_current(definition, name)?;
         Some(Self {
             before: owner.clone(),
             after: owner,
         })
+    }
+
+    /// #14387: whether an exact pin of `expected` on `call` provably tells the
+    /// two versions apart: both run on the call's literal arguments, they
+    /// return different values, and `expected` is one of the two, so the pin
+    /// passes on one version and fails on the other. `false` is "no
+    /// evidence": an argument or the pinned value outside the subset, an
+    /// unevaluated `Err(..)` payload, or versions that agree.
+    pub(super) fn pin_discriminates(&self, name: &str, call: &str, expected: &str) -> bool {
+        let Some(arguments) = call_arguments(call, name) else {
+            return false;
+        };
+        let (Some(after), Some(before), Some(pinned)) = (
+            self.after.run(&arguments),
+            self.before.run(&arguments),
+            literal_outcome(expected),
+        ) else {
+            return false;
+        };
+        // An `Err(..)` payload is not evaluated, so two `Err` exits may still
+        // differ, and an `Err` pin cannot be matched to either one.
+        if [after, before, pinned].contains(&Outcome::Err) {
+            return false;
+        }
+        after != before && (pinned == after || pinned == before)
     }
 
     /// Whether `expected` is a value neither version provably returns for
@@ -1026,6 +1099,15 @@ pub(super) fn lower_tuple_call(call: &str, name: &str, type_name: &str) -> Optio
 }
 
 #[cfg(test)]
+thread_local! {
+    /// How many owner texts this thread has read as the closed subset.
+    static CLOSED_OWNER_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod read_current_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1345,5 +1427,60 @@ mod tests {
                 .is_none()
         );
         assert!(ClosedChange::read(DIV, "checked_div", 4, "  ").is_none());
+    }
+
+    /// #14387: an exact pin tells the versions apart only at an input where
+    /// they differ, and only when it names one of the two results.
+    #[test]
+    fn a_pin_discriminates_only_where_the_versions_differ_and_it_names_one() {
+        let after = "pub fn discount(total: u32) -> u32 {\n    if total > 500 {\n        return 1;\n    }\n    if total >= 100 {\n        return total / 5;\n    }\n    0\n}\n";
+        let change = ClosedChange::read(after, "discount", 5, "        return total / 10;");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        // 200 takes the changed guard: 20 before, 40 after.
+        assert!(change.pin_discriminates("discount", "discount(200)", "20"));
+        assert!(change.pin_discriminates("discount", "discount(200)", "40"));
+        // A value neither version returns, an earlier guard, the tail.
+        assert!(!change.pin_discriminates("discount", "discount(200)", "99"));
+        assert!(!change.pin_discriminates("discount", "discount(600)", "1"));
+        assert!(!change.pin_discriminates("discount", "discount(50)", "0"));
+        // Arguments the subset does not read, and an out-of-range one.
+        assert!(!change.pin_discriminates("discount", "discount(n)", "20"));
+        assert!(!change.pin_discriminates("discount", "discount(100 + 100)", "20"));
+        assert!(!change.pin_discriminates("discount", "discount(-1)", "0"));
+        // An `Err` exit's payload is not evaluated, so it never discriminates.
+        let errs = ClosedChange::read(DIV, "checked_div", 2, "        return Err(1);");
+        assert!(errs.is_some_and(|errs| !errs.pin_discriminates(
+            "checked_div",
+            "checked_div(4, 0)",
+            "Err(())"
+        )));
+    }
+
+    /// #14387: a tail `if`/`else if`/`else` chain reads as guards and a tail,
+    /// so a changed branch value discriminates where its branch runs.
+    #[test]
+    fn a_tail_if_else_chain_reads_as_guards_and_a_tail() {
+        let after = "pub fn rate(t: u32) -> u32 {\n    if t > 500 {\n        1\n    } else if t >= 100 {\n        t / 5\n    } else {\n        0\n    }\n}\n";
+        let change = ClosedChange::read(after, "rate", 4, "        t / 10");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        assert!(change.pin_discriminates("rate", "rate(200)", "40"));
+        assert!(change.pin_discriminates("rate", "rate(200)", "20"));
+        assert!(!change.pin_discriminates("rate", "rate(600)", "1"));
+        assert!(!change.pin_discriminates("rate", "rate(50)", "0"));
+        // A chain without a final `else`, or a branch holding more than its
+        // value, is outside the subset.
+        for outside in [
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        1\n    } else if t > 2 {\n        2\n    }\n}\n",
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        t;\n        1\n    } else {\n        0\n    }\n}\n",
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        1\n    } else {\n        0\n    }\n    2\n}\n",
+        ] {
+            assert!(ClosedOwner::read(outside, "rate").is_none(), "{outside}");
+        }
     }
 }

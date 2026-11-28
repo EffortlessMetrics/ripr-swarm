@@ -6,13 +6,16 @@
 //! same artifacts, so the step is one command. Reads only; it never runs
 //! analysis, edits source, or decides pass/fail.
 //!
-//! Field fallbacks, `repo_relative` rewriting, and raw report inclusion follow
-//! [`jq`]'s model of what the retired shell printed. Changed-behavior source
+//! Field fallbacks and `repo_relative` rewriting follow [`jq`]'s model of
+//! what the retired shell printed. Full reports are named for the
+//! `ripr-reports` artifact rather than inlined (#14301), except the opt-in
+//! comment publish plan. Changed-behavior source
 //! snippets and Why values use the shared Markdown code-span renderer so
 //! source backticks remain literal; other fields retain the legacy
 //! `markdown_inline` spelling.
 
 pub(crate) mod annotations;
+pub(crate) mod gate_verdict;
 mod headline;
 mod jq;
 
@@ -26,12 +29,22 @@ pub(crate) fn effective_comment_mode(raw: &str) -> &str {
         mode => mode,
     }
 }
+
+/// A report's path inside the `ripr-reports` artifact. The generated
+/// workflow uploads `target/ripr` and `target/ci`, and `upload-artifact`
+/// roots the archive at their common parent, so `target/ripr/x.md` is
+/// `ripr/x.md` in the downloaded artifact.
+fn artifact_path(path: &str) -> &str {
+    path.strip_prefix("target/").unwrap_or(path)
+}
+
 #[cfg(test)]
 mod tests;
 
 use crate::agent::loop_commands::{
     PILOT_BEFORE_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_PACKET_ARTIFACT,
-    WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT, WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
+    WORKFLOW_AGENT_RECEIPT_ARTIFACT, WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT,
+    WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT,
 };
 use crate::app::agent_review_summary::NO_RECEIPT_BEFORE_REPAIR;
 use crate::output::first_pr::{
@@ -79,7 +92,7 @@ const COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 /// the producer refused to run, this envelope is the only place that names
 /// the cause; every downstream packet degrades to a missing/blocked state.
 const CHECK_JSON: &str = "target/ripr/pr/check.json";
-const GATE_JSON: &str = "target/ripr/reports/gate-decision.json";
+const GATE_JSON: &str = gate_verdict::GATE_DECISION_JSON;
 const GATE_MD: &str = "target/ripr/reports/gate-decision.md";
 const DELTA_JSON: &str = "target/ripr/reports/baseline-debt-delta.json";
 const DELTA_MD: &str = "target/ripr/reports/baseline-debt-delta.md";
@@ -98,32 +111,87 @@ pub(crate) struct CiSummaryInput {
     pub(crate) root: PathBuf,
     /// The PR base branch the missing-start-here route names.
     pub(crate) base_ref: String,
+    /// `GITHUB_EVENT_NAME`, empty outside GitHub Actions. A set event other
+    /// than `pull_request` has no pull request to analyze (#14148).
+    pub(crate) event_name: String,
     /// `RIPR_UPLOAD_SARIF == "true"`.
     pub(crate) upload_sarif: bool,
+    /// `github.event_name == "pull_request"`. The packet renders the diff
+    /// SARIF on a pull request and the repo seam SARIF otherwise (#14300),
+    /// so an absent file is expected only for the other event.
+    pub(crate) pull_request: bool,
     /// `RIPR_GATE_BASELINE` is set.
     pub(crate) gate_baseline: bool,
     /// `RIPR_GATE_MODE` is not blank. When false the policy
     /// and governance sections are folded (#11217).
     pub(crate) gate_configured: bool,
+    /// `RIPR_GATE_MODE` as set, unvalidated. Names an unknown mode as the
+    /// cause when no gate decision was written (#14081).
+    pub(crate) gate_mode: String,
     /// `RIPR_COMMENT_MODE`, `off` when unset.
     pub(crate) comment_mode: String,
     /// The enabled language names `ripr doctor --json` reports.
     pub(crate) configured_languages: Vec<String>,
 }
 
-/// Render the step summary Markdown. Bytes, because full reports are
-/// included verbatim.
-pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
+/// Render the job front page or the detailed local preview.
+pub(crate) fn render_ci_summary(input: &CiSummaryInput, full: bool) -> Vec<u8> {
     let mut summary = Summary {
         root: input.root.clone(),
         relative: repo_relative_for(&input.root),
         out: Vec::new(),
         attention: false,
         policy_reports_read: 0,
+        headline_names_repair: false,
     };
-    summary.headline();
+    let compact = !full && (input.pull_request || input.event_name.is_empty());
+    if summary.headline(&input.gate_mode, compact) && compact {
+        summary.analysis_refusal_status();
+        summary.pilot_deadline();
+        if let Some(doc) = summary.doc(START_HERE_JSON) {
+            if doc.optional(&["status"]) == "blocked" {
+                let reason = doc.optional(&["selected.message"]);
+                summary.line("- Start-here packet: blocked.");
+                if !reason.is_empty() {
+                    summary.line(&format!("- Reason: {}", code_span(&reason)));
+                }
+            }
+            let limit = doc.optional(&["selected.static_limit_kind"]);
+            if !limit.is_empty() && limit != "none" {
+                let detail = doc.optional(&["selected.static_limit_detail"]);
+                summary.line(&format!(
+                    "- Static limit: {} {}",
+                    code_span(&limit),
+                    code_span(&detail)
+                ));
+            }
+            // The full page shows this start in its First-run status; a first
+            // spot with no repair route leaves it to the packet to carry.
+            summary.carried_repair_start(&doc);
+        }
+        summary.blank();
+        summary.line("### Reports in the `ripr-reports` artifact");
+        for path in [
+            START_HERE_MD,
+            INDEX_MD,
+            FRONT_PANEL_MD,
+            FIRST_ACTION_MD,
+            LEDGER_MD,
+            PILOT_SUMMARY_MD,
+            COMMENTS_JSON,
+            CHECK_JSON,
+            GATE_JSON,
+            GATE_MD,
+            "target/ripr/review/comment-publish-plan.md",
+        ] {
+            if summary.is_file(path) {
+                summary.full_report(path);
+            }
+        }
+        return summary.out;
+    }
     summary.start_here();
-    summary.first_run_status(&input.base_ref);
+    summary.first_run_status(&input.base_ref, &input.event_name);
     summary.language_preview(&input.configured_languages);
     summary.front_panel();
     summary.recommended_next_test();
@@ -135,21 +203,40 @@ pub(crate) fn render_ci_summary(input: &CiSummaryInput) -> Vec<u8> {
     summary.assistant_proof();
     summary.agent_proof_status();
     summary.governance(input.gate_configured);
-    summary.gate_decision();
+    summary.gate_decision(&input.gate_mode);
     summary.baseline_delta(input.gate_baseline);
     summary.ripr_zero();
-    summary.sarif_and_badges(input.upload_sarif);
+    summary.sarif_and_badges(input.upload_sarif, input.pull_request);
     summary.guidance_annotations();
-    summary.inline_comments(&input.comment_mode);
+    summary.inline_comments(&input.comment_mode, full);
     summary.known_limits();
     summary.out
 }
 
 /// The checkout path as `pwd -P` and `$PWD` spelled it for the step.
 fn repo_relative_for(root: &Path) -> RepoRelative {
-    let physical = fs::canonicalize(root)
+    let canonical = fs::canonicalize(root).ok();
+    let physical = canonical
+        .as_ref()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // Producers print command roots in their human display spelling
+    // (`command_root_display`): on Windows that is forward-slashed without the
+    // verbatim prefix, not the native canonical spelling. Match it too (#15858).
+    let shown = canonical
+        .as_deref()
+        .map(crate::output::path::human_path)
+        .unwrap_or_default();
+    // Command fields quote that spelling with `shell_arg` when it holds a
+    // shell metacharacter, so `/tmp/O'Brien/project` is printed as
+    // `'/tmp/O'\''Brien/project'`. Match the quoted form as well; a plain
+    // path needs no quoting and adds no spelling.
+    let quoted = quoted_root_opening(&shown);
+    let display = if shown == physical {
+        String::new()
+    } else {
+        shown
+    };
     // Like the shell, trust `$PWD` only while it still names the working
     // directory; otherwise the logical path is the physical one.
     let cwd = std::env::current_dir().ok();
@@ -173,7 +260,29 @@ fn repo_relative_for(root: &Path) -> RepoRelative {
         .unwrap_or_default();
     RepoRelative {
         physical: physical.into_bytes(),
+        display: display.into_bytes(),
+        quoted,
         logical: logical.into_bytes(),
+    }
+}
+
+/// The opening of `shell_arg(root)` without its closing quote, when the
+/// producer quotes the root in one plain quote pair (`'…'` or Windows
+/// `"…"`); empty otherwise. `RepoRelative` replaces it with the quote and
+/// `.`, so `'<root>'` becomes `'.'` and `'<root>/x'` becomes `'./x'`.
+fn quoted_root_opening(root: &str) -> Vec<u8> {
+    if root.is_empty() {
+        return Vec::new();
+    }
+    let quoted = crate::agent::loop_commands::shell_arg(root);
+    let bytes = quoted.as_bytes();
+    match (bytes.first(), bytes.split_last()) {
+        (Some(open @ (b'\'' | b'"')), Some((close, opening)))
+            if opening.len() > 1 && open == close =>
+        {
+            opening.to_vec()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -210,6 +319,9 @@ struct Summary {
     /// per category, OR-ed in by `note_attention`); compared against
     /// `REQUIRED_POLICY_REPORTS` to tell a complete read from a partial one.
     policy_reports_read: u8,
+    /// The headline named the first spot's repair command, so the compact
+    /// page does not repeat the packet's carried start beside it.
+    headline_names_repair: bool,
 }
 
 impl Summary {
@@ -231,20 +343,29 @@ impl Summary {
         path.is_file().then(|| Doc::read(&path))
     }
 
-    /// A collapsed full report. `relative` rewrites the checkout path in
-    /// reports that carry runnable commands.
-    fn full_report(&mut self, path: &str, relative: bool) {
-        self.line(&format!("<details><summary>Full report: {path}</summary>"));
+    /// One report kept inline, collapsed, as every report was before
+    /// #14301; only the comment publish plan uses it.
+    fn collapsed_report(&mut self, path: &str) {
+        self.line(&format!(
+            "<details><summary>Full report: {}</summary>",
+            artifact_path(path)
+        ));
         self.blank();
         let bytes = fs::read(self.root.join(path)).unwrap_or_default();
-        if relative {
-            let rewritten = self.relative.file(&bytes);
-            self.out.extend(rewritten);
-        } else {
-            self.out.extend(bytes);
-        }
+        self.out.extend(bytes);
         self.blank();
         self.line("</details>");
+    }
+
+    /// Names a full report in the uploaded artifact instead of inlining it
+    /// (#14301). Inlined reports made a three-line pull request's summary
+    /// 50 KB / 1,000 lines, mostly restating the sections above them; the
+    /// report itself is unchanged in the `ripr-reports` artifact.
+    fn full_report(&mut self, path: &str) {
+        self.line(&format!(
+            "- Full report: {} in the `ripr-reports` artifact",
+            code_span(artifact_path(path))
+        ));
     }
 
     /// The policy and governance sections. With no gate configured they carry
@@ -313,11 +434,12 @@ impl Summary {
     }
 
     /// The pull request's own verdict, before ripr's orientation (#11217).
-    fn headline(&mut self) {
+    fn headline(&mut self, gate_mode: &str, compact: bool) -> bool {
         self.line("## RIPR advisory summary");
         self.blank();
         self.line("RIPR is advisory static evidence. It does not edit source, generate tests, or run mutation testing.");
         self.blank();
+        self.gate_verdict(gate_mode);
         let report = fs::read(self.root.join(COMMENTS_JSON))
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
@@ -325,39 +447,102 @@ impl Summary {
             .as_ref()
             .map(headline::headline_lines)
             .unwrap_or_default();
+        self.headline_names_repair = lines.iter().any(|line| line.starts_with("- Next step: "));
+        if compact && !lines.is_empty() {
+            self.compact_gate_status(gate_mode);
+            self.blank();
+        }
         for line in &lines {
             self.line(line);
         }
         if !lines.is_empty() {
+            if report
+                .as_ref()
+                .and_then(|value| value["analysis_outcome"]["analysis_complete"].as_bool())
+                == Some(false)
+            {
+                self.line("- Analysis was incomplete. Findings cover only the analyzed scope.");
+            }
             self.blank();
         }
+        !lines.is_empty()
+    }
+
+    /// The start the start-here packet carries (#3906), when the headline
+    /// named none for its first spot: a card with no repair route still
+    /// leaves the packet's selected gap to start from, and the full page
+    /// leads with that start. Shown as the full page shows it, from the
+    /// repository root, and never beside a command the headline already names.
+    fn carried_repair_start(&mut self, doc: &Doc) {
+        if self.headline_names_repair {
+            return;
+        }
+        let command = doc.optional(&["selected.repair_command"]);
+        if !command.is_empty() {
+            let relative = self.relative.clone();
+            self.repair_start("Start repair", &inline(&relative.value(&command)));
+        }
+    }
+
+    fn compact_gate_status(&mut self, gate_mode: &str) {
+        if !gate_mode.is_empty() {
+            self.line("### Gate decision");
+            match self.doc(GATE_JSON) {
+                Some(doc) if doc.optional(&["mode"]) == gate_mode => {
+                    let status = doc.field(&["status"], "unknown", "unknown");
+                    self.line(&format!("- Mode: {}", code_span(gate_mode)));
+                    self.line(&format!("- Status: {}", code_span(&status)));
+                }
+                Some(_) => self.line("- No matching gate decision was recorded for this run."),
+                None => self.line(&gate_verdict::missing_decision_line(gate_mode)),
+            }
+        } else {
+            self.line("- Gate: advisory (no gate mode configured).");
+        }
+    }
+
+    /// A failing gate, before the findings (#14081): a blocked or
+    /// misconfigured gate is why the job is red, so it leads. A set mode the
+    /// gate refuses comes first, because the gate did not run under it. A
+    /// decision document is read only when it names this run's mode, so a
+    /// report left by an earlier run under another mode is never worded as
+    /// this run's verdict. Every other state prints nothing here.
+    fn gate_verdict(&mut self, gate_mode: &str) {
+        let verdict = gate_verdict::GateVerdict::for_run(&self.root, gate_mode);
+        let Some(verdict) = verdict else {
+            return;
+        };
+        for line in verdict.summary_lines() {
+            self.line(&line);
+        }
+        self.blank();
     }
 
     fn start_here(&mut self) {
         self.line("### Start here");
-        self.line("- Open `start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.");
+        self.line("- Open `ripr/reports/start-here.md` in the `ripr-reports` artifact (Artifacts on this run's summary page) first when it exists.");
         self.line(
-            "- Then open `index.md` in the same artifact to navigate deeper evidence artifacts.",
+            "- Then open `ripr/reports/index.md` in the same artifact to navigate deeper evidence artifacts.",
         );
         if self.is_file(START_HERE_MD) {
-            self.line("- Start-here artifact: `start-here.md` in the `ripr-reports` artifact");
+            self.line("- Start-here artifact: `ripr/reports/start-here.md` in the `ripr-reports` artifact");
         } else if let Some(index) = self.doc(INDEX_JSON) {
             let path =
                 inline(&index.field(&["summary.start_here"], "not_available", "not_available"));
             if path == "not_available" {
                 self.line("- Start-here artifact: `not_available`");
             } else {
-                let name = path.rsplit('/').next().unwrap_or(&path);
+                let name = artifact_path(&path);
                 self.line(&format!(
                     "- Start-here artifact: `{name}` in the `ripr-reports` artifact"
                 ));
             }
         } else if self.is_file(FRONT_PANEL_MD) {
             self.line(
-                "- Start-here artifact: `pr-review-front-panel.md` in the `ripr-reports` artifact",
+                "- Start-here artifact: `ripr/reports/pr-review-front-panel.md` in the `ripr-reports` artifact",
             );
         } else if self.is_file(PILOT_SUMMARY_MD) {
-            self.line("- Start-here artifact: `pilot-summary.md` in the `ripr-reports` artifact");
+            self.line("- Start-here artifact: `ripr/pilot/pilot-summary.md` in the `ripr-reports` artifact");
         } else {
             self.line("- Start-here artifact: not generated yet; inspect uploaded artifacts and job logs.");
         }
@@ -400,8 +585,28 @@ impl Summary {
         self.line("- Retry note: per-file facts computed before the deadline are written to `target/ripr/cache`; when the workflow restores that directory between runs, the retry resumes from them. Later whole-repo stages are not cached and can still need the larger deadline.");
     }
 
-    fn first_run_status(&mut self, base_ref: &str) {
+    /// A run with no pull request, named before the states it causes
+    /// (#14148). The packet runs its pull-request stages only for a
+    /// `pull_request` event, so a manual or push run has no PR repair cards
+    /// and the start-here packet reports them missing; without this line a
+    /// first manual run reads as broken. An unset event (a local run) and a
+    /// `pull_request` event print nothing.
+    fn no_pull_request(&mut self, event_name: &str) {
+        if event_name.is_empty() || event_name == "pull_request" {
+            return;
+        }
+        self.line(&format!(
+            "- No pull request in this run: the event is {}, so the pull request findings were not produced. A missing PR repair cards state below follows from that; repository-wide reports do not need a pull request.",
+            code_span(event_name)
+        ));
+        self.line(
+            "- Next step: open or update a pull request to get changed-behavior findings for it.",
+        );
+    }
+
+    fn first_run_status(&mut self, base_ref: &str, event_name: &str) {
         self.line("#### First-run status");
+        self.no_pull_request(event_name);
         // #11161: when the producer refused to run, the downstream packets
         // carry missing/blocked states whose regeneration commands cannot
         // succeed — the author sees an unexplained "blocked". The refusal
@@ -428,7 +633,7 @@ impl Summary {
                 self.line("- Safe next action: no base is derivable from the event payload (base_ref and default_branch are both empty); re-run with an event JSON that names the repository's default branch, or resolve the base commit and pass `ripr first-pr --base <ref>` explicitly.");
             } else {
                 self.line(&format!(
-                    "- Safe next action: run `ripr first-pr --root . --base origin/{base_ref} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet {WORKFLOW_AGENT_PACKET_ARTIFACT} --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports`."
+                    "- Safe next action: run `ripr first-pr --root . --base origin/{base_ref} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet {WORKFLOW_AGENT_PACKET_ARTIFACT} --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --output-dir target/ripr/reports`."
                 ));
             }
             self.line("- Fallback safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.");
@@ -439,6 +644,13 @@ impl Summary {
 
     fn start_here_status(&mut self, doc: &Doc) {
         let field = |paths: &[&str], default: &str| inline(&doc.field(paths, default, "unknown"));
+        // Commands and paths the packet wrote with the runner's checkout
+        // path: shown from the repository root, as the front panel and first
+        // action are, so they paste into the reader's checkout (#15858).
+        let relative = self.relative.clone();
+        let local = |paths: &[&str], default: &str| {
+            inline(&relative.value(&doc.field(paths, default, "unknown")))
+        };
         let status = field(&["status"], "unknown");
         let state = field(&["selected.state"], "unknown");
         let gap = field(
@@ -489,8 +701,8 @@ impl Summary {
             &["selected.static_evidence_boundary"],
             "static advisory evidence only; not runtime proof, coverage adequacy, mutation confirmation, gate approval, or merge approval.",
         );
-        let target = field(&["selected.repair.target_file"], "not_available");
-        let related = field(&["selected.repair.related_test"], "not_available");
+        let target = local(&["selected.repair.target_file"], "not_available");
+        let related = local(&["selected.repair.related_test"], "not_available");
         let limit = inline(&doc.text(
             |value| {
                 let kind = jq::at(value, "selected.static_limit_kind")?;
@@ -507,12 +719,12 @@ impl Summary {
             },
             "unknown",
         ));
-        let verify = field(&["selected.verify_command"], "not_available");
-        let receipt = field(&["selected.receipt_command"], "not_available");
-        let receipt_path = field(&["selected.receipt_path"], "not_available");
+        let verify = local(&["selected.verify_command"], "not_available");
+        let receipt = local(&["selected.receipt_command"], "not_available");
+        let receipt_path = local(&["selected.receipt_path"], "not_available");
         let receipt_state = field(&["selected.receipt_state"], "receipt_missing");
         let repair_command = doc.optional(&["selected.repair_command"]);
-        let next = field(
+        let next = local(
             &[
                 "selected.repair_command",
                 "selected.next_command",
@@ -523,10 +735,17 @@ impl Summary {
         let warnings = inline(&doc.length("warnings"));
         let labels = ProofLabels::new(!repair_command.is_empty());
         if !repair_command.is_empty() {
-            self.repair_start("Start repair", &inline(&repair_command));
+            self.repair_start("Start repair", &inline(&relative.value(&repair_command)));
         }
         self.status_row(&status, &format!("- Status: `{status}`"));
         self.status_row(&state, &format!("- Selected state: `{state}`"));
+        // #14148: a blocked packet carries its own reason; without it the
+        // reader sees a state token and a command, and the sentence that
+        // explains both is only in the start-here report in the uploaded artifact.
+        let reason = doc.optional(&["selected.message"]);
+        if !reason.is_empty() {
+            self.line(&format!("- Reason: {}", code_span(&reason)));
+        }
         self.status_row(&gap, &format!("- Canonical gap: `{gap}`"));
         self.status_row(&language, &format!("- Language: `{language}`"));
         self.status_row(&kind, &format!("- Top gap/no-action: `{kind}`"));
@@ -551,16 +770,21 @@ impl Summary {
         );
         self.status_row(&next, &format!("- Safe next action command: `{next}`"));
         self.status_row(&warnings, &format!("- Warnings: `{warnings}`"));
-        self.line("- Artifacts: `start-here.json`, `start-here.md` in the `ripr-reports` artifact");
+        self.line("- Artifacts: `ripr/reports/start-here.json`, `ripr/reports/start-here.md` in the `ripr-reports` artifact");
         self.line("- Boundary: start-here is advisory first-run guidance only; gate decision remains separate pass/fail authority when configured.");
         if self.is_file(START_HERE_MD) {
             self.blank();
-            self.full_report(START_HERE_MD, false);
+            self.full_report(START_HERE_MD);
         }
     }
 
     fn first_action_status(&mut self, doc: &Doc) {
         let field = |paths: &[&str], default: &str| inline(&doc.field(paths, default, "unknown"));
+        // Its commands are shown from the repository root too (#15858).
+        let relative = self.relative.clone();
+        let local = |paths: &[&str], default: &str| {
+            inline(&relative.value(&doc.field(paths, default, "unknown")))
+        };
         let status = field(&["status"], "unknown");
         let action_kind = field(&["action_kind"], "unknown");
         let title = field(&["title"], "not_available");
@@ -626,10 +850,10 @@ impl Summary {
             },
             "unknown",
         ));
-        let repair = field(&["commands.repair"], "not_available");
-        let packet = field(&["commands.context_packet"], "not_available");
-        let verify = field(&["commands.verify"], "not_available");
-        let receipt = field(&["commands.receipt"], "not_available");
+        let repair = local(&["commands.repair"], "not_available");
+        let packet = local(&["commands.context_packet"], "not_available");
+        let verify = local(&["commands.verify"], "not_available");
+        let receipt = local(&["commands.receipt"], "not_available");
         let fallback = field(&["fallback.summary", "fallback.kind"], "none");
         let warnings = inline(&doc.length("warnings"));
         let led = repair != "not_available" && repair != "unknown";
@@ -659,7 +883,8 @@ impl Summary {
         self.status_row(&fallback, &format!("- Fallback/no-action: `{fallback}`"));
         self.status_row(&warnings, &format!("- Warnings: `{warnings}`"));
         self.line(&format!(
-            "- Artifacts: `target/ripr/reports/first-useful-action.json`, `target/ripr/reports/first-useful-action.md`, `{WORKFLOW_AGENT_PACKET_ARTIFACT}`"
+            "- Artifacts: `ripr/reports/first-useful-action.json`, `ripr/reports/first-useful-action.md`, `{}`",
+            artifact_path(WORKFLOW_AGENT_PACKET_ARTIFACT)
         ));
         self.line("- Boundary: advisory first-run path only; gate decision remains separate pass/fail authority when configured.");
     }
@@ -835,12 +1060,12 @@ impl Summary {
                 "- Gate: mode=`{gate_mode}`, decision=`{gate_decision}`"
             ));
             self.line(&format!("- Warnings: `{warnings}`"));
-            self.line("- Front-panel artifacts: `target/ripr/reports/pr-review-front-panel.json`, `target/ripr/reports/pr-review-front-panel.md`");
+            self.line("- Front-panel artifacts: `ripr/reports/pr-review-front-panel.json`, `ripr/reports/pr-review-front-panel.md`");
             self.line("- Pass/fail authority remains `ripr gate evaluate` when an explicit gate mode is configured.");
             self.blank();
         }
         if self.is_file(FRONT_PANEL_MD) {
-            self.full_report(FRONT_PANEL_MD, true);
+            self.full_report(FRONT_PANEL_MD);
         }
         self.blank();
     }
@@ -897,12 +1122,12 @@ impl Summary {
             self.line(&format!("- {}: `{receipt}`", labels.receipt));
             self.line(&format!("- Fallback: `{fallback}`"));
             self.line(&format!("- Warnings: `{warnings}`"));
-            self.line("- Action artifacts: `target/ripr/reports/first-useful-action.json`, `target/ripr/reports/first-useful-action.md`");
+            self.line("- Action artifacts: `ripr/reports/first-useful-action.json`, `ripr/reports/first-useful-action.md`");
             self.line("- Boundary: static evidence only; no runtime mutation execution.");
             self.blank();
         }
         if self.is_file(FIRST_ACTION_MD) {
-            self.full_report(FIRST_ACTION_MD, true);
+            self.full_report(FIRST_ACTION_MD);
         }
         self.blank();
     }
@@ -910,7 +1135,7 @@ impl Summary {
     fn top_recommendation(&mut self) {
         self.line("### Top recommendation");
         if self.is_file(PILOT_SUMMARY_MD) {
-            self.full_report(PILOT_SUMMARY_MD, false);
+            self.full_report(PILOT_SUMMARY_MD);
         } else {
             self.line("Pilot summary was not generated. Inspect the uploaded artifact packet and job logs.");
         }
@@ -926,7 +1151,20 @@ impl Summary {
             .doc(WORKFLOW_AGENT_REVIEW_SUMMARY_ARTIFACT)
             .map(|doc| doc.optional(&["static_movement.state"]))
             .unwrap_or_default();
-        if movement == "missing_artifact" {
+        if movement == "missing_artifact"
+            && self.root.join(WORKFLOW_AGENT_RECEIPT_ARTIFACT).exists()
+        {
+            // Something is at the receipt path but the review summary read no
+            // static movement from it (unreadable, not JSON, or no seam).
+            // "No receipt yet" would send the reader to start a repair over
+            // evidence that exists; name the file and the full packet.
+            self.line(&format!(
+                "- Receipt: `{WORKFLOW_AGENT_RECEIPT_ARTIFACT}` is present, but no static movement could be read from it (unreadable, invalid, or incomplete). Inspect it, then reissue it on a local checkout: rerun `ripr agent verify`, then `ripr agent receipt`."
+            ));
+            self.line(&format!(
+                "- Full packet: `{WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT}` (workflow artifact)."
+            ));
+        } else if movement == "missing_artifact" {
             self.line(&format!("- Receipt: {NO_RECEIPT_BEFORE_REPAIR}"));
             let repair = self
                 .doc(START_HERE_JSON)
@@ -938,10 +1176,11 @@ impl Summary {
                 self.repair_start("Start repair", &inline(&repair));
             }
             self.line(&format!(
-                "- Full packet: `{WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT}` (workflow artifact)."
+                "- Full packet: `{}` in the `ripr-reports` artifact.",
+                artifact_path(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT)
             ));
         } else if self.is_file(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT) {
-            self.full_report(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT, false);
+            self.full_report(WORKFLOW_AGENT_REVIEW_SUMMARY_MARKDOWN_ARTIFACT);
         } else {
             self.line("Agent review summary was not generated. Run `ripr agent status --root .` locally or inspect uploaded workflow artifacts.");
         }
@@ -950,13 +1189,13 @@ impl Summary {
 
     fn artifact_packet(&mut self) {
         self.line("### Artifact packet");
-        self.line("- Pilot reports: `target/ripr/pilot/`");
-        self.line("- Agent workflow: `target/ripr/workflow/`");
-        self.line("- Agent compatibility copies: `target/ripr/agent/`");
-        self.line("- Repo reports, badges, SARIF, and receipts: `target/ripr/reports/`");
-        self.line("- CI labels and plan inputs: `target/ci/`");
+        self.line("- Pilot reports: `ripr/pilot/`");
+        self.line("- Agent workflow: `ripr/workflow/`");
+        self.line("- Agent compatibility copies: `ripr/agent/`");
+        self.line("- Repo reports, badges, SARIF, and receipts: `ripr/reports/`");
+        self.line("- CI labels and plan inputs: `ci/`");
         if self.root.join("target/ripr/review").is_dir() {
-            self.line("- PR test guidance report: `target/ripr/review/`");
+            self.line("- PR test guidance report: `ripr/review/`");
         } else {
             self.line("- PR test guidance report: not generated yet");
         }
@@ -996,12 +1235,12 @@ impl Summary {
             self.line(&format!("- Gate authority: `{gate}`"));
             self.line(&format!("- Missing expected: `{missing_labels}`"));
             self.line(&format!("- Warning kinds: `{warning_kinds}`"));
-            self.line("- Index artifacts: `target/ripr/reports/index.json`, `target/ripr/reports/index.md`");
+            self.line("- Index artifacts: `ripr/reports/index.json`, `ripr/reports/index.md`");
             self.line("- Boundary: advisory artifact map only; gate-decision remains configured pass/fail authority.");
             self.blank();
         }
         if self.is_file(INDEX_MD) {
-            self.full_report(INDEX_MD, false);
+            self.full_report(INDEX_MD);
         }
         self.blank();
     }
@@ -1055,12 +1294,12 @@ impl Summary {
             }
             self.line(&format!("- Coverage/grip frontier: `{coverage}`"));
             self.line(&format!("- History trend: `{trend}`"));
-            self.line("- Ledger artifacts: `target/ripr/reports/pr-evidence-ledger.json`, `target/ripr/reports/pr-evidence-ledger.md`");
+            self.line("- Ledger artifacts: `ripr/reports/pr-evidence-ledger.json`, `ripr/reports/pr-evidence-ledger.md`");
             self.line("- Pass/fail authority remains `ripr gate evaluate` when an explicit gate mode is configured.");
             self.blank();
         }
         if self.is_file(LEDGER_MD) {
-            self.full_report(LEDGER_MD, false);
+            self.full_report(LEDGER_MD);
         } else if self.is_file(COMMENTS_JSON) {
             self.line("PR evidence ledger was not generated. Inspect `target/ripr/review/comments.json` and rerun `ripr pr-ledger record` locally.");
         } else {
@@ -1104,12 +1343,12 @@ impl Summary {
             self.line(&format!("- Gate input: `{gate}`"));
             self.line(&format!("- Coverage/grip frontier input: `{coverage}`"));
             self.line(&format!("- Warnings: `{warnings}`"));
-            self.line("- Proof artifacts: `target/ripr/reports/test-oracle-assistant-proof.json`, `target/ripr/reports/test-oracle-assistant-proof.md`");
+            self.line("- Proof artifacts: `ripr/reports/test-oracle-assistant-proof.json`, `ripr/reports/test-oracle-assistant-proof.md`");
             self.line("- Pass/fail authority remains `ripr gate evaluate` when an explicit gate mode is configured.");
             self.blank();
         }
         if self.is_file(md) {
-            self.full_report(md, false);
+            self.full_report(md);
         }
         self.blank();
     }
@@ -1163,12 +1402,12 @@ impl Summary {
             self.line(&format!(
                 "- Repair queue: total=`{repairs}`, first=`{top_repair}`"
             ));
-            self.line("- Health artifacts: `target/ripr/reports/assistant-loop-health.json`, `target/ripr/reports/assistant-loop-health.md`");
+            self.line("- Health artifacts: `ripr/reports/assistant-loop-health.json`, `ripr/reports/assistant-loop-health.md`");
             self.line("- Boundary: advisory static health over proof artifacts; gate evaluator remains pass/fail authority.");
             self.blank();
         }
         if self.is_file(md) {
-            self.full_report(md, false);
+            self.full_report(md);
         }
         self.blank();
     }
@@ -1195,7 +1434,7 @@ impl Summary {
             self.line(&format!("- Axes: blocking=`{blocking}`, baseline=`{baseline}`, waiver=`{waiver}`, suppression=`{suppression}`, calibration=`{calibration}`, preview=`{preview}`"));
             self.line(&format!("- Warnings: `{warnings}`; unknowns: `{unknowns}`"));
             self.line(&format!("- Next policy action: `{next}`"));
-            self.line("- Policy readiness artifacts: `target/ripr/reports/policy-readiness.json`, `target/ripr/reports/policy-readiness.md`");
+            self.line("- Policy readiness artifacts: `ripr/reports/policy-readiness.json`, `ripr/reports/policy-readiness.md`");
             self.line("- Boundary: advisory readiness projection only; `ripr gate evaluate` remains pass/fail authority when configured.");
             self.blank();
         }
@@ -1234,7 +1473,7 @@ impl Summary {
                 "- Blockers: total=`{blockers}`, first=`{top_blocker}`"
             ));
             self.line(&format!("- Warnings: `{warnings}`; unknowns: `{unknowns}`"));
-            self.line("- Policy operations artifacts: `target/ripr/reports/policy-operations.json`, `target/ripr/reports/policy-operations.md`");
+            self.line("- Policy operations artifacts: `ripr/reports/policy-operations.json`, `ripr/reports/policy-operations.md`");
             self.line("- Boundary: advisory operations packet only; promotion requires manual review and separate configuration changes.");
             self.blank();
         }
@@ -1265,7 +1504,7 @@ impl Summary {
             ));
             self.line(&format!("- Trends: readiness=`{readiness}`, waiver_pressure=`{waiver}`, suppression_health=`{suppression}`, baseline_still_present=`{baseline_present}`, baseline_resolved=`{baseline_resolved}`, preview_boundary=`{preview}`"));
             self.line(&format!("- Warnings: `{warnings}`; unknowns: `{unknowns}`"));
-            self.line("- Policy history artifacts: `target/ripr/reports/policy-history.json`, `target/ripr/reports/policy-history.md`");
+            self.line("- Policy history artifacts: `ripr/reports/policy-history.json`, `ripr/reports/policy-history.md`");
             self.line("- Boundary: history is read-only and never appends to `.ripr/policy-history.jsonl` automatically.");
             self.blank();
         }
@@ -1294,7 +1533,7 @@ impl Summary {
             self.line(&format!("- `{target}`: allowed_now=`{allowed}`, repairs=`{repairs}`, receipts=`{receipts}`, warnings=`{warnings}`, unknowns=`{unknowns}`, why=`{reason}`"));
         }
         if found {
-            self.line("- Promotion packet artifacts: `target/ripr/reports/policy-promotion-*.json`, `target/ripr/reports/policy-promotion-*.md`");
+            self.line("- Promotion packet artifacts: `ripr/reports/policy-promotion-*.json`, `ripr/reports/policy-promotion-*.md`");
             self.line("- Boundary: packets do not edit `ripr.toml`, baselines, suppressions, workflows, branch protection, CI defaults, or preview eligibility.");
         } else {
             self.line("Policy promotion packets were not generated. They require policy-operations and remain read-only manual review packets.");
@@ -1303,7 +1542,7 @@ impl Summary {
             let md = format!("{REPORTS}/policy-promotion-{mode}.md");
             if self.is_file(&md) {
                 self.blank();
-                self.full_report(&md, false);
+                self.full_report(&md);
             }
         }
         self.blank();
@@ -1327,7 +1566,7 @@ impl Summary {
             self.line(&format!("- `{language}`/`{class}`: allowed_now=`{allowed}`, supplied_evidence=`{supplied}`, missing_evidence=`{missing}`, warnings=`{warnings}`, unknowns=`{unknowns}`"));
         }
         if jsons.iter().any(|json| self.is_file(json)) {
-            self.line("- Preview promotion artifacts: `target/ripr/reports/preview-promotion-*.json`, `target/ripr/reports/preview-promotion-*.md`");
+            self.line("- Preview promotion artifacts: `ripr/reports/preview-promotion-*.json`, `ripr/reports/preview-promotion-*.md`");
             self.line("- Boundary: preview evidence remains visible and non-gating unless a later explicit promotion policy is reviewed.");
         } else {
             self.line("Preview promotion packets were not generated. They are only surfaced when TypeScript or Python preview adapters are configured.");
@@ -1335,7 +1574,7 @@ impl Summary {
         for md in self.preview_promotion_files(".md") {
             if self.is_file(&md) {
                 self.blank();
-                self.full_report(&md, false);
+                self.full_report(&md);
             }
         }
         self.blank();
@@ -1384,12 +1623,12 @@ impl Summary {
             self.line(&format!("- Status: `{status}`"));
             self.line(&format!("- Counts: waivers=`{waivers}`, identities=`{identities}`, repeated_seams=`{repeated_seams}`, repeated_files=`{repeated_files}`"));
             self.line(&format!("- Review signals: focused_test_candidates=`{focused}`, durable_suppression_candidates=`{suppression}`, warnings=`{warnings}`"));
-            self.line("- Waiver-aging artifacts: `target/ripr/reports/waiver-aging.json`, `target/ripr/reports/waiver-aging.md`");
+            self.line("- Waiver-aging artifacts: `ripr/reports/waiver-aging.json`, `ripr/reports/waiver-aging.md`");
             self.line("- Boundary: repeated waiver is a visible signal, not a failure or durable suppression.");
             self.blank();
         }
         if self.is_file("target/ripr/reports/waiver-aging.md") {
-            self.full_report("target/ripr/reports/waiver-aging.md", false);
+            self.full_report("target/ripr/reports/waiver-aging.md");
         } else if self.is_file(LEDGER_JSON) {
             self.line("Waiver aging was not generated. Inspect `target/ripr/reports/pr-evidence-ledger.json` and rerun `ripr policy waiver-aging` locally.");
         } else {
@@ -1434,7 +1673,7 @@ impl Summary {
             self.line(&format!(
                 "- Warnings: `{warnings}`; config_errors: `{config_errors}`"
             ));
-            self.line("- Suppression-health artifacts: `target/ripr/reports/suppression-health.json`, `target/ripr/reports/suppression-health.md`");
+            self.line("- Suppression-health artifacts: `ripr/reports/suppression-health.json`, `ripr/reports/suppression-health.md`");
             self.line("- Boundary: suppressions remain visible durable exceptions; this report never applies or gates on suppressions.");
             self.blank();
         }
@@ -1444,7 +1683,7 @@ impl Summary {
         );
     }
 
-    fn gate_decision(&mut self) {
+    fn gate_decision(&mut self, gate_mode: &str) {
         self.line("### Gate decision");
         if let Some(doc) = self.doc(GATE_JSON) {
             let count = |path: &str| inline(&doc.field(&[path], "0", "0"));
@@ -1553,16 +1792,11 @@ impl Summary {
             self.line(&format!(
                 "- Blocking reason (`{blocking}`): `{blocking_reason}`"
             ));
-            self.line("- Gate artifacts: `target/ripr/reports/gate-decision.json`, `target/ripr/reports/gate-decision.md`");
-            self.line(
-                "- Related inputs: `target/ripr/review/comments.json`, `target/ci/labels.json`",
-            );
+            self.line("- Gate artifacts: `ripr/reports/gate-decision.json`, `ripr/reports/gate-decision.md`");
+            self.line("- Related inputs: `ripr/review/comments.json`, `ci/labels.json`");
             self.blank();
         }
-        self.report_or(
-            GATE_MD,
-            "Gate decision was not run. Set `RIPR_GATE_MODE` to `visible-only`, `acknowledgeable`, `baseline-check`, or `calibrated-gate` to opt in.",
-        );
+        self.report_or(GATE_MD, &gate_verdict::missing_decision_line(gate_mode));
     }
 
     fn baseline_delta(&mut self, gate_baseline: bool) {
@@ -1589,11 +1823,11 @@ impl Summary {
             self.line(&format!("- Baseline: `{baseline}`"));
             self.line(&format!("- Counts: still_present=`{still_present}`, resolved=`{resolved}`, new_policy_eligible=`{new_policy_eligible}`, acknowledged=`{acknowledged}`, suppressed=`{suppressed}`, stale=`{stale}`, invalid=`{invalid}`, missing_current_input=`{missing_current}`, legacy_fallback=`{legacy}`"));
             self.line(&format!("- Boundary: {limits}"));
-            self.line("- Baseline delta artifacts: `target/ripr/reports/baseline-debt-delta.json`, `target/ripr/reports/baseline-debt-delta.md`");
+            self.line("- Baseline delta artifacts: `ripr/reports/baseline-debt-delta.json`, `ripr/reports/baseline-debt-delta.md`");
             self.blank();
         }
         if self.is_file(DELTA_MD) {
-            self.full_report(DELTA_MD, false);
+            self.full_report(DELTA_MD);
         } else if gate_baseline {
             self.line("Baseline debt delta was not generated. Check that `RIPR_GATE_MODE` produced `target/ripr/reports/gate-decision.json` and that `RIPR_GATE_BASELINE` points at a readable baseline.");
         } else {
@@ -1643,11 +1877,11 @@ impl Summary {
             self.line(&format!("- Top debt area: `{top_area}`"));
             self.line(&format!("- Top repair route: `{top_route}`"));
             self.line(&format!("- Trend source: `{trend}`"));
-            self.line("- RIPR Zero artifacts: `target/ripr/reports/ripr-zero-status.json`, `target/ripr/reports/ripr-zero-status.md`");
+            self.line("- RIPR Zero artifacts: `ripr/reports/ripr-zero-status.json`, `ripr/reports/ripr-zero-status.md`");
             self.blank();
         }
         if self.is_file(ZERO_MD) {
-            self.full_report(ZERO_MD, false);
+            self.full_report(ZERO_MD);
         } else if self.is_file(DELTA_JSON) {
             self.line("RIPR Zero status was not generated. Inspect `target/ripr/reports/baseline-debt-delta.json` and rerun `ripr zero status` locally.");
         } else {
@@ -1656,11 +1890,32 @@ impl Summary {
         self.blank();
     }
 
-    fn sarif_and_badges(&mut self, upload_sarif: bool) {
+    fn sarif_and_badges(&mut self, upload_sarif: bool, pull_request: bool) {
         self.line("### SARIF and badge status");
         if upload_sarif {
-            self.generated("- Diff SARIF", "target/ripr/reports/ripr-findings.sarif");
-            self.generated("- Repo seam SARIF", "target/ripr/reports/ripr-seams.sarif");
+            // Each SARIF renders for one event kind only (#14300), so its
+            // absence on the other kind is expected, not a fault.
+            let (diff_absent, seams_absent) = if pull_request {
+                (
+                    "missing or skipped",
+                    "not generated (manual runs only; on a pull request the diff SARIF covers the changed lines)",
+                )
+            } else {
+                (
+                    "not generated (pull request runs only)",
+                    "missing or skipped",
+                )
+            };
+            self.generated_or(
+                "- Diff SARIF",
+                "target/ripr/reports/ripr-findings.sarif",
+                diff_absent,
+            );
+            self.generated_or(
+                "- Repo seam SARIF",
+                "target/ripr/reports/ripr-seams.sarif",
+                seams_absent,
+            );
         } else {
             self.line("- SARIF upload: disabled by `RIPR_UPLOAD_SARIF`");
         }
@@ -1670,6 +1925,15 @@ impl Summary {
             "target/ripr/reports/repo-ripr-badge-shields.json",
         );
         self.blank();
+    }
+
+    fn generated_or(&mut self, label: &str, path: &str, absent: &str) {
+        let state = if self.is_file(path) {
+            "generated"
+        } else {
+            absent
+        };
+        self.line(&format!("{label}: {state}"));
     }
 
     fn generated(&mut self, label: &str, path: &str) {
@@ -1699,7 +1963,7 @@ impl Summary {
         self.blank();
     }
 
-    fn inline_comments(&mut self, comment_mode: &str) {
+    fn inline_comments(&mut self, comment_mode: &str, full: bool) {
         self.line("### PR inline comments");
         let mode = effective_comment_mode(comment_mode);
         self.line(&format!("- Mode: `{}`", inline(mode)));
@@ -1715,11 +1979,20 @@ impl Summary {
                 "- Counts: publishable=`{publishable}`, skipped=`{skipped}`, blocked=`{blocked}`"
             ));
             self.line(&format!("- Safe to publish: `{safe}`"));
-            self.line("- Plan artifacts: `target/ripr/review/comment-publish-plan.json`, `target/ripr/review/comment-publish-plan.md`");
+            self.line("- Plan artifacts: `ripr/review/comment-publish-plan.json`, `ripr/review/comment-publish-plan.md` in the `ripr-reports` artifact");
             self.line("- Boundary: inline comments remain opt-in; gate decisions remain separate pass/fail authority.");
             self.blank();
+            // The plan is what `RIPR_COMMENT_MODE=plan` asks to see: which
+            // lines would get a comment and why others are skipped. It stays
+            // inline, collapsed. Its comment lines are bounded by the
+            // inline-comment cap; each stale-comment delete is one line, and
+            // stale comments are the previous run's capped set.
             if self.is_file("target/ripr/review/comment-publish-plan.md") {
-                self.full_report("target/ripr/review/comment-publish-plan.md", false);
+                if full {
+                    self.collapsed_report("target/ripr/review/comment-publish-plan.md");
+                } else {
+                    self.full_report("target/ripr/review/comment-publish-plan.md");
+                }
             }
         } else {
             self.line("- Inline comments are disabled by default. Set `RIPR_COMMENT_MODE` to `plan` to inspect a publish plan or `inline` to publish same-repo changed-line comments when permissions are safe.");
@@ -1785,7 +2058,7 @@ impl Summary {
     /// The full report when it exists, otherwise the not-generated line.
     fn report_or(&mut self, path: &str, missing: &str) {
         if self.is_file(path) {
-            self.full_report(path, false);
+            self.full_report(path);
         } else {
             self.line(missing);
         }

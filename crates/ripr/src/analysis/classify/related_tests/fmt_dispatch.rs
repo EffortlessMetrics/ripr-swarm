@@ -1188,6 +1188,7 @@ mod tests {
 
     fn probe() -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:fmt".to_string()),
             location: SourceLocation::new("src/error.rs", 2, 1),
             owner: Some(SymbolId("src/error.rs::fmt".to_string())),
@@ -1420,9 +1421,11 @@ mod tests {
                         arguments: vec!["l".to_string()],
                         receiver: None,
                         through_macro,
+                        multi_site: false,
                         module_qualified: false,
                         crate_qualifier: None,
                         transparent_macros_rebound: false,
+                        verified_macro_roots: Vec::new(),
                         diverging_handlers: Vec::new(),
                     }
                 })

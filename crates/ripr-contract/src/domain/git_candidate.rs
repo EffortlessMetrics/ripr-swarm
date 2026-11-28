@@ -205,19 +205,34 @@ impl GitCandidateSubject {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitCandidateSubjectError {
     /// An object ID was not 40 or 64 hexadecimal characters.
-    ObjectIdMalformed { value: String },
+    ObjectIdMalformed {
+        /// The rejected input, as supplied.
+        value: String,
+    },
     /// A treeish was empty, oversized, carried control characters, led
     /// with `-`, or contained `..`.
-    TreeishMalformed { value: String },
+    TreeishMalformed {
+        /// The rejected input, as supplied.
+        value: String,
+    },
     /// The subject's repository root does not name an existing directory.
-    RepositoryRootInvalid { root: String },
+    RepositoryRootInvalid {
+        /// The repository root that is missing or not a directory.
+        root: String,
+    },
     /// A candidate subject was combined with an external diff file. The
     /// subject is its own diff authority; the two inputs are mutually
     /// exclusive.
-    DiffFileConflict { diff_file: String },
+    DiffFileConflict {
+        /// The external diff file supplied alongside the subject.
+        diff_file: String,
+    },
     /// A candidate subject was combined with the top-level `base` input.
     /// The subject carries its own base; a second base is ambiguous.
-    BaseConflict { base: String },
+    BaseConflict {
+        /// The top-level base supplied alongside the subject.
+        base: String,
+    },
     /// The subject is structurally valid, but this build has no Git object
     /// producer yet (#3277). Execution fails closed instead of falling
     /// back to worktree analysis.
@@ -225,14 +240,25 @@ pub enum GitCandidateSubjectError {
     /// The object producer (#3277) resolved the subject's identity but a
     /// Git plumbing or materialization step failed. The detail names the
     /// exact step and identity; execution never falls back to worktree
-    /// analysis or an empty result.
-    ExecutionFailed { detail: String },
+    /// analysis or an empty result. Repository and worktree modes also use it
+    /// to refuse a subject, which they cannot execute, before any Git step
+    /// runs.
+    ExecutionFailed {
+        /// The failed step and the underlying error, or the refusal text when
+        /// repository or worktree mode rejects the subject.
+        detail: String,
+    },
     /// A Git plumbing step exceeded its deadline and was terminated
     /// (#6956). Timeout evidence stays typed so the refusal names
     /// `git_invocation_timeout`, never a config or ref family.
     ExecutionTimedOut {
+        /// The Git operation that ran out of time.
         operation: String,
+        /// The deadline the operation was given, in milliseconds.
         timeout_ms: u128,
+        /// Whether the process was started. `false` means the deadline was
+        /// already zero, so nothing was spawned; `true` means the process
+        /// ran past the deadline and was terminated.
         spawned: bool,
     },
 }
@@ -483,5 +509,32 @@ mod tests {
             "debug form must not claim analysis ran: {debug:?}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn object_id_parse_rejects_one_non_hex_byte_among_hex() {
+        let value = format!("{}g", &SHA1_OID[..39]);
+        assert_eq!(
+            GitObjectId::parse(&value),
+            Err(GitCandidateSubjectError::ObjectIdMalformed {
+                value: value.clone()
+            })
+        );
+    }
+
+    #[test]
+    fn treeish_length_limit_admits_exactly_the_maximum() {
+        let at_limit = "a".repeat(MAX_TREEISH_LENGTH);
+        assert_eq!(
+            GitTreeish::new(&at_limit).map(|treeish| treeish.as_str().len()),
+            Ok(MAX_TREEISH_LENGTH)
+        );
+        let over_limit = "a".repeat(MAX_TREEISH_LENGTH + 1);
+        assert_eq!(
+            GitTreeish::new(&over_limit),
+            Err(GitCandidateSubjectError::TreeishMalformed {
+                value: over_limit.clone()
+            })
+        );
     }
 }

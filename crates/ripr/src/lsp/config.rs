@@ -475,7 +475,8 @@ fn session_option_value_is_valid(key: &str, value: &Value) -> bool {
 
 fn ignored_initialization_option_warning(key: &str, source: &str) -> String {
     format!(
-        "ripr: ignoring malformed initializationOption '{key}' (invalid type or literal); using {source} value instead"
+        "ripr: ignoring malformed initializationOption '{key}' (invalid type or literal; accepted: {}); using {source} value instead",
+        session_option_accepted_values(key)
     )
 }
 
@@ -502,6 +503,71 @@ fn is_supported_session_option(key: &str) -> bool {
     )
 }
 
+/// [`pulled_options_or_rejections`] with the rejections joined into one
+/// message, as the unit tests read them.
+#[cfg(test)]
+pub(super) fn validated_pulled_options(values: &[Value]) -> Result<Option<Value>, String> {
+    pulled_options_or_rejections(values).map_err(|rejections| {
+        rejections
+            .into_iter()
+            .map(|rejection| rejection.detail)
+            .collect::<Vec<_>>()
+            .join("; ")
+    })
+}
+
+/// One rejected part of a pulled `ripr` section (#15312): the rejected key
+/// (`None` for a malformed response shape) and the repair detail.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PulledOptionRejection {
+    pub(super) key: Option<String>,
+    pub(super) detail: String,
+}
+
+impl PulledOptionRejection {
+    fn shape(detail: String) -> Self {
+        Self { key: None, detail }
+    }
+}
+
+/// The status-payload summary of a rejected pull: the rejected key names
+/// first, then the details, so a bounded rendering always keeps every key
+/// name (#15312).
+pub(super) fn pulled_rejection_summary(rejections: &[PulledOptionRejection]) -> String {
+    let keys = rejections
+        .iter()
+        .filter_map(|rejection| rejection.key.as_deref())
+        .map(|key| format!("`{key}`"))
+        .collect::<Vec<_>>();
+    let details = rejections
+        .iter()
+        .map(|rejection| rejection.detail.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if keys.is_empty() {
+        details
+    } else {
+        format!("rejected ripr settings {}: {details}", keys.join(", "))
+    }
+}
+
+/// Echoed rejected values are clipped (#15312) so a long bad value cannot
+/// push the key's accepted values past the client-visible message bound.
+const MAX_ECHOED_PULLED_VALUE_CHARS: usize = 60;
+
+fn clipped_value_echo(value: &Value) -> String {
+    let rendered = value.to_string();
+    if rendered.chars().count() <= MAX_ECHOED_PULLED_VALUE_CHARS {
+        return rendered;
+    }
+    let mut clipped = rendered
+        .chars()
+        .take(MAX_ECHOED_PULLED_VALUE_CHARS)
+        .collect::<String>();
+    clipped.push('…');
+    clipped
+}
+
 /// Validate one `workspace/configuration` response for the bounded `ripr`
 /// section before anything is applied (#2031, RIPR-SPEC-0136).
 ///
@@ -512,29 +578,47 @@ fn is_supported_session_option(key: &str) -> bool {
 /// literal fail the whole pull (fail-closed — a silently ignored requested
 /// setting would masquerade as accepted), while unsupported keys are outside
 /// the governed section and ignored.
-pub(super) fn validated_pulled_options(values: &[Value]) -> Result<Option<Value>, String> {
+///
+/// Every rejection is kept separate (#15312): one entry per rejected key (or
+/// one for a malformed response shape), so a caller can bound each entry on
+/// its own and no rejected key is hidden behind another one's text.
+pub(super) fn pulled_options_or_rejections(
+    values: &[Value],
+) -> Result<Option<Value>, Vec<PulledOptionRejection>> {
     if values.len() != 1 {
-        return Err(format!(
+        return Err(vec![PulledOptionRejection::shape(format!(
             "workspace/configuration returned {} items for one requested `ripr` section",
             values.len()
-        ));
+        ))]);
     }
     let Some(item) = values.first() else {
-        return Err("workspace/configuration returned no items; send one item for the `ripr` section (or null)".to_string());
+        return Err(vec![PulledOptionRejection::shape("workspace/configuration returned no items; send one item for the `ripr` section (or null)".to_string())]);
     };
     if item.is_null() {
         return Ok(None);
     }
     let Some(object) = item.as_object() else {
-        return Err(format!(
-            "workspace/configuration item for the `ripr` section must be an object or null, got {item}; send an object of ripr settings or null"
-        ));
+        return Err(vec![PulledOptionRejection::shape(format!(
+            "workspace/configuration item for the `ripr` section must be an object or null, got {}; send an object of ripr settings or null",
+            clipped_value_echo(item)
+        ))]);
     };
-    for (key, value) in object {
-        if !is_supported_session_option(key) {
-            continue;
-        }
-        validate_pulled_value(key, value)?;
+    // Every rejected key is named (#15312): stopping at the first one would
+    // hide the other rejected settings until the user fixed them one by one.
+    let rejections = object
+        .iter()
+        .filter(|(key, _)| is_supported_session_option(key))
+        .filter_map(|(key, value)| {
+            validate_pulled_value(key, value)
+                .err()
+                .map(|detail| PulledOptionRejection {
+                    key: Some(key.clone()),
+                    detail,
+                })
+        })
+        .collect::<Vec<_>>();
+    if !rejections.is_empty() {
+        return Err(rejections);
     }
     Ok(Some(Value::Object(supported_session_options(object))))
 }
@@ -564,8 +648,164 @@ fn validate_pulled_value(key: &str, value: &Value) -> Result<(), String> {
         return Ok(());
     }
     Err(format!(
-        "workspace/configuration value for `{key}` has an invalid type or literal: {value}; fix the value in the editor settings"
+        "workspace/configuration value for `{key}` has an invalid type or literal (accepted: {}); got {}; fix the value in the editor settings",
+        session_option_accepted_values(key),
+        clipped_value_echo(value)
     ))
+}
+
+/// What a `workspace/didChangeConfiguration` payload asked for that the push
+/// path ignores (#15312): one repair line per ignored part, each naming the
+/// key, its accepted values and the value received. The push path stays
+/// lenient (an ignored key falls back to its repository or default value), so
+/// without these lines a typo in a pushed setting looked accepted.
+///
+/// `null` settings carry no request. A payload that is not an object cannot
+/// carry a `ripr` section at all and is reported as one shape line. A `ripr`
+/// key that is neither an object nor null is reported as ignored, and the
+/// flat settings beside it are still checked, because the push path applies
+/// them (`session_options_object`).
+#[cfg(test)]
+pub(super) fn pushed_setting_rejections(settings: &Value) -> Vec<String> {
+    pushed_setting_rejection_parts(settings)
+        .into_iter()
+        .map(|part| part.line)
+        .collect()
+}
+
+/// One ignored part of a pushed payload: the display line, and the exact
+/// rejected subject (key and raw value, or the malformed payload or section)
+/// it came from. Display lines are clipped and normalized for the client, so
+/// repeat detection compares subjects, not lines.
+pub(super) struct PushedSettingRejection {
+    pub(super) subject: Value,
+    pub(super) line: String,
+    /// The governed key for a rejected value. The push path retains the raw
+    /// value in the session layer; a malformed payload or section is not
+    /// retained and has no key.
+    retained_key: Option<String>,
+}
+
+impl PushedSettingRejection {
+    /// A malformed payload or section: nothing of it is retained, so only
+    /// consecutive notifications can identify a repeat.
+    pub(super) fn is_shape(&self) -> bool {
+        self.retained_key.is_none()
+    }
+}
+
+/// The rejected values of this push that are not already held, unrepaired,
+/// in the retained session layer of `current` (#15312). The push path
+/// merges partial pushes into that layer, so an invalid value stays in force
+/// through pushes of other keys, unrelated settings or `null`; it was named
+/// when it entered the layer and is not named again until a push repairs or
+/// clears it. A changed but still invalid value is a new mistake. Malformed
+/// payloads and sections are always returned; the caller decides repeats for
+/// them.
+pub(super) fn unannounced_pushed_rejections(
+    settings: &Value,
+    current: Option<&LspAnalysisConfig>,
+) -> Vec<PushedSettingRejection> {
+    let retained = current
+        .and_then(|config| config.session_options.as_ref())
+        .and_then(Value::as_object);
+    pushed_setting_rejection_parts(settings)
+        .into_iter()
+        .filter(|part| {
+            let Some(key) = part.retained_key.as_deref() else {
+                return true;
+            };
+            let pushed = session_options_object(settings).and_then(|options| options.get(key));
+            retained
+                .and_then(|layer| layer.get(key))
+                .is_none_or(|held| Some(held) != pushed)
+        })
+        .collect()
+}
+
+pub(super) fn pushed_setting_rejection_parts(settings: &Value) -> Vec<PushedSettingRejection> {
+    if settings.is_null() {
+        return Vec::new();
+    }
+    let Some(object) = settings.as_object() else {
+        return vec![PushedSettingRejection {
+            subject: serde_json::json!(["payload", settings]),
+            line: format!(
+                "workspace/didChangeConfiguration settings must be an object of ripr settings (optionally under a `ripr` key), got {}; that notification was ignored and the settings already in effect are unchanged",
+                clipped_value_echo(settings)
+            ),
+            retained_key: None,
+        }];
+    };
+    let mut parts = Vec::new();
+    // A `ripr` key that is neither an object nor null is a malformed
+    // section, not a request addressed to another server. The flat settings
+    // beside it are still applied, so they are still checked below.
+    if let Some(section) = object.get("ripr")
+        && !section.is_object()
+        && !section.is_null()
+    {
+        parts.push(PushedSettingRejection {
+            subject: serde_json::json!(["ripr", section]),
+            line: format!(
+                "the pushed `ripr` section must be an object of ripr settings, got {}; that section was ignored and changed no setting",
+                clipped_value_echo(section)
+            ),
+            retained_key: None,
+        });
+    }
+    let Some(options) = session_options_object(settings) else {
+        return parts;
+    };
+    parts.extend(
+        options
+            .iter()
+            .filter(|(key, value)| is_supported_session_option(key) && !value.is_null())
+            .filter_map(|(key, value)| {
+                pushed_value_rejection(key, value).map(|line| PushedSettingRejection {
+                    subject: serde_json::json!([key, value]),
+                    line: format!("{line}; `{key}` keeps its repository or default value"),
+                    retained_key: Some(key.clone()),
+                })
+            }),
+    );
+    parts
+}
+
+fn pushed_value_rejection(key: &str, value: &Value) -> Option<String> {
+    if key == "refreshDeadlineMs"
+        && value
+            .as_u64()
+            .is_some_and(|ms| ms < MIN_LSP_REFRESH_DEADLINE_MS)
+    {
+        return Some(format!(
+            "{REFRESH_DEADLINE_MS_TOO_SMALL}; got {}",
+            clipped_value_echo(value)
+        ));
+    }
+    if session_option_value_is_valid(key, value) {
+        return None;
+    }
+    Some(format!(
+        "pushed value for `{key}` has an invalid type or literal (accepted: {}); got {}; fix the value in the editor settings",
+        session_option_accepted_values(key),
+        clipped_value_echo(value)
+    ))
+}
+
+/// The accepted values of one supported session option, named in every
+/// rejection so a user can repair the setting without reading the docs
+/// (#15312). Mirrors `session_option_value_is_valid`.
+fn session_option_accepted_values(key: &str) -> &'static str {
+    match key {
+        "baseRef" => "a Git ref string (empty for the default base)",
+        "checkMode" => "\"instant\", \"draft\", \"fast\", \"deep\" or \"ready\"",
+        "includeUnchangedTests" | "seamDiagnostics" => "true or false",
+        "diagnosticProfile" => "\"actionable\" or \"full\"",
+        "gitTimeoutMs" => "a non-negative whole number of milliseconds",
+        "refreshDeadlineMs" => "a whole number of milliseconds, at least 100",
+        _ => "no value (the key is not a ripr setting)",
+    }
 }
 
 fn parse_mode(value: &str) -> Option<Mode> {
@@ -844,6 +1084,189 @@ include_unchanged_tests = false
         Ok(())
     }
 
+    /// #15312: the push path names each ignored value with its accepted
+    /// values, treats a second bad value of the same key as its own
+    /// rejection, and stays silent for requests it accepts or does not own.
+    #[test]
+    fn pushed_setting_rejections_name_each_ignored_part_and_nothing_else() -> Result<(), String> {
+        let rejections = pushed_setting_rejections(&json!({"ripr": {
+            "checkMode": "depe",
+            "seamDiagnostics": "yes",
+            "baseRef": "main",
+            "diagnosticProfile": null,
+            "unrelatedKey": 7
+        }}));
+        if rejections.len() != 2 {
+            return Err(format!("expected two rejections: {rejections:?}"));
+        }
+        let joined = rejections.join(" | ");
+        for needle in [
+            "`checkMode`",
+            "\"instant\", \"draft\", \"fast\", \"deep\" or \"ready\"",
+            "got \"depe\"",
+            "`seamDiagnostics`",
+            "true or false",
+            "got \"yes\"",
+        ] {
+            if !joined.contains(needle) {
+                return Err(format!("rejections must contain {needle}: {joined}"));
+            }
+        }
+        for absent in ["baseRef", "diagnosticProfile", "unrelatedKey"] {
+            if joined.contains(absent) {
+                return Err(format!("{absent} is not a rejection: {joined}"));
+            }
+        }
+        // A different bad value of the same key reads differently, so a
+        // caller that compares texts cannot swallow the second mistake.
+        let second = pushed_setting_rejections(&json!({"checkMode": "deeep"}));
+        if second.len() != 1
+            || !second[0].contains("got \"deeep\"")
+            || rejections.contains(&second[0])
+        {
+            return Err(format!("second typo must be its own rejection: {second:?}"));
+        }
+        // Shapes that cannot carry a ripr section.
+        for payload in [json!("instant"), json!(["a"]), json!({"ripr": "instant"})] {
+            let shape = pushed_setting_rejections(&payload);
+            if shape.len() != 1 || !shape[0].contains("must be an object of ripr settings") {
+                return Err(format!("{payload} must be one shape rejection: {shape:?}"));
+            }
+        }
+        // Accepted or unowned requests are silent.
+        for payload in [
+            json!(null),
+            json!({}),
+            json!({"ripr": null}),
+            json!({"ripr": {"checkMode": "fast"}}),
+            json!({"editor": {"formatOnSave": true}}),
+            json!({"refreshDeadlineMs": 100}),
+        ] {
+            let none = pushed_setting_rejections(&payload);
+            if !none.is_empty() {
+                return Err(format!("{payload} must not be rejected: {none:?}"));
+            }
+        }
+        // A non-object `ripr` key is reported as an ignored section; the flat
+        // settings beside it are still applied, so they are still checked.
+        let mixed = pushed_setting_rejections(&json!({
+            "ripr": false,
+            "checkMode": "fast",
+            "seamDiagnostics": "yes"
+        }));
+        if mixed.len() != 2
+            || !mixed[0].contains("`ripr` section must be an object")
+            || !mixed[0].contains("that section was ignored and changed no setting")
+            || mixed[0].contains("already in effect")
+            || !mixed[1].contains("`seamDiagnostics`")
+            || mixed
+                .iter()
+                .any(|line| line.contains("notification was ignored") || line.contains("checkMode"))
+        {
+            return Err(format!(
+                "malformed section must not hide flat siblings: {mixed:?}"
+            ));
+        }
+        // The deadline floor names the value received, so two different
+        // below-floor values are two different mistakes.
+        let too_small = pushed_setting_rejections(&json!({"refreshDeadlineMs": 5}));
+        let also_small = pushed_setting_rejections(&json!({"refreshDeadlineMs": 50}));
+        if too_small.len() != 1
+            || !too_small[0].starts_with(REFRESH_DEADLINE_MS_TOO_SMALL)
+            || !too_small[0].contains("; got 5;")
+            || also_small.len() != 1
+            || !also_small[0].contains("; got 50;")
+        {
+            return Err(format!(
+                "deadline floor must be named with the value: {too_small:?} {also_small:?}"
+            ));
+        }
+        // Repeat detection compares exact subjects, not clipped display
+        // lines: two long values that share the clipped prefix differ.
+        let long_a = format!("{}a", "x".repeat(80));
+        let long_b = format!("{}b", "x".repeat(80));
+        let parts_a = pushed_setting_rejection_parts(&json!({"checkMode": long_a}));
+        let parts_b = pushed_setting_rejection_parts(&json!({"checkMode": long_b}));
+        match (parts_a.as_slice(), parts_b.as_slice()) {
+            ([a], [b]) if a.line == b.line && a.subject != b.subject => {}
+            _ => {
+                return Err(
+                    "long values must clip to one line but keep distinct subjects".to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// #15312: an invalid pushed value retained in the session layer is not
+    /// named again through pushes of other keys, unrelated settings or
+    /// `null`; a repair, a removal or a different invalid value makes the
+    /// same key warn again. Malformed shapes are never retained.
+    #[test]
+    fn unannounced_pushed_rejections_follow_the_retained_session_layer() -> Result<(), String> {
+        let push = |config: &LspAnalysisConfig, settings: Value| {
+            let named = unannounced_pushed_rejections(&settings, Some(config))
+                .into_iter()
+                .map(|part| part.line)
+                .collect::<Vec<_>>();
+            let next = config
+                .with_changed_session_options(&settings)
+                .unwrap_or_else(|| config.clone());
+            (named, next)
+        };
+        let names = |named: &[String], needle: &str| named.iter().any(|line| line.contains(needle));
+        let config = LspAnalysisConfig::default();
+        let (named, config) = push(&config, json!({"ripr": {"checkMode": "depe"}}));
+        if !names(&named, "got \"depe\"") {
+            return Err(format!("first mistake must be named: {named:?}"));
+        }
+        // Other keys, unrelated settings and null leave the mistake in force.
+        let (named, config) = push(&config, json!({"ripr": {"seamDiagnostics": true}}));
+        let (named_editor, config) = push(&config, json!({"editor": {"formatOnSave": true}}));
+        let (named_null, config) = push(&config, json!(null));
+        if !named.is_empty() || !named_editor.is_empty() || !named_null.is_empty() {
+            return Err(format!(
+                "clean pushes must be silent: {named:?} {named_editor:?} {named_null:?}"
+            ));
+        }
+        // The retained mistake re-pushed verbatim is not named again; a
+        // new invalid key beside it is.
+        let (named, config) = push(
+            &config,
+            json!({"ripr": {"checkMode": "depe", "diagnosticProfile": "loud"}}),
+        );
+        if named.len() != 1 || !names(&named, "`diagnosticProfile`") {
+            return Err(format!("only the new mistake must be named: {named:?}"));
+        }
+        // A different invalid value is a new mistake.
+        let (named, config) = push(&config, json!({"checkMode": "deeep"}));
+        if !names(&named, "got \"deeep\"") {
+            return Err(format!("a changed invalid value must be named: {named:?}"));
+        }
+        // A repair, then the same mistake again, names it again.
+        let (_, config) = push(&config, json!({"checkMode": "fast"}));
+        let (named, config) = push(&config, json!({"checkMode": "deeep"}));
+        if !names(&named, "got \"deeep\"") {
+            return Err(format!(
+                "a repaired mistake made again must be named: {named:?}"
+            ));
+        }
+        // Removing the key with null, then the same mistake, names it again.
+        let (_, config) = push(&config, json!({"checkMode": null}));
+        let (named, config) = push(&config, json!({"checkMode": "deeep"}));
+        if !names(&named, "got \"deeep\"") {
+            return Err(format!(
+                "a cleared mistake made again must be named: {named:?}"
+            ));
+        }
+        // Shapes are not retained: each one is returned for the caller.
+        let (named, _) = push(&config, json!("instant"));
+        if named.len() != 1 || !names(&named, "settings already in effect are unchanged") {
+            return Err(format!("a shape is always returned: {named:?}"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn unrelated_configuration_settings_do_not_trigger_session_reload() {
         assert!(!LspAnalysisConfig::has_session_option_changes(
@@ -892,6 +1315,81 @@ include_unchanged_tests = false
         ] {
             if validated_pulled_options(&values).is_ok() {
                 return Err(format!("malformed pull must fail closed: {values:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// #15312: every rejected key is named with its accepted values, not
+    /// only the first one in map order.
+    #[test]
+    fn validated_pulled_options_names_every_rejected_key_with_accepted_values() -> Result<(), String>
+    {
+        let err = match validated_pulled_options(&[json!({
+            "baseRef": 5,
+            "checkMode": "bogus",
+            "diagnosticProfile": "loud",
+            "seamDiagnostics": "yes",
+        })]) {
+            Err(err) => err,
+            Ok(pulled) => return Err(format!("invalid values must fail the pull: {pulled:?}")),
+        };
+        for needle in [
+            "`baseRef`",
+            "a Git ref string",
+            "`checkMode`",
+            "\"instant\", \"draft\", \"fast\", \"deep\" or \"ready\"",
+            "`diagnosticProfile`",
+            "\"actionable\" or \"full\"",
+            "`seamDiagnostics`",
+            "true or false",
+        ] {
+            if !err.contains(needle) {
+                return Err(format!("the rejection must name {needle}: {err}"));
+            }
+        }
+        // A valid sibling key is not reported as rejected.
+        let err = match validated_pulled_options(&[json!({
+            "checkMode": "fast",
+            "diagnosticProfile": "loud",
+        })]) {
+            Err(err) => err,
+            Ok(pulled) => return Err(format!("invalid profile must fail: {pulled:?}")),
+        };
+        if err.contains("`checkMode`") {
+            return Err(format!("a valid key must not be named: {err}"));
+        }
+
+        // A long bad value cannot push the key's accepted values past the
+        // client-visible bound: the echo is clipped and comes last.
+        let long = "x".repeat(1000);
+        let rejections = match pulled_options_or_rejections(&[json!({
+            "diagnosticProfile": long,
+            "seamDiagnostics": "yes",
+            "baseRef": 5,
+        })]) {
+            Err(rejections) => rejections,
+            Ok(pulled) => return Err(format!("invalid values must fail: {pulled:?}")),
+        };
+        let profile = rejections
+            .iter()
+            .find(|rejection| rejection.key.as_deref() == Some("diagnosticProfile"))
+            .ok_or("the long value's key must be rejected")?;
+        let bounded = crate::lsp::component_outcome::bounded_message(&profile.detail);
+        if !bounded.contains("`diagnosticProfile`")
+            || !bounded.contains("\"actionable\" or \"full\"")
+            || bounded.contains(&"x".repeat(61))
+        {
+            return Err(format!(
+                "key and accepted values must survive the bound: {bounded}"
+            ));
+        }
+        // The status summary names every rejected key before any detail.
+        let summary =
+            crate::lsp::component_outcome::bounded_message(&pulled_rejection_summary(&rejections));
+        for key in ["`diagnosticProfile`", "`seamDiagnostics`", "`baseRef`"] {
+            if !summary.contains(key) {
+                return Err(format!("the bounded summary must name {key}: {summary}"));
             }
         }
         Ok(())

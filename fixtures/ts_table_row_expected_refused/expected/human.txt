@@ -9,7 +9,7 @@ Changed file(s) by language: typescript = 10
 
 Analysis outcome: limitations below (analysis incomplete)
   The 10 finding(s) below cover only the analyzed scope; behavior outside it has no finding.
-  Limitation: a test or credited assertion sits under a condition static analysis cannot evaluate during language analysis; affected items: 3; recovery: inspect the failure — Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the check executes.
+  Limitation: a test or credited assertion sits under a condition static analysis cannot evaluate during language analysis; affected items: 3; 3 test file(s) register tests under conditions static analysis cannot evaluate; e.g. `for (... of cases.map((row) => row))` at tests/derivedTable.test.ts:11; `for (... of cases)` at tests/exportedTable.test.ts:11; `for (... of cases)` at tests/letTable.test.ts:11; recovery: inspect the failure — Static analysis cannot evaluate the branch condition; runtime coverage establishes whether the check executes.
 
 Start here:
   State: preview language, advisory only
@@ -35,7 +35,8 @@ Start here:
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
-      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;
+      both can rest on a test link ripr could not confirm; the reach stage says which;
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
@@ -65,6 +66,5 @@ Hidden:
     unknown: static analysis limited = reading the code was not enough for ripr to judge (analysis limited, not a verdict)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: 10 TypeScript files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

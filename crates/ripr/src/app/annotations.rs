@@ -24,6 +24,9 @@ pub(crate) struct AnnotationOptions {
     pub(crate) comments: String,
     pub(crate) out: String,
     pub(crate) check: bool,
+    /// `--comments` was passed: a missing file is then a typo, not the
+    /// optional default-path skip.
+    pub(crate) comments_explicit: bool,
 }
 
 impl Default for AnnotationOptions {
@@ -32,6 +35,7 @@ impl Default for AnnotationOptions {
             comments: DEFAULT_COMMENTS_JSON.to_string(),
             out: DEFAULT_ANNOTATIONS_TXT.to_string(),
             check: false,
+            comments_explicit: false,
         }
     }
 }
@@ -70,8 +74,14 @@ fn render_annotations(
     // One direct read determines presence: `NotFound` is the intended
     // optional-comments-file state; every other I/O failure (permission
     // denied, directory input, invalid UTF-8) stays an explicit error.
-    let text = match crate::bounded_input::read_to_string(&comments_path) {
+    let text = match crate::bounded_input::read_artifact_text(&comments_path) {
         Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && options.comments_explicit => {
+            return Err(format!(
+                "annotations --comments {} does not exist; pass --comments naming a comments.json written by `ripr review-comments`, or omit it to use {DEFAULT_COMMENTS_JSON}",
+                options.comments
+            ));
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(AnnotationOutput {
                 text: String::new(),
@@ -145,7 +155,11 @@ fn annotation_from_comment(item: &Value) -> Result<String, String> {
         .get("suggested_test")
         .and_then(|test| test.get("intent"))
         .and_then(Value::as_str);
-    let mut message = reason.to_string();
+    // A card on another changed line of its function names the gap's own
+    // line first (#14303).
+    let mut message =
+        crate::output::review_comments::displaced_seam_prefix(item).unwrap_or_default();
+    message.push_str(reason);
     if let Some(intent) = intent {
         message.push_str(" Suggested test: ");
         message.push_str(intent);
@@ -193,8 +207,9 @@ fn check_annotations(
     }
     let actual = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
-            "missing or unreadable {}: {err}; run `ripr annotations` to write it",
-            options.out
+            "missing or unreadable {}: {}; run `ripr annotations` to write it",
+            options.out,
+            crate::bounded_input::read_failure_detail(&err)
         )
     })?;
     if actual == generated.text {
@@ -257,6 +272,7 @@ mod tests {
             comments: "comments.json".to_string(),
             out: "annotations.txt".to_string(),
             check: false,
+            comments_explicit: false,
         }
     }
 
@@ -282,6 +298,34 @@ mod tests {
         {
             return Err(format!("wire encoding mismatch: {annotation}"));
         }
+        Ok(())
+    }
+
+    /// #14303: `ripr annotations` names a displaced card's gap line, the
+    /// same prefix the workflow annotations print; exact cards are unchanged.
+    #[test]
+    fn a_displaced_card_annotation_names_the_gap_line() -> Result<(), String> {
+        let card = |mode: &str| -> Result<Value, String> {
+            serde_json::from_str(&format!(
+                r#"{{
+                    "placement": {{"path": "src/p.rs", "line": 3, "mode": "{mode}"}},
+                    "source_location": {{"line": 5}},
+                    "seam": {{"line": 5, "expression": "total_cents >= 5_000"}},
+                    "severity": "warning",
+                    "kind": "predicate_boundary",
+                    "reason": "Missing 5_000."
+                }}"#
+            ))
+            .map_err(|err| format!("fixture must parse: {err}"))
+        };
+        assert_eq!(
+            annotation_from_comment(&card("owner_function_changed_line")?)?,
+            "::warning file=src/p.rs,line=3,title=ripr warning predicate_boundary::Gap at line 5 (`total_cents >= 5_000`) of this function: Missing 5_000."
+        );
+        assert_eq!(
+            annotation_from_comment(&card("exact_seam_line")?)?,
+            "::warning file=src/p.rs,line=3,title=ripr warning predicate_boundary::Missing 5_000."
+        );
         Ok(())
     }
 
@@ -331,7 +375,9 @@ mod tests {
     #[test]
     fn render_invalid_utf8_is_an_explicit_error() -> Result<(), String> {
         let dir = unique_temp_dir("utf8")?;
-        std::fs::write(dir.join("comments.json"), [0xff, 0xfe, 0x00, 0x01])
+        // A lone 0xFF is not UTF-8, and without its 0xFE partner it is not a
+        // UTF-16 byte-order mark either (#15936 decodes marked UTF-16).
+        std::fs::write(dir.join("comments.json"), [0xff, 0x00, 0x01])
             .map_err(|err| format!("write comments.json: {err}"))?;
         match render_annotations(&dir, &options()) {
             Err(msg) if msg.contains("failed to read") => Ok(()),

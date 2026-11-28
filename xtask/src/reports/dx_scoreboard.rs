@@ -101,7 +101,7 @@ const BOARDS: [&str; 9] = [
     "repair",
 ];
 
-const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--timeout-ms <n>] [--samples <n>]
+const USAGE: &str = "usage: cargo xtask dx-scoreboard [--config <path>] [--boards <list>] [--repo <id>]... [--include-heavy] [--corpus-dir <dir>] [--clone] [--ripr-bin <path>] [--ingest <file>]... [--baseline <report.json>] [--gate] [--strict-completeness] [--timeout-ms <n>] [--samples <n>]
 
 Measures the developer-experience scoreboards declared in
 benchmarks/dx_scoreboard/scoreboards.toml and writes
@@ -120,7 +120,10 @@ target/ripr/reports/dx-scoreboard.{json,md}.
                       speed.warm_check_p95_ms are nearest-rank over them, and
                       peak memory is the maximum. Cold instruments stay at one run
   --gate              exit nonzero when a metric regresses past its margin
-                      or an instrument or case comparison fails";
+                      or an instrument or case comparison fails
+  --strict-completeness
+                      fail closed when any selected metric is not_measured,
+                      partially measured, or uncompared (implies --gate)";
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct Config {
@@ -253,6 +256,7 @@ pub(crate) struct Options {
     ingest: Vec<PathBuf>,
     baseline: Option<PathBuf>,
     gate: bool,
+    strict_completeness: bool,
     pub(crate) timeout_ms: u64,
     /// Measured warm-check runs per repository after the warm-up run.
     pub(crate) samples: usize,
@@ -307,13 +311,14 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
         })?),
         None => None,
     };
-    let report = build_report(
+    let report = build_report_with_options(
         &config,
         &options.boards,
         &samples,
         &context,
         baseline.as_ref(),
         options.gate,
+        options.strict_completeness,
     );
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize dx scoreboard: {err}"))?;
@@ -333,7 +338,9 @@ pub(crate) fn dx_scoreboard(args: &[String]) -> Result<(), String> {
         report["gate"]["status"].as_str().unwrap_or("not_run"),
     );
     publish_to_actions(&json_text, &markdown);
-    if options.gate && report["gate"]["status"].as_str() == Some("fail") {
+    if (options.gate || options.strict_completeness)
+        && report["gate"]["status"].as_str() == Some("fail")
+    {
         return Err(gate_failure_message(&report));
     }
     Ok(())
@@ -387,6 +394,7 @@ pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
         ingest: Vec::new(),
         baseline: None,
         gate: false,
+        strict_completeness: false,
         timeout_ms: DEFAULT_TIMEOUT_MS,
         samples: DEFAULT_WARM_SAMPLES,
     };
@@ -424,6 +432,7 @@ pub(crate) fn parse_options(args: &[String]) -> Result<Options, String> {
             "--ingest" => options.ingest.push(PathBuf::from(value("--ingest")?)),
             "--baseline" => options.baseline = Some(PathBuf::from(value("--baseline")?)),
             "--gate" => options.gate = true,
+            "--strict-completeness" => options.strict_completeness = true,
             "--timeout-ms" => {
                 let raw = value("--timeout-ms")?;
                 options.timeout_ms =
@@ -958,6 +967,7 @@ pub(crate) fn parse_ingest(value: &Value, config: &Config) -> Result<Vec<Sample>
     }
     if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_SCHEMA_VERSION) {
         let converted = mutation_spot_check_to_input(value)?;
+        let converted = project_declared_optional_rows(converted, config);
         return parse_ingest(&converted, config);
     }
     if value["schema_version"].as_str() == Some(MUTATION_SPOT_CHECK_V1_SCHEMA_VERSION) {
@@ -1891,7 +1901,14 @@ fn pilot_tier_split(pilot: &Value) -> String {
 ///   to a seam by `seam_id` or span containment;
 /// - pilot top-recommendation precision: of `ripr pilot`'s top seams that a
 ///   real mutant scores, the share where a mutant was missed (receipts written
-///   before the pilot section existed simply omit the row).
+///   before the pilot section existed simply omit the row);
+/// - recall of missed: of runtime-missed mutants, the share ripr flagged
+///   ungripped (strict) and the share flagged as a gap or honest unknown
+///   (`ungripped`, `weakly_gripped`, `activation_unknown`, `opaque`), computed
+///   from the receipt's `recall_of_missed` counts (#12900);
+/// - no-seam coverage: of every recorded mutant, the share with no containing
+///   static seam, computed from the receipt's `seam_coverage` counts (#12900).
+///   Receipts written before those sections existed simply omit the rows.
 ///
 /// Rates pool every repository, so each row's evidence ends with the
 /// population it measured (every repository's name, revision, cargo-mutants
@@ -2015,6 +2032,66 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
             ),
         }));
     }
+    // Recall-of-missed and no-seam rows are generated from the receipt's own
+    // counts, never copied from its rounded shares: a hand-derived share that
+    // disagrees with the counts fails ingest instead of trending (#12900).
+    let ungripped_row = spot_check_ratio(
+        &value["recall_of_missed"],
+        "ungripped_missed",
+        "missed_total",
+        "ungripped_share_of_missed",
+        "recall_of_missed",
+    )?;
+    let flagged_row = spot_check_ratio(
+        &value["recall_of_missed"],
+        "flagged_or_unknown_missed",
+        "missed_total",
+        "flagged_or_unknown_share_of_missed",
+        "recall_of_missed",
+    )?;
+    // The producer's flagged-or-unknown class includes ungripped, so a
+    // receipt that counts more ungripped than flagged-or-unknown is
+    // contradictory even when each ratio is internally consistent.
+    if let (Some((_, ungripped, _)), Some((_, flagged, _))) = (ungripped_row, flagged_row)
+        && ungripped > flagged
+    {
+        return Err(format!(
+            "mutation spot-check `recall_of_missed` counts {ungripped} ungripped of {flagged} flagged-or-unknown; the flagged-or-unknown class includes ungripped, so it cannot be smaller"
+        ));
+    }
+    if let Some((share, ungripped, missed)) = ungripped_row {
+        rows.push(json!({
+            "id": "trust.mutation_recall_of_missed",
+            "value": share,
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {ungripped} of {missed} runtime-missed mutants flagged ungripped"
+            ),
+        }));
+    }
+    if let Some((share, flagged, missed)) = flagged_row {
+        rows.push(json!({
+            "id": "trust.mutation_recall_flagged_or_unknown",
+            "value": share,
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {flagged} of {missed} runtime-missed mutants flagged as a gap or honest unknown"
+            ),
+        }));
+    }
+    if let Some((share, no_seam, total)) = spot_check_ratio(
+        &value["seam_coverage"],
+        "no_containing_seam",
+        "mutants_total",
+        "no_containing_seam_share",
+        "seam_coverage",
+    )? {
+        rows.push(json!({
+            "id": "trust.mutation_no_seam_share",
+            "value": share,
+            "evidence": format!(
+                "{MUTATION_SPOT_CHECK_SCHEMA_VERSION}: {no_seam} of {total} mutants have no containing static seam"
+            ),
+        }));
+    }
     // Rates pool every repository, and a repository run with extra
     // cargo-mutants arguments is not a default run, so every row says how
     // many were: ingest publishes a row's own evidence, not the top-level one.
@@ -2052,6 +2129,87 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
         "evidence": evidence,
         "metrics": rows,
     }))
+}
+
+/// The three trust rows #12900 generates from a spot-check receipt. A
+/// `--config` written before they existed never declared them, and ingest
+/// rejects an undeclared metric, so a receipt that carries the new sections
+/// would otherwise fail to load against an older configuration.
+const GENERATED_RECALL_ROWS: [&str; 3] = [
+    "trust.mutation_recall_of_missed",
+    "trust.mutation_recall_flagged_or_unknown",
+    "trust.mutation_no_seam_share",
+];
+
+/// Drop a generated #12900 row the selected configuration does not declare.
+///
+/// Only these three rows are optional. Every other row a receipt names stays
+/// in the projection, so an undeclared metric still fails ingest instead of
+/// disappearing from the scoreboard.
+fn project_declared_optional_rows(mut input: Value, config: &Config) -> Value {
+    let Some(rows) = input["metrics"].as_array_mut() else {
+        return input;
+    };
+    rows.retain(|row| {
+        let Some(id) = row["id"].as_str() else {
+            return true;
+        };
+        !GENERATED_RECALL_ROWS.contains(&id) || config.metric.iter().any(|metric| metric.id == id)
+    });
+    input
+}
+
+/// One generated ratio from a spot-check receipt section's counts.
+/// Returns `(share, numerator, denominator)`, or `None` when the section is
+/// absent (older receipts omit the row) or both counts are zero (no figure
+/// is claimed). A present section with missing, impossible (including a
+/// positive numerator over a zero denominator) or share-inconsistent counts
+/// is an error, never a silent omission.
+fn spot_check_ratio(
+    section: &Value,
+    numerator_key: &str,
+    denominator_key: &str,
+    share_key: &str,
+    section_name: &str,
+) -> Result<Option<(f64, u64, u64)>, String> {
+    if section.is_null() {
+        return Ok(None);
+    }
+    if !section.is_object() {
+        return Err(format!(
+            "mutation spot-check `{section_name}` must be a JSON object"
+        ));
+    }
+    let count = |key: &str| {
+        section[key].as_u64().ok_or_else(|| {
+            format!("mutation spot-check `{section_name}` needs {key} as a non-negative integer")
+        })
+    };
+    let numerator = count(numerator_key)?;
+    let denominator = count(denominator_key)?;
+    if numerator > denominator {
+        return Err(format!(
+            "mutation spot-check `{section_name}` counts {numerator} of only {denominator} for {numerator_key}"
+        ));
+    }
+    if denominator == 0 {
+        return Ok(None);
+    }
+    let share = numerator as f64 / denominator as f64;
+    // The receipt's stored share is rounded to three decimals; a larger gap
+    // means the share was hand-derived from different counts.
+    if let Some(stored) = section[share_key].as_f64() {
+        if !(0.0..=1.0).contains(&stored) || (stored - share).abs() > 0.001 {
+            return Err(format!(
+                "mutation spot-check `{section_name}` {share_key} {stored} disagrees with {numerator}/{denominator}"
+            ));
+        }
+    } else {
+        return Err(format!(
+            "mutation spot-check `{section_name}` needs {share_key} between 0 and 1"
+        ));
+    }
+    Ok(Some((share, numerator, denominator)))
 }
 
 /// Metrics read from committed receipts (`file:<path>#<json.path>`) or from
@@ -2202,6 +2360,7 @@ pub(crate) struct RunContext {
     pub(crate) corpus: Vec<Value>,
 }
 
+#[cfg(test)]
 pub(crate) fn build_report(
     config: &Config,
     boards: &[String],
@@ -2209,6 +2368,18 @@ pub(crate) fn build_report(
     context: &RunContext,
     baseline: Option<&Value>,
     gate: bool,
+) -> Value {
+    build_report_with_options(config, boards, samples, context, baseline, gate, false)
+}
+
+pub(crate) fn build_report_with_options(
+    config: &Config,
+    boards: &[String],
+    samples: &[Sample],
+    context: &RunContext,
+    baseline: Option<&Value>,
+    gate: bool,
+    strict_completeness: bool,
 ) -> Value {
     let mut metrics = Vec::new();
     // Muse rows describe one supplied trial; without a Muse record they would
@@ -2387,7 +2558,28 @@ pub(crate) fn build_report(
     // headline prints (`not_measured` from the rollup plus the gate's
     // `uncompared` list; a metric can appear in both, which is why the
     // headline prints each count rather than a distinct-metric gap total).
+    let gate_enabled = gate || strict_completeness;
     let not_measured = rollup["not_measured"].as_u64().unwrap_or(0);
+    let partial_count = metrics.iter().filter(|row| partially_measured(row)).count() as u64;
+    let mut completeness_failures = Vec::new();
+    if strict_completeness {
+        if not_measured > 0 {
+            completeness_failures.push(format!(
+                "{not_measured} selected metric(s) are not_measured"
+            ));
+        }
+        if partial_count > 0 {
+            completeness_failures.push(format!(
+                "{partial_count} selected metric(s) are partially measured"
+            ));
+        }
+        if baseline.is_some() && !uncompared.is_empty() {
+            completeness_failures.push(format!(
+                "{} selected metric(s) could not be compared with the baseline",
+                uncompared.len()
+            ));
+        }
+    }
     let gate_counts = json!({
         "meets_target": rollup["meets_target"],
         "below_target": rollup["below_target"],
@@ -2396,9 +2588,9 @@ pub(crate) fn build_report(
         "uncompared": uncompared.len() as u64,
         "total": metrics.len() as u64,
     });
-    let gate_status = if !gate {
+    let gate_status = if !gate_enabled {
         "not_run"
-    } else if !ceiling_breaches.is_empty() {
+    } else if !ceiling_breaches.is_empty() || !completeness_failures.is_empty() {
         "fail"
     } else if baseline.is_none() {
         if failed.is_empty() {
@@ -2412,6 +2604,36 @@ pub(crate) fn build_report(
         gate_pass_status(metrics.len() as u64, not_measured, uncompared.len() as u64)
     } else {
         "fail"
+    };
+    let rebaseline_required: Vec<Value> = comparison_failures
+        .iter()
+        .filter(|item| {
+            !item["reason"]
+                .as_str()
+                .is_some_and(|reason| reason.starts_with("current: "))
+        })
+        .cloned()
+        .collect();
+    let failure_kind = if gate_status != "fail" {
+        Value::Null
+    } else if !regressions.is_empty() {
+        json!("regression")
+    } else if !rebaseline_required.is_empty()
+        && rebaseline_required.len() == comparison_failures.len()
+        && failed.is_empty()
+        && ceiling_breaches.is_empty()
+    {
+        json!("rebaseline_required")
+    } else if !completeness_failures.is_empty() {
+        json!("completeness_failed")
+    } else if !ceiling_breaches.is_empty() {
+        json!("ceiling_breach")
+    } else if !failed.is_empty() {
+        json!("instrument_failure")
+    } else if no_comparable_evidence {
+        json!("no_comparable_evidence")
+    } else {
+        json!("comparison_failed")
     };
 
     json!({
@@ -2429,14 +2651,18 @@ pub(crate) fn build_report(
         "repos": repos,
         "metrics": metrics,
         "gate": {
-            "enabled": gate,
+            "enabled": gate_enabled,
+            "strict_completeness": strict_completeness,
             "status": gate_status,
+            "failure_kind": failure_kind,
             "counts": gate_counts,
             "baseline_revision": baseline.map(|b| b["revision"].clone()).unwrap_or(Value::Null),
             "baseline_runner_class": baseline.map(|b| b["runner_class"].clone()).unwrap_or(Value::Null),
             "regressions": regressions,
             "failed_instruments": failed,
             "failed_comparisons": comparison_failures,
+            "rebaseline_required": rebaseline_required,
+            "completeness_failures": completeness_failures,
             "ceiling_breaches": ceiling_breaches,
             "zero_evidence_boards": zero_evidence_boards,
             "review": review,
@@ -3173,7 +3399,11 @@ pub(crate) fn partially_measured(metric: &Value) -> bool {
 }
 
 fn gate_failure_message(report: &Value) -> String {
-    let mut lines = vec!["dx-scoreboard gate failed:".to_string()];
+    let header = match report["gate"]["failure_kind"].as_str() {
+        Some(kind) => format!("dx-scoreboard gate failed ({kind}):"),
+        None => "dx-scoreboard gate failed:".to_string(),
+    };
+    let mut lines = vec![header];
     for regression in report["gate"]["regressions"]
         .as_array()
         .into_iter()
@@ -3252,6 +3482,22 @@ fn gate_failure_message(report: &Value) -> String {
             board.as_str().unwrap_or("?")
         ));
     }
+    for item in report["gate"]["completeness_failures"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        lines.push(format!(
+            "  completeness failed: {}",
+            item.as_str().unwrap_or("incomplete evidence")
+        ));
+    }
+    if report["gate"]["failure_kind"].as_str() == Some("rebaseline_required") {
+        lines.push(
+            "  action: re-baseline required (baseline is incompatible or missing population/grain identity; not a product regression)"
+                .to_string(),
+        );
+    }
     lines.push("see target/ripr/reports/dx-scoreboard.md".to_string());
     lines.join("\n")
 }
@@ -3282,6 +3528,19 @@ pub(crate) fn render_markdown(report: &Value) -> String {
         report["gate"]["counts"]["uncompared"],
         report["gate"]["status"].as_str().unwrap_or("not_run"),
     ));
+    if let Some(kind) = report["gate"]["failure_kind"].as_str() {
+        out.push_str(&format!("**Failure kind:** `{kind}`\n\n"));
+    }
+    for item in report["gate"]["completeness_failures"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!(
+            "\n**Completeness failed:** {}\n",
+            item.as_str().unwrap_or("incomplete evidence")
+        ));
+    }
     let review = report["gate"]["review"]
         .as_array()
         .map(Vec::as_slice)
@@ -3567,3 +3826,369 @@ mod tests;
 
 #[cfg(test)]
 mod population_tests;
+
+#[cfg(test)]
+mod eval_guard_tests {
+    use super::*;
+
+    fn test_metric(id: &str, board: &str, source: &str) -> MetricDef {
+        MetricDef {
+            id: id.to_string(),
+            board: board.to_string(),
+            title: id.to_string(),
+            unit: "ms".to_string(),
+            direction: "lower_is_better".to_string(),
+            target: 100.0,
+            regression_pct: 10.0,
+            regression_floor: 5.0,
+            runner_dependent: false,
+            source: source.to_string(),
+            per_repo: false,
+            pending_reason: None,
+            review_on_change: false,
+            regression_additive: false,
+            pick_growth_allowance: false,
+        }
+    }
+
+    fn test_config(metrics: Vec<MetricDef>) -> Config {
+        Config {
+            schema_version: CONFIG_SCHEMA_VERSION.to_string(),
+            corpus_manifest: None,
+            corpus_version: None,
+            corpus: Vec::new(),
+            metric: metrics,
+            size_tier: Vec::new(),
+        }
+    }
+
+    fn test_context() -> RunContext {
+        RunContext {
+            revision: "rev-now".to_string(),
+            analyzer_version: "0.11.0".to_string(),
+            runner_class: "linux-x64".to_string(),
+            binary: "ripr".to_string(),
+            corpus: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn parse_options_accepts_strict_completeness() -> Result<(), String> {
+        let parsed = parse_options(&["--strict-completeness".to_string()])?;
+        assert!(parsed.strict_completeness);
+        let default_parsed = parse_options(&[])?;
+        assert!(!default_parsed.strict_completeness);
+        Ok(())
+    }
+
+    #[test]
+    fn strict_completeness_fails_closed_on_not_measured_partial_and_uncompared() {
+        let m1 = test_metric("speed.a", "speed", "measured");
+        let mut m2 = test_metric("speed.b", "speed", "measured");
+        m2.per_repo = true;
+        let config = test_config(vec![m1, m2]);
+        let boards = vec!["speed".to_string()];
+        let context = test_context();
+
+        // 1. not_measured fails under --strict-completeness even without --gate.
+        let one_measured = vec![Sample {
+            metric: "speed.a".to_string(),
+            repo: None,
+            outcome: SampleOutcome::Value(50.0),
+            detail: "ok".to_string(),
+        }];
+        let baseline = build_report(&config, &boards, &one_measured, &context, None, false);
+        let non_strict = build_report_with_options(
+            &config,
+            &boards,
+            &one_measured,
+            &context,
+            Some(&baseline),
+            true,
+            false,
+        );
+        assert_eq!(non_strict["gate"]["status"], "pass");
+        let strict_not_measured = build_report_with_options(
+            &config,
+            &boards,
+            &one_measured,
+            &context,
+            Some(&baseline),
+            false,
+            true,
+        );
+        assert_eq!(strict_not_measured["gate"]["status"], "fail");
+        assert_eq!(
+            strict_not_measured["gate"]["failure_kind"],
+            "completeness_failed"
+        );
+        assert!(gate_failure_message(&strict_not_measured).contains("completeness failed"));
+
+        // 2. partially measured metric fails under --strict-completeness.
+        let partial_samples = vec![
+            Sample {
+                metric: "speed.a".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Value(50.0),
+                detail: "ok".to_string(),
+            },
+            Sample {
+                metric: "speed.b".to_string(),
+                repo: Some("repo-1".to_string()),
+                outcome: SampleOutcome::Value(50.0),
+                detail: "ok".to_string(),
+            },
+            Sample {
+                metric: "speed.b".to_string(),
+                repo: Some("repo-2".to_string()),
+                outcome: SampleOutcome::NotMeasured,
+                detail: "missing".to_string(),
+            },
+        ];
+        let strict_partial = build_report_with_options(
+            &config,
+            &boards,
+            &partial_samples,
+            &context,
+            None,
+            false,
+            true,
+        );
+        assert_eq!(strict_partial["gate"]["status"], "fail");
+        assert_eq!(
+            strict_partial["gate"]["failure_kind"],
+            "completeness_failed"
+        );
+
+        // 2b. below_target partially measured metric also fails under --strict-completeness.
+        let below_target_partial = vec![
+            Sample {
+                metric: "speed.a".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Value(50.0),
+                detail: "ok".to_string(),
+            },
+            Sample {
+                metric: "speed.b".to_string(),
+                repo: Some("repo-1".to_string()),
+                outcome: SampleOutcome::Value(150.0),
+                detail: "below target".to_string(),
+            },
+            Sample {
+                metric: "speed.b".to_string(),
+                repo: Some("repo-2".to_string()),
+                outcome: SampleOutcome::NotMeasured,
+                detail: "missing".to_string(),
+            },
+        ];
+        let strict_below_partial = build_report_with_options(
+            &config,
+            &boards,
+            &below_target_partial,
+            &context,
+            None,
+            false,
+            true,
+        );
+        assert_eq!(strict_below_partial["gate"]["status"], "fail");
+        assert_eq!(
+            strict_below_partial["gate"]["failure_kind"],
+            "completeness_failed"
+        );
+
+        // 3. Complete + comparable passes under --strict-completeness.
+        let complete_config = test_config(vec![
+            test_metric("speed.a", "speed", "measured"),
+            test_metric("speed.b", "speed", "measured"),
+        ]);
+        let complete_samples = vec![
+            Sample {
+                metric: "speed.a".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Value(50.0),
+                detail: "ok".to_string(),
+            },
+            Sample {
+                metric: "speed.b".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Value(50.0),
+                detail: "ok".to_string(),
+            },
+        ];
+        let full_baseline = build_report(
+            &complete_config,
+            &boards,
+            &complete_samples,
+            &context,
+            None,
+            false,
+        );
+        let strict_pass = build_report_with_options(
+            &complete_config,
+            &boards,
+            &complete_samples,
+            &context,
+            Some(&full_baseline),
+            true,
+            true,
+        );
+        assert_eq!(
+            strict_pass["gate"]["status"], "pass",
+            "{}",
+            strict_pass["gate"]
+        );
+        assert!(strict_pass["gate"]["failure_kind"].is_null());
+    }
+
+    #[test]
+    fn distinguishes_rebaseline_required_from_regression() {
+        let mut case_metric = test_metric(
+            "trust.abstention",
+            "trust",
+            "verdict-corpus:fixtures/corpus.json#abstention_rate",
+        );
+        case_metric.direction = "higher_is_better".to_string();
+        case_metric.target = 0.8;
+        let speed_metric = test_metric("speed.a", "speed", "measured");
+        let config = test_config(vec![case_metric, speed_metric]);
+        let boards = vec!["trust".to_string(), "speed".to_string()];
+        let context = test_context();
+
+        let base_samples = vec![
+            Sample {
+                metric: "trust.abstention".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Corpus(population::Population {
+                    schema_version: population::SCHEMA.to_string(),
+                    rate: "abstention_rate".to_string(),
+                    cases: vec![population::Contribution {
+                        case_id: "c1".to_string(),
+                        definition_sha256: "a".repeat(64),
+                        numerator: 1,
+                        denominator: 1,
+                    }],
+                }),
+                detail: "ok".to_string(),
+            },
+            Sample {
+                metric: "speed.a".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Value(50.0),
+                detail: "ok".to_string(),
+            },
+        ];
+        let baseline = build_report(&config, &boards, &base_samples, &context, None, false);
+
+        // Changed case definition with no common unchanged cases => rebaseline_required, not regression.
+        let changed_def_samples = vec![
+            Sample {
+                metric: "trust.abstention".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Corpus(population::Population {
+                    schema_version: population::SCHEMA.to_string(),
+                    rate: "abstention_rate".to_string(),
+                    cases: vec![population::Contribution {
+                        case_id: "c1".to_string(),
+                        definition_sha256: "b".repeat(64),
+                        numerator: 1,
+                        denominator: 1,
+                    }],
+                }),
+                detail: "ok".to_string(),
+            },
+            Sample {
+                metric: "speed.a".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Value(50.0),
+                detail: "ok".to_string(),
+            },
+        ];
+        let rebaseline_report = build_report(
+            &config,
+            &boards,
+            &changed_def_samples,
+            &context,
+            Some(&baseline),
+            true,
+        );
+        assert_eq!(rebaseline_report["gate"]["status"], "fail");
+        assert_eq!(
+            rebaseline_report["gate"]["failure_kind"],
+            "rebaseline_required"
+        );
+        assert!(
+            rebaseline_report["gate"]["regressions"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+        assert!(
+            rebaseline_report["gate"]["rebaseline_required"]
+                .as_array()
+                .is_some_and(|items| items.len() == 1)
+        );
+        let msg = gate_failure_message(&rebaseline_report);
+        assert!(msg.contains("rebaseline_required"), "{msg}");
+        assert!(msg.contains("comparison failed trust.abstention"), "{msg}");
+
+        // Actual speed regression with unchanged case definition => regression.
+        let regressed_samples = vec![
+            base_samples[0].clone(),
+            Sample {
+                metric: "speed.a".to_string(),
+                repo: None,
+                outcome: SampleOutcome::Value(90.0),
+                detail: "slower".to_string(),
+            },
+        ];
+        let regression_report = build_report(
+            &config,
+            &boards,
+            &regressed_samples,
+            &context,
+            Some(&baseline),
+            true,
+        );
+        assert_eq!(regression_report["gate"]["status"], "fail");
+        assert_eq!(regression_report["gate"]["failure_kind"], "regression");
+        assert!(
+            regression_report["gate"]["regressions"]
+                .as_array()
+                .is_some_and(|items| items.len() == 1)
+        );
+        assert!(
+            regression_report["gate"]["rebaseline_required"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+        assert!(gate_failure_message(&regression_report).contains("regression"));
+
+        // Current-run missing case population => comparison_failed, not rebaseline_required.
+        let missing_current_samples = vec![
+            Sample {
+                metric: "trust.abstention".to_string(),
+                repo: None,
+                outcome: SampleOutcome::NotMeasured,
+                detail: "missing current receipt".to_string(),
+            },
+            base_samples[1].clone(),
+        ];
+        let current_failed_report = build_report(
+            &config,
+            &boards,
+            &missing_current_samples,
+            &context,
+            Some(&baseline),
+            true,
+        );
+        assert_eq!(current_failed_report["gate"]["status"], "fail");
+        assert_eq!(
+            current_failed_report["gate"]["failure_kind"],
+            "comparison_failed"
+        );
+        assert!(
+            current_failed_report["gate"]["rebaseline_required"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+        );
+    }
+}

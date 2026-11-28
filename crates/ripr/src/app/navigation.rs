@@ -54,6 +54,120 @@ pub(crate) struct RepairRoute {
     /// screen states the commit-or-stash requirement instead of offering the
     /// repair start as a runnable next action.
     pub(crate) uncommitted_target: Option<String>,
+    /// Tracked production files that differ from HEAD and make the start
+    /// refuse with "commit first" today (#13636), from the before phase's own
+    /// dirty-premise preflight (`app::repair_attempt::seam_start_dirty_premise`).
+    /// Every reported path is kept and spelled relative to the analyzed root,
+    /// paths outside it as `../...`, as the gap-bound route spells them. A
+    /// non-empty list means the start refuses; when set, the check screen
+    /// prints their commit before the repair start.
+    pub(crate) uncommitted_files: Vec<String>,
+}
+
+impl RepairRoute {
+    /// The commit step that must precede `ripr repair` (#13636): every dirty
+    /// production file the start's preflight reported plus a held inline
+    /// target, so committing the named files clears the dirty-premise refusal
+    /// this run observed. `None` when no dirty premise holds.
+    pub(crate) fn commit_prerequisite(&self, root_display: &str) -> Option<String> {
+        if self.uncommitted_files.is_empty() {
+            return None;
+        }
+        let mut files = self.uncommitted_files.clone();
+        if let Some(target) = &self.uncommitted_target
+            && !files.contains(target)
+        {
+            files.push(target.clone());
+        }
+        commit_prerequisite_command(root_display, &files)
+    }
+}
+
+/// `git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`: the
+/// one commit spelling every repair route prints before its start (#10698,
+/// #13636), and the editor's blocked repair start (#13636). `None` for an
+/// empty file list.
+///
+/// The command runs from any directory: `git -C <root>` anchors it at the
+/// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
+/// literal, and the files are shell-quoted and spelled relative to that root.
+/// A file name holding a line break never reaches it: the dirty-premise
+/// sources refuse such a name
+/// ([`super::repair_attempt::refuse_line_break_paths`]), so the route is
+/// withheld rather than offered without its commit (#16381).
+pub(crate) fn commit_prerequisite_command(root_display: &str, files: &[String]) -> Option<String> {
+    if files.is_empty() {
+        return None;
+    }
+    let files = files
+        .iter()
+        .map(|file| shell_arg(file))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(format!(
+        "git -C {} --literal-pathspecs commit -m \"<message>\" -- {files}",
+        shell_arg(root_display)
+    ))
+}
+
+/// What a surface that prints a seam repair start may print before it, from
+/// the before phase's own dirty-premise preflight (#16381). `ripr pilot`
+/// observes it once per run through [`seam_start_premise`], in `ripr check`'s
+/// order (`seam_route` in `task_first`), so the two screens cannot disagree
+/// about whether the printed start can begin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SeamStartPremise {
+    /// The tracked production files the preflight names, all inside the
+    /// root. Empty when it names none; that
+    /// does not promise the start begins (the preflight skips deleted files
+    /// and files carrying an inline `#[cfg(test)]` module, which the full
+    /// before-phase check may still refuse).
+    Dirty(Vec<String>),
+    /// No start may be printed: `ripr check`'s one-line advisory for the same
+    /// state (an unreadable premise, or a root whose start refuses whatever
+    /// is committed, #15488).
+    Withheld(String),
+}
+
+/// The [`SeamStartPremise`] at `root`: an unreadable premise offers no start
+/// ("could not validate the prerequisites"), as `ripr check` does. A clean
+/// premise below a subdirectory root that check's gate withholds, or a dirty
+/// premise at any root that is not the exact Git top-level (where the
+/// attempt refuses whatever is committed), names that top-level with check's
+/// subdirectory advisory instead of a commit step and start. Otherwise the
+/// premise is returned as is.
+pub(crate) fn seam_start_premise(root: &Path) -> SeamStartPremise {
+    let Ok(files) = super::repair_attempt::seam_start_dirty_premise(root) else {
+        return SeamStartPremise::Withheld(
+            RepairRouteRefusal::SeamRouteUnavailable {
+                reason: "could not validate the prerequisites for the repair start",
+            }
+            .advisory(""),
+        );
+    };
+    // A clean premise prints no commit step, so it takes check's own gate
+    // (`enclosing_git_top_level_above`): a plain subdirectory root withholds
+    // the start as check does, and a standalone nested Cargo project keeps it
+    // as check does (#15488; that start's disagreement with the attempt is
+    // #16428). A commit step instead promises that the start runs after it,
+    // and the attempt refuses every root that is not the exact Git top-level
+    // with no standalone exception, so a dirty premise asks the attempt's
+    // own check: no commit spelled from such a root clears it, whether the
+    // dirty files sit inside the root or outside it (`../...`, #13962).
+    let top = if files.is_empty() {
+        crate::edit_cage::enclosing_git_top_level_above(root)
+    } else {
+        crate::edit_cage::exact_git_top_level_above(root)
+    };
+    if let Some(top) = top {
+        return SeamStartPremise::Withheld(
+            RepairRouteRefusal::SubdirectoryRoot {
+                top_level: root_path_display(&top),
+            }
+            .advisory(""),
+        );
+    }
+    SeamStartPremise::Dirty(files)
 }
 
 /// The gap-bound repair start the check pipeline computed for a TypeScript
@@ -74,24 +188,8 @@ pub(crate) struct GapRepairRoute {
 impl GapRepairRoute {
     /// The commit step that must precede the gap-bound start when the analyzed
     /// tree has uncommitted production edits (#10698). `None` on a clean tree.
-    ///
-    /// The command runs from any directory: `git -C <root>` anchors it at the
-    /// analyzed root, `--literal-pathspecs` keeps names like `src/[ab].py`
-    /// literal, and the files are shell-quoted and spelled relative to that root.
     pub(crate) fn commit_prerequisite(&self, root_display: &str) -> Option<String> {
-        if self.uncommitted_files.is_empty() {
-            return None;
-        }
-        let files = self
-            .uncommitted_files
-            .iter()
-            .map(|file| shell_arg(file))
-            .collect::<Vec<_>>()
-            .join(" ");
-        Some(format!(
-            "git -C {} --literal-pathspecs commit -m \"<message>\" -- {files}",
-            shell_arg(root_display)
-        ))
+        commit_prerequisite_command(root_display, &self.uncommitted_files)
     }
 }
 
@@ -102,6 +200,12 @@ impl GapRepairRoute {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RepairRouteRefusal {
     GapRouteUnavailable {
+        reason: &'static str,
+    },
+    /// The seam start's prerequisites could not be established (#13636): its
+    /// dirty-premise preflight was unreadable, or a committed-only run left
+    /// dirty tracked files under the root unanalyzed.
+    SeamRouteUnavailable {
         reason: &'static str,
     },
     /// The run's analysis is incomplete (#11136): the after phase refuses a
@@ -127,6 +231,12 @@ pub(crate) enum RepairRouteRefusal {
         language: String,
         file: String,
     },
+    /// The root is below the Git top-level, where a repair attempt cannot
+    /// start (#15488): a start printed here would refuse at the before
+    /// phase, so the check screen names the top-level instead.
+    SubdirectoryRoot {
+        top_level: String,
+    },
     /// The root's typed config could not be loaded.
     ConfigUnreadable,
     /// Classifying seams in the finding's file failed.
@@ -139,6 +249,13 @@ pub(crate) enum RepairRouteRefusal {
     /// advisory never says "no seam" where `ripr repair` lists seams (#10702).
     NoBindingSeam {
         seams_in_file: usize,
+    },
+    /// Several same-kind spots sit on this finding's changed line (one per
+    /// comparison in `a < b && c == d`) and none is more specific than the
+    /// others, so no single spot binds the finding (#15157). `spots` holds
+    /// each tied spot's code, in file order.
+    SeveralSpotsOnChangedLine {
+        spots: Vec<String>,
     },
     /// The finding itself is `exposed`: the related tests already notice the
     /// change, so there is nothing to repair whatever the seam view says
@@ -166,6 +283,22 @@ pub(crate) enum RepairRouteRefusal {
     },
 }
 
+/// Longest tied-spot snippet the repair-start note quotes (#15157).
+const TIED_SPOT_CHARS: usize = 80;
+
+/// One tied spot's code on one bounded line: a seam's expression keeps its
+/// source line breaks (a multi-line string or call), and the refusal is one
+/// advisory line, so collapse whitespace and cut a long snippet with `…`.
+fn one_line_spot(spot: &str) -> String {
+    let collapsed = spot.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= TIED_SPOT_CHARS {
+        return collapsed;
+    }
+    let mut bounded: String = collapsed.chars().take(TIED_SPOT_CHARS).collect();
+    bounded.push('…');
+    bounded
+}
+
 impl RepairRouteRefusal {
     /// The one-line advisory for the check triage screen (#8729).
     /// `full_gate_command` is the bound `ripr repair <finding-id>` command
@@ -179,7 +312,7 @@ impl RepairRouteRefusal {
     pub(crate) fn advisory(&self, full_gate_command: &str) -> String {
         let gate = || format!("run `{full_gate_command}` for the full gate's answer");
         match self {
-            Self::GapRouteUnavailable { reason } => format!(
+            Self::GapRouteUnavailable { reason } | Self::SeamRouteUnavailable { reason } => format!(
                 "no repair start offered: {reason}; inspect the current workspace and rerun `ripr check`"
             ),
             Self::AnalysisIncomplete { limitation } => format!(
@@ -198,6 +331,11 @@ impl RepairRouteRefusal {
             Self::NoSeamInventory { language, file } => format!(
                 "no repair start offered: {}",
                 super::task_first::no_seam_inventory_reason_plain(language, file)
+            ),
+            Self::SubdirectoryRoot { top_level } => format!(
+                "no repair start offered: this root is not the exact Git top-level \
+                 ({top_level}), and a repair attempt starts only there; rerun \
+                 `ripr check` from {top_level}, then use the start it prints there"
             ),
             Self::ConfigUnreadable => "no repair start offered: the root's config could not be \
                  read; fix the ripr.toml error at the root, then rerun `ripr check`"
@@ -224,6 +362,23 @@ impl RepairRouteRefusal {
                  for you; `ripr pilot` lists them, or follow the Next step above",
                 if *seams_in_file == 1 { "spot" } else { "spots" }
             ),
+            Self::SeveralSpotsOnChangedLine { spots } => {
+                const NAMED: usize = 3;
+                let mut named = spots
+                    .iter()
+                    .take(NAMED)
+                    .map(|spot| format!("`{}`", one_line_spot(spot)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if spots.len() > NAMED {
+                    named.push_str(&format!(" and {} more", spots.len() - NAMED));
+                }
+                format!(
+                    "no repair start offered: this finding's changed line holds {} spots \
+                     ({named}) and ripr will not pick one for you; follow the Next step above",
+                    spots.len()
+                )
+            }
             Self::FindingAlreadyExposed => "no repair start offered: nothing to repair here; \
                  the related tests already notice this change (exposed)"
                 .to_string(),
@@ -425,6 +580,12 @@ impl FindingNavigation {
     /// analyzed uncommitted production edits (#10698): the start refuses
     /// while tracked production files differ from HEAD.
     pub(crate) fn gap_repair_prerequisite(&self, route: &GapRepairRoute) -> Option<String> {
+        route.commit_prerequisite(&self.root_display)
+    }
+
+    /// The commit step that must precede the seam start when the tree holds
+    /// an uncommitted production change the start refuses (#13636).
+    pub(crate) fn repair_prerequisite(&self, route: &RepairRoute) -> Option<String> {
         route.commit_prerequisite(&self.root_display)
     }
 
@@ -937,6 +1098,7 @@ mod tests {
         // The route only answers for its own finding.
         let routed = navigation.with_repair_route_outcome(CheckRepairRoute::Route(RepairRoute {
             uncommitted_target: None,
+            uncommitted_files: Vec::new(),
             finding_id: "probe:one".to_string(),
             seam_id: "67fc764ba37d77bd".to_string(),
         }));
@@ -947,6 +1109,36 @@ mod tests {
             Some("67fc764ba37d77bd")
         );
         assert!(routed.repair_route_for("probe:two").is_none());
+    }
+
+    /// #13636: the seam start's commit step names the dirty production
+    /// premise plus any held inline target, and is absent on a clean tree.
+    #[test]
+    fn seam_route_commit_prerequisite_covers_premise_and_held_target() {
+        let route = |files: &[&str], target: Option<&str>| RepairRoute {
+            finding_id: "probe:one".to_string(),
+            seam_id: "67fc764ba37d77bd".to_string(),
+            uncommitted_target: target.map(str::to_string),
+            uncommitted_files: files.iter().map(|file| file.to_string()).collect(),
+        };
+        assert_eq!(route(&[], None).commit_prerequisite("."), None);
+        // A held target alone keeps its own wording, not this step.
+        assert_eq!(
+            route(&[], Some("src/lib.rs")).commit_prerequisite("."),
+            None
+        );
+        assert_eq!(
+            route(&["src/a.rs"], Some("src/b.rs"))
+                .commit_prerequisite(".")
+                .as_deref(),
+            Some("git -C . --literal-pathspecs commit -m \"<message>\" -- src/a.rs src/b.rs")
+        );
+        assert_eq!(
+            route(&["src/a.rs"], Some("src/a.rs"))
+                .commit_prerequisite(".")
+                .as_deref(),
+            Some("git -C . --literal-pathspecs commit -m \"<message>\" -- src/a.rs")
+        );
     }
 
     /// #8729: a named refusal renders a one-line advisory naming the state
@@ -1103,6 +1295,41 @@ mod tests {
              tie one to this finding's changed line, so it cannot pick one for you; `ripr \
              pilot` lists them, or follow the Next step above"
         );
+        // #15157: a tie on the changed line names the tied spots, not "could
+        // not tie one", and caps the list.
+        let tied = RepairRouteRefusal::SeveralSpotsOnChangedLine {
+            spots: vec!["min_bound < j".to_string(), "a_elem == b_elem".to_string()],
+        }
+        .advisory(gate);
+        assert_eq!(
+            tied,
+            "no repair start offered: this finding's changed line holds 2 spots \
+             (`min_bound < j`, `a_elem == b_elem`) and ripr will not pick one for you; \
+             follow the Next step above"
+        );
+        let many = RepairRouteRefusal::SeveralSpotsOnChangedLine {
+            spots: ["a", "b", "c", "d", "e"].map(str::to_string).to_vec(),
+        }
+        .advisory(gate);
+        assert!(
+            many.contains("holds 5 spots (`a`, `b`, `c` and 2 more)")
+                && !many.contains("`d`")
+                && !many.contains("could not tie"),
+            "{many}"
+        );
+        // A multi-line or long spot stays on the one advisory line.
+        let long = "x".repeat(120);
+        let bounded = RepairRouteRefusal::SeveralSpotsOnChangedLine {
+            spots: vec!["a ==\n    \"two\nlines\"".to_string(), long.clone()],
+        }
+        .advisory(gate);
+        assert!(!bounded.contains('\n'), "{bounded}");
+        assert!(
+            bounded.contains("holds 2 spots (`a == \"two lines\"`, `")
+                && bounded.contains(&format!("{}…`", "x".repeat(80)))
+                && !bounded.contains(&"x".repeat(81)),
+            "{bounded}"
+        );
         let exposed = RepairRouteRefusal::FindingAlreadyExposed.advisory(gate);
         assert_eq!(
             exposed,
@@ -1168,6 +1395,18 @@ mod tests {
         assert!(
             !budget.contains("ripr repair"),
             "seam-budget refusal must not route to the same truncated gate: {budget}"
+        );
+        // #15488: a subdirectory root names the top-level to rerun from,
+        // never a start under that root.
+        let subdir = RepairRouteRefusal::SubdirectoryRoot {
+            top_level: "repo".to_string(),
+        }
+        .advisory(gate);
+        assert_eq!(
+            subdir,
+            "no repair start offered: this root is not the exact Git top-level \
+             (repo), and a repair attempt starts only there; rerun \
+             `ripr check` from repo, then use the start it prints there"
         );
     }
 

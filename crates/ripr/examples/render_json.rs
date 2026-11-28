@@ -1,21 +1,17 @@
-use ripr::{CheckInput, OutputFormat, check_workspace};
-use std::path::PathBuf;
+//! Render a check as the versioned JSON document machine consumers read.
 
-fn sample_input() -> CheckInput {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let diff_file = manifest_dir.join("examples/library.diff");
+use ripr::{OutputFormat, check_workspace};
 
-    CheckInput {
-        root: manifest_dir,
-        diff_file: Some(diff_file),
-        format: OutputFormat::Json,
-        ..CheckInput::default()
-    }
+#[path = "support/sample_workspace.rs"]
+mod sample_workspace;
+
+pub fn report() -> Result<String, String> {
+    let workspace = sample_workspace::SampleWorkspace::create("render_json")?;
+    let output = check_workspace(workspace.input())?;
+    ripr::render_check(&output, &OutputFormat::Json)
 }
 
-fn main() -> Result<(), String> {
-    let output = check_workspace(sample_input())?;
-    let rendered = ripr::render_check(&output, &OutputFormat::Json)?;
-    println!("{rendered}");
+pub fn main() -> Result<(), String> {
+    println!("{}", report()?);
     Ok(())
 }

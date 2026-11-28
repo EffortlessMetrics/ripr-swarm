@@ -47,6 +47,7 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
             mentioned_identifiers: crate::analysis::extract::property_macros::mentioned_identifiers(
                 &text[item.body_start..item.range.end],
             ),
+            binding_only_identifiers: Vec::new(),
         });
     }
     // Only macro-bearing fallback files need offsets; ordinary fallback keeps
@@ -100,6 +101,9 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         if trimmed_declares_test_attribute(trimmed, "test")
             || trimmed_declares_test_attribute(trimmed, "tokio::test")
             || trimmed_declares_test_attribute(trimmed, "async_std::test")
+            || trimmed_declares_test_attribute(trimmed, "actix_rt::test")
+            || trimmed_declares_test_attribute(trimmed, "actix_web::test")
+            || trimmed_declares_test_attribute(trimmed, "test_log::test")
             || trimmed.starts_with("#[rstest")
         {
             pending_test = true;
@@ -231,6 +235,8 @@ pub(crate) fn summarize_file_lexically(path: PathBuf, text: String) -> FileFacts
         source,
         item_scopes: None,
         macro_candidates: None,
+        external_docs: None,
+        constant_syntax: None,
     }
 }
 
@@ -670,6 +676,14 @@ fn checks_value() {
         assert!(!trimmed_declares_test_attribute(
             "#[async_std::test_support]",
             "async_std::test"
+        ));
+        assert!(trimmed_declares_test_attribute(
+            "#[::actix_rt::test]",
+            "actix_rt::test"
+        ));
+        assert!(!trimmed_declares_test_attribute(
+            "#[actix_web::rt::test]",
+            "actix_web::test"
         ));
     }
 

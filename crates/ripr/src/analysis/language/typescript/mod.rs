@@ -46,6 +46,8 @@ pub(crate) use relation_index::RelationIndex;
 pub(crate) use std::path::{Path, PathBuf};
 
 mod actionability;
+#[cfg(test)]
+mod actionability_proptest_tests;
 mod admission;
 #[cfg(test)]
 mod admission_tests;
@@ -65,6 +67,7 @@ mod boundary_label_tests;
 mod boundary_selection;
 mod bounded_read;
 mod bun_bridge;
+mod call_lexer;
 mod call_removal_guard;
 #[cfg(test)]
 mod call_removal_tests;
@@ -73,8 +76,12 @@ mod capability_disposition_tests;
 mod catch_arm_guard;
 mod changed_return;
 mod class_entries;
+mod class_heritage;
 mod classifier;
 mod committed_snapshot;
+mod commonjs_default_class;
+mod commonjs_entries;
+mod commonjs_reexports;
 mod comparison_edit_guard;
 mod custom_matcher_guard;
 mod declaration_bindings;
@@ -86,6 +93,7 @@ mod discovery;
 mod dropped_term_guard;
 mod enum_member_guard;
 mod error_payload_guard;
+mod export_equals;
 mod extraction_cache;
 mod fact_prefetch;
 mod fact_store;
@@ -93,6 +101,7 @@ mod fast_check;
 #[cfg(test)]
 mod fast_check_tests;
 mod push_argument_guard;
+mod tap;
 pub(crate) use fact_store::TypeScriptFileFactStore;
 mod comment_whitespace_only;
 type MultilineRanges = (Vec<(usize, usize)>, Vec<(usize, usize)>);
@@ -104,6 +113,7 @@ mod fact_prefetch_tests;
 mod fact_store_tests;
 mod field_update_guard;
 mod fixture_receivers;
+mod function_replacement;
 mod gap_reach;
 mod guard_entry_guard;
 mod helper_inline;
@@ -117,8 +127,10 @@ mod infection_shape;
 mod infection_shape_tests;
 mod instance_class_guard;
 mod instance_factories;
+mod jsx_render;
 #[cfg(test)]
 mod line_index_tests;
+mod literal_arm_return_guard;
 mod literal_eval;
 mod literal_mask;
 mod literal_matcher_guard;
@@ -128,8 +140,11 @@ mod local_constant_tests;
 mod lookup_table_guard;
 mod loop_bound_guard;
 mod match_object_guard;
+mod method_replacement_guard;
 mod mock_payload_guard;
+mod module_class_nodes;
 mod module_entries;
+mod module_value_reads;
 #[cfg(test)]
 mod negated_jest_assertion_tests;
 #[cfg(test)]
@@ -137,6 +152,7 @@ mod new_declaration_tests;
 mod nullish_chain_guard;
 mod object_rows;
 mod oracle;
+mod overwritten_methods;
 #[cfg(test)]
 mod owner_path_tests;
 mod owners;
@@ -175,9 +191,11 @@ mod row_miss;
 mod row_miss_tests;
 #[cfg(test)]
 mod self_comparing_assertion_tests;
+mod setup_file_mocks;
 mod shadow_index;
 mod spread_override_guard;
 mod static_limit;
+mod switch_return_witness;
 mod table_loop_rows;
 mod table_rows;
 mod ternary_arm_guard;
@@ -186,10 +204,12 @@ mod tests;
 mod typeof_kind;
 #[cfg(test)]
 mod typeof_kind_tests;
+mod unused_default_guard;
 // Declared here, not in `tests.rs`, so #7813/#7815 do not collide with #8476.
 mod assertion_helper;
 mod boolean_pin_guard;
 mod close_to_guard;
+mod implementation_tables;
 #[cfg(test)]
 #[path = "tests/issue7483_masker_tests.rs"]
 mod issue7483_masker_tests;
@@ -234,6 +254,7 @@ pub(crate) use boundary_selection::{
 };
 pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
+pub(crate) use call_lexer::inside_block_comment;
 pub(crate) use class_entries::*;
 pub(crate) use classifier::*;
 pub(crate) use close_to_guard::*;
@@ -247,6 +268,7 @@ pub(crate) use error_payload_guard::*;
 pub(crate) use field_update_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use instance_factories::*;
+pub(crate) use literal_arm_return_guard::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use lookup_table_guard::*;
 pub(crate) use loop_bound_guard::*;
@@ -1116,6 +1138,15 @@ impl TypeScriptAdapter {
             &export_facts_by_file,
         );
 
+        // A mock a runner setup file registers applies to every test the
+        // config governs, exactly like a mock in the test's own file.
+        setup_file_mocks::apply_setup_file_mocks(
+            &options.root,
+            &workspace_files,
+            &source_cache,
+            &mut all_tests,
+        );
+
         // A named import of `export * as ns from` reads as the namespace import
         // it binds (RIPR-SPEC-0095).
         reexport_index.rewrite_namespace_reexport_imports(
@@ -1129,6 +1160,14 @@ impl TypeScriptAdapter {
         reexport_index.rewrite_class_barrel_imports(
             &mut all_tests,
             &related_tests::ExportedClasses::from_owners(&all_owners),
+            alias_map_ref,
+            Some(&options.root),
+        );
+
+        // A member called on an ES namespace import of a barrel resolves
+        // through the same chain a named import follows (#15923).
+        reexport_index.record_barrel_namespace_members(
+            &mut all_tests,
             alias_map_ref,
             Some(&options.root),
         );
@@ -1156,6 +1195,20 @@ impl TypeScriptAdapter {
                 }
                 if !cross.entries.is_empty() {
                     owner.module_entries.extend(cross.entries);
+                    owner.module_entries.sort();
+                }
+            }
+        }
+
+        // #15924: a changed ordinary method or getter is also reached on an
+        // instance of a class that inherits it unchanged. Resolved only for
+        // changed files, through the re-export index's import identity.
+        for owner in &mut all_owners {
+            if owner.class_name.is_some() && changed_paths.contains(&normalized_path(&owner.file)) {
+                let subclasses =
+                    reexport_index.inheriting_subclasses(owner, alias_map_ref, Some(&options.root));
+                if !subclasses.is_empty() {
+                    owner.module_entries.extend(subclasses);
                     owner.module_entries.sort();
                 }
             }
@@ -1331,8 +1384,17 @@ impl TypeScriptAdapter {
                     ambient_declaration_lines(&changed.path, source, &options.root, alias_map_ref)
                 })
                 .unwrap_or_default();
+            // Comment text is no probe, and the body rows of a block comment
+            // are comment text whatever they start with (#15913).
+            let added_without_code = deleted_lines::added_lines_without_code(
+                changed,
+                source_by_normalized
+                    .get(&normalized_path(&changed.path))
+                    .map(|source| source.as_str()),
+            );
             let is_probe_candidate = |line: usize, text: &str| {
                 !should_ignore_typescript_changed_line(text)
+                    && !added_without_code.contains(&line)
                     && !ambient
                         .iter()
                         .any(|(start, end)| (*start..=*end).contains(&line))
@@ -1362,6 +1424,14 @@ impl TypeScriptAdapter {
             // HashMap key.
             let mut owner_contexts: std::collections::HashMap<usize, OwnerLineContext<'_>> =
                 std::collections::HashMap::new();
+            // #13827: removed lines that could have thrown the old side's
+            // error, read once per changed file for the message pin.
+            let removed_throw_candidates: Vec<String> = changed
+                .removed_lines
+                .iter()
+                .filter(|removed| removed_line_may_throw(&removed.text))
+                .map(|removed| removed.text.trim().to_string())
+                .collect();
             let owner_plan = FileOwnerPlan::build(
                 all_owners
                     .iter()
@@ -1375,7 +1445,17 @@ impl TypeScriptAdapter {
             // (#7524). The three guards below read the old line from one
             // pairing: by position in an even block, by content in an uneven
             // one, by coordinate where a removed line interrupts the run.
-            let counterparts = changed.aligned_counterparts();
+            // An added run made only of comments, blank lines and lone
+            // brackets replaced nothing: the code it stands on was deleted.
+            // Its lines pair with nothing, so the removed line keeps its own
+            // base-side record instead of leaving no record at all (#15913).
+            let mut counterparts = changed.aligned_counterparts();
+            if !counterparts.is_empty() {
+                let codeless = changed
+                    .added_lines_in_quiet_runs(|added| added_without_code.contains(&added.line));
+                counterparts.retain(|added_line, _| !codeless.contains(added_line));
+            }
+            let counterparts = counterparts;
             let mut multiline_lines: Option<Option<MultilineRanges>> = None;
             // #11250: one facts lookup and one line-table build per
             // changed file, not per added line. `file_facts_cached`
@@ -1397,11 +1477,46 @@ impl TypeScriptAdapter {
                 .filter(|facts| facts.parse_error.is_none())?;
                 Some((source.lines().collect::<Vec<_>>(), facts))
             });
+            // #14097: the wrapped signature of a new owner, read once per
+            // changed file. A header line whose removed counterpart looks
+            // like it is a changed signature, so it does not count as added
+            // and the whole header keeps its probes.
+            let wrapped_header_lines = ast_probe_facts
+                .as_ref()
+                .map(|(source_lines, _)| {
+                    let added_line_numbers: std::collections::HashSet<usize> = changed
+                        .added_lines
+                        .iter()
+                        .filter(|added| {
+                            !counterparts
+                                .get(&added.line)
+                                .is_some_and(|removed| lines_look_alike(&removed.text, &added.text))
+                        })
+                        .map(|added| added.line)
+                        .collect();
+                    new_owner_wrapped_header_lines(
+                        &changed.path,
+                        &changed_norm,
+                        source_lines,
+                        &all_owners,
+                        &removed_texts,
+                        |line| added_line_numbers.contains(&line),
+                        |line| {
+                            changed.added_lines.iter().any(|other| {
+                                other.line == line && is_probe_candidate(other.line, &other.text)
+                            })
+                        },
+                    )
+                })
+                .unwrap_or_default();
             for added in &changed.added_lines {
                 if inside_private_member_boundary(&private_boundaries, added.line) {
                     continue;
                 }
                 if !is_probe_candidate(added.line, &added.text) {
+                    continue;
+                }
+                if wrapped_header_lines.contains(&added.line) {
                     continue;
                 }
                 // New-declaration guard: the opening line of a NEW function,
@@ -1508,6 +1623,9 @@ impl TypeScriptAdapter {
                                 ([added], [removed]) if added.line == removed.new_side_line
                             );
                             context
+                                .removed_throw_candidates
+                                .clone_from(&removed_throw_candidates);
+                            context
                         });
                         classify_resolved_owner(
                             &changed.path,
@@ -1585,6 +1703,36 @@ impl TypeScriptAdapter {
                                 .to_string(),
                         );
                     }
+                    // The diff supplies both values. Take the binding only from the
+                    // parsed head whose line matches the diff, never a renderer reread.
+                    if let Some((lines, facts)) = &ast_probe_facts
+                        && let Some(binding) = facts.phase_two.default_bindings.get(&added.line)
+                        && lines
+                            .get(added.line.saturating_sub(1))
+                            .map(|line| line.trim())
+                            == Some(added.text.trim())
+                        && let Some(new) = standalone_decimal(&added.text)
+                    {
+                        // Only a lone replacement leaves the enclosing declaration
+                        // unchanged on both sides. Other edits can introduce the default.
+                        let previous = match (
+                            changed.added_lines.as_slice(),
+                            changed.removed_lines.as_slice(),
+                        ) {
+                            ([_], [removed]) if removed.new_side_line == added.line => {
+                                standalone_decimal(&removed.text).filter(|old| *old != new)
+                            }
+                            _ => None,
+                        };
+                        let detail = previous.map_or_else(
+                            || "default".to_string(),
+                            |old| format!("default was {old}"),
+                        );
+                        finding.evidence.push(format!(
+                            "{}{binding} = {new} ({detail})",
+                            crate::domain::TYPESCRIPT_DEFAULT_CONTEXT_PREFIX
+                        ));
+                    }
                     findings.push(finding);
                 } else if let Some(identity) = enum_member_lines.get(&added.line) {
                     let mut finding =
@@ -1626,7 +1774,7 @@ impl TypeScriptAdapter {
                         owner.end_line,
                     )?;
                     let context = owner_contexts.entry(owner_idx).or_insert_with(|| {
-                        changed_owner_line_context(
+                        let mut context = changed_owner_line_context(
                             owner,
                             &all_tests,
                             &options.root,
@@ -1634,7 +1782,11 @@ impl TypeScriptAdapter {
                             &relation_index,
                             alias_map_ref,
                             &cross_module_fan_in_limited,
-                        )
+                        );
+                        context
+                            .removed_throw_candidates
+                            .clone_from(&removed_throw_candidates);
+                        context
                     });
                     classify_resolved_owner(
                         &changed.path,
@@ -2031,7 +2183,7 @@ pub(in crate::analysis::language::typescript) fn typescript_adapter_excludes_pat
     is_detectable_generated_typescript_path(path)
         || crate::config::path_matches_preview_excluded_patterns(excluded_file_patterns, path)
         || ((is_detectable_excluded_typescript_path(path)
-            || crate::config::is_typescript_docs_site_path(path))
+            || crate::config::is_typescript_non_product_path(path))
             && !crate::config::is_declared_handwritten_typescript_path(handwritten, path))
 }
 
@@ -2315,4 +2467,12 @@ fn consulted_credit_gaps<'a>(
     gaps.iter()
         .filter(|gap| consulted_test_files.contains(&normalized_path(&gap.file)))
         .collect()
+}
+
+/// A whole decimal on a continuation line, optionally terminated as a
+/// declaration or parameter. A larger changed expression keeps its own text.
+fn standalone_decimal(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let value = text.strip_suffix([';', ',']).unwrap_or(text).trim_end();
+    (!value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())).then_some(value)
 }

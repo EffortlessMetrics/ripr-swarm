@@ -1,0 +1,8 @@
+[package]
+name = "guarded_boundary_guard_missing_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "guarded_boundary_guard_missing_fixture"
+path = "src/lib.rs"

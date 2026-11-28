@@ -29,9 +29,9 @@ command when preparation is missing.
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
 ```
 
-The literal-JSON owner-return fixture pins serde_json 1.0.151, which the audited
-expansion in `assertion_dependency.rs` requires and the workspace lock no longer
-carries. Prepare it the same way before the owner-pin JSON tests:
+The literal-JSON owner-return fixture pins serde_json 1.0.151, one of the audited
+releases in `assertion_dependency/registry.rs`, which the workspace lock no longer
+carries (it locks the other audited release, 1.0.154). Prepare it the same way before the owner-pin JSON tests:
 
 ```bash
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
@@ -207,6 +207,10 @@ discovered normally and use isolated tool fixtures. Those controls establish
 sequencing and failure handling, not a real SDK, native host, full setup pass,
 saved-environment restoration or measured resource envelope.
 
+Run `cargo test -p xtask --bin xtask golden_drift` to check the classification
+of human evidence drift, including the detail-window swap from
+`manual_let_else_pairing`, and its Markdown and JSON reports.
+
 ```bash
 cargo xtask shape
 cargo xtask fix-pr
@@ -284,6 +288,39 @@ Properties checked:
 Convention: property tests use `Result<(), String>` bodies, no `unwrap`/`expect`,
 per the workspace lint posture. See `docs/TEST_TAXONOMY.md` for the Property
 and Fuzz test type definitions.
+
+The classification properties (#12927) generate bounded Python and TypeScript
+source, import relations, registration guards and assertion shapes, then invoke
+the real extractors and retained changed-line classifiers. Each has 24 shrinking
+cases and a deterministic semantic-category sweep; Rust's shared decision
+projection has 32 cases. These run with the default language features and need
+neither external interpreters nor Kani. They cover changed straight-line
+integer returns and a return under an arm the observed input never enters,
+not every adapter rule. The latter keeps an exact oracle fixed while varying
+the values and import relation, so oracle strength cannot stand in for infection.
+The TypeScript arm property supplies isolated complete source/test files because
+its guard authority checks for additional calls outside test bodies; the other
+generated paths use their retained in-memory semantic inputs.
+
+`analysis/classification_properties.rs` shares the exposed/not-exposed projection
+and the partial oracle chain `reachable_unrevealed -> weakly_exposed -> exposed`.
+The chain applies only with the same modeled return seam, active test and direct
+or aliased import relation. Unknown classes have no rank. A stronger assertion
+can reveal an unmodeled path (for example the TypeScript module-entry rule), so
+global oracle monotonicity would encode a false contract.
+
+Explicit language-specific stage exceptions to Rust's five-stage decision are:
+
+| Adapter | Exception | Retained obligation |
+| --- | --- | --- |
+| TypeScript | `propagate` is always `unknown`; unmodeled `infect` is `unknown` | Exposed still requires confirmed reach, observation and discrimination; guarded registration cannot credit an exact assertion. |
+| Python | Field/effect propagation may be `weak`; static limits are decided before the oracle ladder | This bounded return generator has modeled propagation; runtime-guarded tests cannot credit an exact assertion. |
+| Rust | Observe may be unknown/opaque when discriminate is yes | The shared Rust projection preserves the actual `observe != no` rule, rather than claiming all five stages must be yes. |
+
+Non-exposed findings must carry a stop reason, nonempty missing-evidence text,
+or a typed missing discriminator. That obligation includes confident gaps;
+it does not invent an unknown stop reason for them. Unrecognized checks and
+foreign imports cannot promote the generated return seam to exposed.
 
 ## Harness Trial-Subject Evidence Parity Scan
 
@@ -500,6 +537,18 @@ When changing user-visible output, update or add golden coverage for:
 Golden updates must preserve the static language boundary: draft static output
 does not use mutation-runtime terms such as `killed` or `survived`.
 
+The fixture runner compares `expected/human.txt`, `human-full.txt`,
+`sarif.json` and `github.txt` only while the file exists, and the corpus gates
+iterate whatever `cases` a corpus still lists. Deleting a golden or dropping a
+case therefore removes the comparison with it.
+`policy/fixture-denominator-floor.txt` names each of those subjects (one `golden` line per fixture, one `case` line per case), and
+`cargo xtask check-fixture-contracts` fails when a named one leaves the tree
+(#15925). To retire a golden or a case, remove its line in the same change and
+say why in the PR; never remove one to turn a gate green. New goldens and cases
+pass without an edit and are counted as above the floor until
+`target/ripr/reports/fixture-denominator-floor.txt` is copied over the policy
+file. The floor checks presence, not whether the subject still discriminates.
+
 CI-summary changed-source escaping has literal render pins in
 `output::ci_summary::tests::given_changed_behavior_*`, covering both first-run
 artifact routes and the `why` fallback. The companion
@@ -581,3 +630,39 @@ cargo test --locked -p ripr --test mcp_sdk
 ```
 
 These tests qualify wire behavior, not installation or every protocol version.
+
+## MCP default gap-list exposure omission
+
+[RIPR-SPEC-0211](specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md)
+defines the default `ripr_list_gaps` exclusion (#14327): with no `class`, only
+`exposed` items refused as `seam_already_gripped` are left out and counted in
+`exposed_omitted`. The unit control separates that cause from a
+truncation-refused `exposed` item; the real-stdio parity case proves a gripped
+Rust seam is omitted by default and recovered by `class: "exposed"`; the
+truncation stdio controls keep evidence-limited `exposed` items listed.
+
+```bash
+cargo test --locked -p ripr --lib mcp::workspace::tests::default_gap_list_omits_exposed_and_discloses_the_count -- --exact
+cargo test --locked -p ripr --test mcp_cli_repair_parity already_gripped_seam_is_refused_with_one_cause_on_every_surface -- --exact
+cargo test --locked -p ripr --test mcp_stdio truncated_seam_inventory
+```
+
+## Stub routes past the seam cap
+
+[RIPR-SPEC-0287](specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md)
+and #14369 cover `ripr agent stub --seam-id` on a workspace larger than the
+seam cap. The subprocess controls set `RIPR_REPO_EXPOSURE_SEAM_LIMIT=1`, so a
+small fixture behaves like a capped large repository:
+
+```bash
+cargo test --locked -p ripr --test agent_stub_compiles printed_seam_id_route_yields_its_stub_past_the_seam_cap -- --exact
+cargo test --locked -p ripr --test agent_stub_compiles seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it -- --exact
+```
+
+The first test checks that the route `check` prints yields its stub, after a
+precondition shows that the capped inventory lacks the seam. The second test
+checks that, past the cap, the stub omits the repair start the capped
+`--phase before` refuses, and that inside the cap the start is printed and
+runs. The in-process `app::test_stub` controls pin that the ambiguity
+validator classifies only the finding's file, reuses that inventory across
+findings, and refuses stand-in evidence.

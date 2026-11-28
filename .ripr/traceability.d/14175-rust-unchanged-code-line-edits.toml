@@ -1,0 +1,17 @@
+# Registers the unchanged-code-line controls (#14175) under RIPR-SPEC-0001: a
+# trailing line comment edit or a line-ending rewrite beside unchanged code
+# seeds no probe, and equal text that changed meaning keeps its probe.
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/probes/diff.rs::tests::trailing_line_comment_only_edits_seed_no_probe",
+  "crates/ripr/src/analysis/probes/diff.rs::tests::line_ending_only_pairs_seed_no_probe",
+  "crates/ripr/src/analysis/probes/unchanged_code_line.rs::tests::documentation_comments_are_tokens_not_comments",
+  "crates/ripr/src/analysis/probes/unchanged_code_line.rs::tests::equal_text_under_a_moved_comment_or_string_boundary_is_not_the_same_code",
+  "crates/ripr/tests/rust_unchanged_code_line_edits.rs::trailing_comment_edits_report_nothing_and_code_edits_beside_them_still_do",
+  "crates/ripr/tests/rust_unchanged_code_line_edits.rs::line_ending_only_rewrites_report_nothing_and_an_edit_inside_one_still_does",
+  "crates/ripr/tests/rust_unchanged_code_line_edits.rs::equal_text_that_changed_meaning_keeps_its_finding",
+  "crates/ripr/src/analysis/probes/unchanged_code_line.rs::tests::a_block_comment_inside_the_line_is_not_code",
+  "crates/ripr/src/analysis/probes/unchanged_code_line.rs::tests::a_line_inside_a_multi_line_comment_or_string_does_not_read_alone",
+  "crates/ripr/tests/rust_unchanged_code_line_edits.rs::inline_block_comment_edits_report_nothing_and_code_edits_beside_them_still_do",
+]

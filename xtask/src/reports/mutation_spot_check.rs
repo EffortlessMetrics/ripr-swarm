@@ -37,7 +37,9 @@
 
 mod cargo_mutants_diff;
 mod cosmic_ray;
+mod mutmut;
 pub(crate) mod pilot;
+mod python_calibration;
 mod stryker;
 mod synthetic_diff;
 
@@ -141,7 +143,8 @@ const REDERIVE_USAGE: &str =
 const USAGE: &str = "usage: cargo xtask mutation-spot-check --repo <name>=<checkout> [--repo ...] [--mutants-out <name>=<mutants.out dir>] [--run-mutants] [--mutants-arg <name>=<arg>] [--jobs <n>] [--mutant-timeout-secs <n>] [--examples <n>] [--ripr <binary>]
   TypeScript (real Stryker outcomes, synthetic-diff verdict join): --repo <name>=<checkout> --stryker-report <name>=<mutation.json> [--max-mutants <n>]
   Python (real cosmic-ray outcomes, same join): --repo <name>=<checkout> --cosmic-ray-dump <name>=<cosmic-ray dump output> [--cosmic-ray-version <v>] [--max-mutants <n>]
-  One run scores one synthetic-diff language; do not mix --stryker-report and --cosmic-ray-dump.
+  Python (real mutmut outcomes, same join): --repo <name>=<checkout> --mutmut-dump <name>=<mutmut show JSONL> [--mutmut-version <v>] [--mutmut-test-args <name>=<pytest args>] [--max-mutants <n>]
+  One run scores one synthetic-diff language and tool; do not mix --stryker-report, --cosmic-ray-dump and --mutmut-dump.
   Rust diff mode: add --rust-diff-mode to also score every cargo-mutants mutant through `ripr check --diff` with its recorded diff (capped by --max-mutants), reported apart from the span join.";
 
 fn harness_owned_mutants_arg(arg: &str) -> bool {
@@ -217,6 +220,20 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
             )
             .map_err(|err| format!("`{name}`: {err}"))?;
             Some((synthetic_diff::PYTHON, parsed))
+        } else if let Some(dump_path) = options.mutmut_dumps.get(name) {
+            let dump = fs::read_to_string(dump_path)
+                .map_err(|err| format!("read {}: {err}", dump_path.display()))?;
+            let read_source = |path: &str| {
+                let relative = synthetic_diff::checkout_relative(path)?;
+                fs::read_to_string(checkout.join(relative)).ok()
+            };
+            let (sources, mut tool) =
+                mutmut::parse_mutmut_dump(&dump, &read_source, options.mutmut_version.as_deref())
+                    .map_err(|err| format!("`{name}`: {err}"))?;
+            if let Some(test_args) = options.mutmut_test_args.get(name) {
+                mutmut::record_test_args(&mut tool, test_args);
+            }
+            Some((synthetic_diff::PYTHON, (sources, tool)))
         } else {
             None
         };
@@ -244,9 +261,42 @@ pub(crate) fn mutation_spot_check(args: &[String]) -> Result<(), String> {
         .map_err(|err| format!("serialize mutation spot check: {err}"))?;
     crate::write_report("mutation-spot-check.json", &format!("{json_text}\n"))?;
     crate::write_report("mutation-spot-check.md", &spot_check_markdown(&report))?;
+    crate::write_report("mutation-spot-check-records.jsonl", &records_jsonl(&repos))?;
     println!("Wrote target/ripr/reports/mutation-spot-check.json");
     println!("Wrote target/ripr/reports/mutation-spot-check.md");
+    println!("Wrote target/ripr/reports/mutation-spot-check-records.jsonl");
     Ok(())
+}
+
+/// One JSON line per located mutant record, every disposition included, so a
+/// located miss can be traced to its file, line, verdict and mutant without
+/// re-running the join. A mutmut record with no diff has no location and is
+/// counted by status in `records_without_diff` instead. Audit data only: the
+/// receipt's figures come from the same records and this file adds no claim.
+fn records_jsonl(repos: &[RepoRun]) -> String {
+    let mut out = String::new();
+    for repo in repos {
+        for record in &repo.records {
+            let line = json!({
+                "repo": repo.name,
+                "language": repo.language,
+                "disposition": record.disposition,
+                "join_method": record.join_method,
+                "grip_class": record.grip_class,
+                "verdict_token": record.verdict_token,
+                "outcome": record.outcome,
+                "seam_id": record.seam_id,
+                "file": record.file,
+                "line": record.line,
+                "expression": record.expression,
+                "mutant": record.mutant,
+                "genre": normalized_genre(&record.genre),
+            });
+            out.push_str(&line.to_string());
+            out.push('\n');
+        }
+    }
+    out
 }
 
 #[derive(Clone, Debug)]
@@ -260,6 +310,13 @@ struct Options {
     cosmic_ray_dumps: BTreeMap<String, PathBuf>,
     /// The cosmic-ray version that produced the dumps; a dump does not say.
     cosmic_ray_version: Option<String>,
+    /// Repos scored from a `mutmut show` dump (Python).
+    mutmut_dumps: BTreeMap<String, PathBuf>,
+    /// The mutmut version that produced the dumps; a dump does not say.
+    mutmut_version: Option<String>,
+    /// The pytest arguments each mutmut repo ran under, recorded verbatim so
+    /// a suite reduced by `--deselect` or `--ignore` is visible in the receipt.
+    mutmut_test_args: BTreeMap<String, String>,
     max_mutants: usize,
     /// Also score cargo-mutants repos through `ripr check --diff`.
     rust_diff_mode: bool,
@@ -278,6 +335,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         stryker_reports: BTreeMap::new(),
         cosmic_ray_dumps: BTreeMap::new(),
         cosmic_ray_version: None,
+        mutmut_dumps: BTreeMap::new(),
+        mutmut_version: None,
+        mutmut_test_args: BTreeMap::new(),
         max_mutants: synthetic_diff::DEFAULT_MAX_MUTANTS,
         rust_diff_mode: false,
         run_mutants: false,
@@ -290,7 +350,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     while index < args.len() {
         let flag = args[index].as_str();
         match flag {
-            "--repo" | "--mutants-out" | "--stryker-report" | "--cosmic-ray-dump" => {
+            "--repo" | "--mutants-out" | "--stryker-report" | "--cosmic-ray-dump"
+            | "--mutmut-dump" => {
                 index += 1;
                 let (name, path) = parse_named_path(required_arg(args, index, flag)?, flag)?;
                 if flag == "--repo" {
@@ -309,6 +370,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                         .is_some()
                     {
                         return Err(format!("duplicate --cosmic-ray-dump name `{name}`"));
+                    }
+                } else if flag == "--mutmut-dump" {
+                    if options.mutmut_dumps.insert(name.clone(), path).is_some() {
+                        return Err(format!("duplicate --mutmut-dump name `{name}`"));
                     }
                 } else if options.mutants_out.insert(name.clone(), path).is_some() {
                     return Err(format!("duplicate --mutants-out name `{name}`"));
@@ -337,6 +402,29 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--cosmic-ray-version" => {
                 index += 1;
                 options.cosmic_ray_version = Some(required_arg(args, index, flag)?.to_string());
+            }
+            "--mutmut-version" => {
+                index += 1;
+                options.mutmut_version = Some(required_arg(args, index, flag)?.to_string());
+            }
+            "--mutmut-test-args" => {
+                index += 1;
+                let value = required_arg(args, index, flag)?;
+                let Some((name, test_args)) = value
+                    .split_once('=')
+                    .filter(|(name, _)| is_repo_name(name.trim()))
+                else {
+                    return Err(format!(
+                        "--mutmut-test-args expects <name>=<pytest arguments>, got `{value}`"
+                    ));
+                };
+                if options
+                    .mutmut_test_args
+                    .insert(name.trim().to_string(), test_args.trim().to_string())
+                    .is_some()
+                {
+                    return Err(format!("duplicate --mutmut-test-args name `{name}`"));
+                }
             }
             "--max-mutants" | "--stryker-max-mutants" => {
                 index += 1;
@@ -405,6 +493,34 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             ));
         }
     }
+    for name in options.mutmut_dumps.keys() {
+        if !options.repos.iter().any(|(repo, _)| repo == name) {
+            return Err(format!("--mutmut-dump `{name}` names no --repo"));
+        }
+        if options.mutants_out.contains_key(name) || options.mutants_args.contains_key(name) {
+            return Err(format!(
+                "`{name}` is scored from a mutmut dump, so --mutants-out and --mutants-arg do not apply to it"
+            ));
+        }
+    }
+    for name in options.mutmut_test_args.keys() {
+        if !options.mutmut_dumps.contains_key(name) {
+            return Err(format!(
+                "--mutmut-test-args `{name}` names no --mutmut-dump"
+            ));
+        }
+    }
+    if options.mutmut_version.is_some() && options.mutmut_dumps.is_empty() {
+        return Err("--mutmut-version only applies with --mutmut-dump".to_string());
+    }
+    if !options.mutmut_dumps.is_empty()
+        && (!options.stryker_reports.is_empty() || !options.cosmic_ray_dumps.is_empty())
+    {
+        return Err(
+            "--mutmut-dump with --stryker-report or --cosmic-ray-dump in one run would mix tools in the one synthetic_diff_verdict section; run them separately"
+                .to_string(),
+        );
+    }
     if options.cosmic_ray_version.is_some() && options.cosmic_ray_dumps.is_empty() {
         return Err("--cosmic-ray-version only applies with --cosmic-ray-dump".to_string());
     }
@@ -418,10 +534,11 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         && options.repos.iter().all(|(name, _)| {
             options.stryker_reports.contains_key(name)
                 || options.cosmic_ray_dumps.contains_key(name)
+                || options.mutmut_dumps.contains_key(name)
         })
     {
         return Err(
-            "--rust-diff-mode scores cargo-mutants repos, and every --repo here is scored from a Stryker report or cosmic-ray dump".to_string(),
+            "--rust-diff-mode scores cargo-mutants repos, and every --repo here is scored from a Stryker report, cosmic-ray dump or mutmut dump".to_string(),
         );
     }
     for name in options.mutants_args.keys() {
@@ -940,6 +1057,12 @@ struct Record {
     /// ripr's own classification token for a synthetic-diff record; empty for
     /// the Rust span join, whose `grip_class` is the seam's.
     verdict_token: String,
+    /// The mutation genre retained from the producing tool: the
+    /// cargo-mutants `genre` for a Rust span-join record, or the producing
+    /// tool's mutator name for a synthetic-diff record. Empty when the
+    /// producer named none; renderers normalize an empty genre to
+    /// `unknown_genre`, never inventing one at the source.
+    genre: String,
 }
 
 /// Seam id to source expression, from the repo exposure JSON.
@@ -1081,21 +1204,26 @@ fn classify_records(
             mutant,
             operator_token,
             verdict_token: String::new(),
+            genre: genre.to_string(),
         });
     }
-    let unjoined = |runtime: &Value, disposition: String| Record {
-        disposition,
-        join_method: String::new(),
-        grip_class: String::new(),
-        outcome: text(runtime, "/runtime_outcome"),
-        seam_id: String::new(),
-        seam_kind: String::new(),
-        file: text(runtime, "/file"),
-        line: runtime.get("line").and_then(Value::as_u64).unwrap_or(0),
-        expression: None,
-        mutant: text(runtime, "/mutant_id"),
-        operator_token: "not_applicable",
-        verdict_token: String::new(),
+    let unjoined = |runtime: &Value, disposition: String| {
+        let mutant = text(runtime, "/mutant_id");
+        Record {
+            disposition,
+            join_method: String::new(),
+            grip_class: String::new(),
+            outcome: text(runtime, "/runtime_outcome"),
+            seam_id: String::new(),
+            seam_kind: String::new(),
+            file: text(runtime, "/file"),
+            line: runtime.get("line").and_then(Value::as_u64).unwrap_or(0),
+            expression: None,
+            genre: genres.get(&mutant).cloned().unwrap_or_default(),
+            mutant,
+            operator_token: "not_applicable",
+            verdict_token: String::new(),
+        }
     };
     for (key, disposition) in [
         ("ambiguous_file_line_matches", "ambiguous_file_line"),
@@ -1348,6 +1476,7 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
             )
         })
         .collect::<serde_json::Map<_, _>>();
+    let (by_disposition_genre, by_grip_genre) = merged_genre_cross_tabs(&repos);
     let by_disposition_value = json!(by_disposition);
     let mut language_outcomes: BTreeMap<String, Value> = BTreeMap::new();
     for repo in all_repos {
@@ -1358,7 +1487,9 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
             &json!(outcome_table(&repo.records)),
         );
     }
-    let recall = recall_of_missed(&by_disposition_value, &language_outcomes);
+    let mut recall = recall_of_missed(&by_disposition_value, &language_outcomes);
+    let repo_entries = all_repos.iter().map(repo_entry).collect::<Vec<_>>();
+    annotate_reduced_suites(&mut recall, &repo_entries);
     let coverage = seam_coverage(&by_disposition_value);
     let families = Value::Object(families);
     let replacement = replacement_criterion(Some(&families), &recall, &coverage, None);
@@ -1367,12 +1498,15 @@ fn build_report(all_repos: &[RepoRun], examples: usize, analyzer: &str) -> Value
         "status": "advisory",
         "analyzer_version": analyzer,
         "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
-        "repos": all_repos
+        "repos": repo_entries
             .iter()
-            .filter(|repo| repo.language != RUST_DIFF_MODE)
-            .map(repo_entry)
+            .filter(|repo| repo["language"].as_str() != Some(RUST_DIFF_MODE))
+            .cloned()
             .collect::<Vec<_>>(),
         "outcomes_by_disposition_and_grip_class": by_disposition,
+        "outcomes_by_disposition_and_genre": by_disposition_genre,
+        "outcomes_by_grip_class_and_genre": by_grip_genre,
+        "genre_outcomes_by_language": genre_outcomes_by_language(all_repos),
         "scored_families": families,
         "recall_of_missed": recall,
         "seam_coverage": coverage,
@@ -1426,6 +1560,8 @@ fn repo_entry(repo: &RepoRun) -> Value {
         "calibration_metrics": repo.metrics,
         "pairings": pairing_counts(&repo.records, methods),
         "outcomes_by_disposition_and_grip_class": outcome_table(&repo.records),
+        "outcomes_by_disposition_and_genre": disposition_genre_table(&repo.records),
+        "outcomes_by_grip_class_and_genre": grip_genre_table(&repo.records),
     });
     if let (Some(extra), Some(fields)) = (
         repo.synthetic.as_ref().and_then(Value::as_object),
@@ -1503,17 +1639,20 @@ fn synthetic_section(repos: &[&RepoRun], examples: usize) -> Value {
             )
         })
         .collect::<serde_json::Map<_, _>>();
+    let (synthetic_by_disposition_genre, synthetic_by_grip_genre) = merged_genre_cross_tabs(repos);
     let canonical = records_total - exclusions.values().sum::<usize>();
     json!({
         "agreement_method": synthetic_diff::AGREEMENT_METHOD,
         "repos": repos.iter().map(|repo| json!({"name": repo.name, "language": repo.language})).collect::<Vec<_>>(),
-        "claim_boundary": "Advisory and never mixed with the Rust span-join figures. For each real mutation-tool mutant, a one-hunk diff from the original to the mutated source is run through `ripr check --diff` in a scratch copy of the checkout whose ripr.toml enables the language, and the classification on the mutated lines is read back. Only pairs with a caught or missed runtime outcome (the mutation tool's detected mutants versus its undetected or uncovered ones) and exactly one classification and owner on the mutated lines are scored: exposed claims a discriminator (a missed mutant is an overclaim); reachable_unrevealed and no_static_path claim none (a caught mutant is a false gap); weakly_exposed and the unknown classes are counted but not scored. Every other mutant is an exclusion with its reason, and canonical_precise plus the exclusions equals records_total. Python and TypeScript analysis is a diff-first preview; a mutated line is not a seam; the figures bind to the recorded revisions and tool versions and are not suite adequacy.",
+        "claim_boundary": "Advisory and never mixed with the Rust span-join figures. For each real mutation-tool mutant, a one-hunk diff from the original to the mutated source is run through `ripr check --diff` in a scratch copy of the checkout whose ripr.toml enables the language, and the classification on the mutated lines is read back. Only pairs with a caught or missed runtime outcome (the mutation tool's detected mutants versus its undetected or uncovered ones) and exactly one classification and owner on the mutated lines are scored: exposed claims a discriminator (a missed mutant is an overclaim); reachable_unrevealed and no_static_path claim none (a caught mutant is a false gap); weakly_exposed and the unknown classes are counted but not scored. A Python no_static_path with a transitive-reach limitation is the explicit exclusion python_transitive_reach_unresolved, not a false gap. Every other mutant is an exclusion with its reason, and canonical_precise plus the exclusions equals records_total. Python and TypeScript analysis is a diff-first preview; a mutated line is not a seam; the figures bind to the recorded revisions and tool versions and are not suite adequacy.",
         "records_total": records_total,
         "canonical_precise": canonical,
         "excluded": exclusions,
         "scored_families": families,
         "verdict_tokens_by_outcome": tokens,
         "outcomes_by_disposition_and_grip_class": outcomes,
+        "outcomes_by_disposition_and_genre": synthetic_by_disposition_genre,
+        "outcomes_by_grip_class_and_genre": synthetic_by_grip_genre,
         "disagreement_examples": disagreement_examples,
     })
 }
@@ -1712,6 +1851,106 @@ fn outcome_table(
     table
 }
 
+/// Genre label a renderer emits for a record: the retained producer genre,
+/// or `unknown_genre` when the producer named none. The record itself keeps
+/// the empty string, so no producer or re-derivation invents a genre the
+/// source never carried.
+fn normalized_genre(genre: &str) -> &str {
+    if genre.is_empty() {
+        "unknown_genre"
+    } else {
+        genre
+    }
+}
+
+/// Disposition, genre and outcome counts of one record set:
+/// `outcomes_by_disposition_and_genre` shaped.
+fn disposition_genre_table(
+    records: &[Record],
+) -> BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> {
+    let mut table: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> = BTreeMap::new();
+    for record in records {
+        *table
+            .entry(record.disposition.clone())
+            .or_default()
+            .entry(normalized_genre(&record.genre).to_string())
+            .or_default()
+            .entry(record.outcome.clone())
+            .or_default() += 1;
+    }
+    table
+}
+
+/// Grip class, genre and outcome counts of one record set:
+/// `outcomes_by_grip_class_and_genre` shaped. A record with no grip class is
+/// `no_joined_seam`, as in `outcome_table`.
+fn grip_genre_table(
+    records: &[Record],
+) -> BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> {
+    let mut table: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> = BTreeMap::new();
+    for record in records {
+        let grip_class = if record.grip_class.is_empty() {
+            "no_joined_seam"
+        } else {
+            record.grip_class.as_str()
+        };
+        *table
+            .entry(grip_class.to_string())
+            .or_default()
+            .entry(normalized_genre(&record.genre).to_string())
+            .or_default()
+            .entry(record.outcome.clone())
+            .or_default() += 1;
+    }
+    table
+}
+
+/// The two genre cross-tabs of a set of repos, merged across those repos.
+fn merged_genre_cross_tabs(repos: &[&RepoRun]) -> (Value, Value) {
+    let mut by_disposition = json!({});
+    let mut by_grip_class = json!({});
+    for repo in repos {
+        merge_outcomes(
+            &mut by_disposition,
+            &json!(disposition_genre_table(&repo.records)),
+        );
+        merge_outcomes(&mut by_grip_class, &json!(grip_genre_table(&repo.records)));
+    }
+    (by_disposition, by_grip_class)
+}
+
+/// Genre cross-tabs merged per language, so each language keeps its own
+/// genre vocabulary (cargo-mutants genres, a Stryker or Python mutator name)
+/// apart from the others. Languages with no records are absent. Rust
+/// diff-mode runs stay out: their genres live in the `rust_diff_mode_verdict`
+/// section, never mixed with the span-join figures.
+fn genre_outcomes_by_language(all_repos: &[RepoRun]) -> Value {
+    let mut by_language: BTreeMap<String, Vec<&RepoRun>> = BTreeMap::new();
+    for repo in all_repos
+        .iter()
+        .filter(|repo| !repo.records.is_empty() && repo.language != RUST_DIFF_MODE)
+    {
+        by_language
+            .entry(repo.language.clone())
+            .or_default()
+            .push(repo);
+    }
+    let languages = by_language
+        .into_iter()
+        .map(|(language, repos)| {
+            let (by_disposition, by_grip_class) = merged_genre_cross_tabs(&repos);
+            (
+                language,
+                json!({
+                    "outcomes_by_disposition_and_genre": by_disposition,
+                    "outcomes_by_grip_class_and_genre": by_grip_class,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    Value::Object(languages)
+}
+
 /// Add every count of `src` into `dst`, both `outcomes_by_disposition_and_grip_class`
 /// shaped.
 fn merge_outcomes(dst: &mut Value, src: &Value) {
@@ -1767,6 +2006,50 @@ fn recall_counts(outcomes: &Value) -> serde_json::Map<String, Value> {
         rate(lenient, missed_total),
     );
     out
+}
+
+/// Names, per language figure, the repos whose mutation tool ran a reduced
+/// test suite (`mutation_tool.reduced_suite`). A test left out of the run
+/// cannot kill a mutant, so some of that repo's `missed` outcomes may be
+/// caught by the full suite: the figure is then computed under a reduced
+/// suite and says so instead of presenting those outcomes as ground truth.
+fn annotate_reduced_suites(recall: &mut Value, repos: &[Value]) {
+    let mut reduced: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for repo in repos {
+        let tool = repo.get("mutation_tool");
+        if tool.and_then(|tool| tool.get("reduced_suite")) != Some(&Value::Bool(true)) {
+            continue;
+        }
+        let (Some(language), Some(name)) = (
+            repo.get("language").and_then(Value::as_str),
+            repo.get("name").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        reduced
+            .entry(language.to_string())
+            .or_default()
+            .push(json!({
+                "repo": name,
+                "excluded_tests": tool
+                    .and_then(|tool| tool.get("excluded_tests"))
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+            }));
+    }
+    for (language, repos) in reduced {
+        if let Some(row) = recall
+            .get_mut("by_language")
+            .and_then(|languages| languages.get_mut(&language))
+            .and_then(Value::as_object_mut)
+        {
+            row.insert("reduced_suite_repos".into(), json!(repos));
+            row.insert(
+                "reduced_suite_note".into(),
+                json!("these repos ran with tests deselected or ignored, so a mutant only those tests kill reads as missed; the figure is computed under that reduced suite"),
+            );
+        }
+    }
 }
 
 /// Among runtime-missed mutants across every disposition, how many ripr's grip
@@ -1886,7 +2169,10 @@ fn rederive_summaries(path: &Path) -> Result<(), String> {
             )
         })?;
     let language_outcomes = recorded_language_outcomes(&mut report, &outcomes, path)?;
-    let recall = recall_of_missed(&outcomes, &language_outcomes);
+    let mut recall = recall_of_missed(&outcomes, &language_outcomes);
+    if let Some(repos) = report.get("repos").and_then(Value::as_array) {
+        annotate_reduced_suites(&mut recall, repos);
+    }
     let coverage = seam_coverage(&outcomes);
     report["replacement_criterion"] = replacement_criterion(
         report.get("scored_families"),
@@ -1896,6 +2182,13 @@ fn rederive_summaries(path: &Path) -> Result<(), String> {
     );
     report["recall_of_missed"] = recall;
     report["seam_coverage"] = coverage;
+    // Genre cross-tabs are additive in the same v2 schema: re-derive the
+    // per-language merge only from per-repo genre tables a receipt already
+    // records. An old v2 receipt without them keeps every genre key absent;
+    // none is fabricated here, and recorded genre tables stay untouched.
+    if let Some(by_language) = recorded_genre_outcomes_by_language(&report) {
+        report["genre_outcomes_by_language"] = by_language;
+    }
     let json_text = serde_json::to_string_pretty(&report)
         .map_err(|err| format!("serialize {}: {err}", path.display()))?;
     fs::write(path, format!("{json_text}\n"))
@@ -1971,6 +2264,61 @@ fn recorded_repo_outcomes(
         "{} mixes languages without per-repo outcome tables; re-run the harness to split recall by language",
         path.display()
     ))
+}
+
+/// Per-language merge of the genre cross-tabs a recorded report already
+/// carries on its repos. Returns `None` when no repo records a genre table,
+/// so a caller leaves the receipt's genre keys exactly as they were.
+fn recorded_genre_outcomes_by_language(report: &Value) -> Option<Value> {
+    let mut by_language: BTreeMap<String, (Value, Value)> = BTreeMap::new();
+    let mut recorded = false;
+    // Only the receipt's `repos` (span-join and synthetic-diff repos): Rust
+    // diff-mode repos keep their genre tables in their own section.
+    let repos = report
+        .get("repos")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    for repo in repos {
+        if repo.get("language").and_then(Value::as_str) == Some(RUST_DIFF_MODE) {
+            continue;
+        }
+        let language = repo
+            .get("language")
+            .and_then(Value::as_str)
+            .unwrap_or(HARNESS_LANGUAGE)
+            .to_string();
+        let disposition_table = repo.get("outcomes_by_disposition_and_genre");
+        let grip_class_table = repo.get("outcomes_by_grip_class_and_genre");
+        if disposition_table.is_some() || grip_class_table.is_some() {
+            recorded = true;
+            let (by_disposition, by_grip_class) = by_language
+                .entry(language)
+                .or_insert_with(|| (json!({}), json!({})));
+            if let Some(table) = disposition_table {
+                merge_outcomes(by_disposition, table);
+            }
+            if let Some(table) = grip_class_table {
+                merge_outcomes(by_grip_class, table);
+            }
+        }
+    }
+    recorded.then(|| {
+        Value::Object(
+            by_language
+                .into_iter()
+                .map(|(language, (by_disposition, by_grip_class))| {
+                    (
+                        language,
+                        json!({
+                            "outcomes_by_disposition_and_genre": by_disposition,
+                            "outcomes_by_grip_class_and_genre": by_grip_class,
+                        }),
+                    )
+                })
+                .collect(),
+        )
+    })
 }
 
 fn example(repo: &RepoRun, record: &Record) -> Value {
@@ -2151,6 +2499,16 @@ fn spot_check_markdown(report: &Value) -> String {
             }
         }
     }
+    out.push_str(&genre_cross_tab_markdown(
+        report.get("outcomes_by_disposition_and_genre"),
+        "Outcomes by disposition and genre",
+        "Disposition",
+    ));
+    out.push_str(&genre_cross_tab_markdown(
+        report.get("outcomes_by_grip_class_and_genre"),
+        "Outcomes by grip class and genre",
+        "Grip class",
+    ));
     out.push_str(&derived_summaries_markdown(report));
     out.push_str("\n## Disagreement examples\n\n");
     let mut any = false;
@@ -2202,6 +2560,32 @@ fn spot_check_markdown(report: &Value) -> String {
         "Rust diff-mode verdicts via ripr check --diff",
     ));
     out.push_str(&pilot::markdown(report));
+    out
+}
+
+/// One genre cross-tab as a Markdown table, or nothing when the receipt
+/// carries no such table (a receipt written before genre retention).
+fn genre_cross_tab_markdown(table: Option<&Value>, heading: &str, first_column: &str) -> String {
+    let Some(rows) = table
+        .and_then(Value::as_object)
+        .filter(|rows| !rows.is_empty())
+    else {
+        return String::new();
+    };
+    let mut out =
+        format!("\n## {heading}\n\n| {first_column} | Genre | Outcomes |\n| --- | --- | --- |\n");
+    for (primary, genres) in rows {
+        for (genre, outcomes) in genres.as_object().into_iter().flatten() {
+            let cells = outcomes
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(outcome, count)| format!("{outcome} {count}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("| {primary} | {genre} | {cells} |\n"));
+        }
+    }
     out
 }
 
@@ -2275,6 +2659,16 @@ fn synthetic_markdown(report: &Value, key: &str, title: &str) -> String {
                 .map_or_else(|| "n/a".to_string(), |rate| format!("{:.1}%", rate * 100.0)),
         ));
     }
+    out.push_str(&genre_cross_tab_markdown(
+        section.get("outcomes_by_disposition_and_genre"),
+        "Outcomes by disposition and genre",
+        "Disposition",
+    ));
+    out.push_str(&genre_cross_tab_markdown(
+        section.get("outcomes_by_grip_class_and_genre"),
+        "Outcomes by grip class and genre",
+        "Grip class",
+    ));
     for (verdict, rows) in section
         .get("disagreement_examples")
         .and_then(Value::as_object)
@@ -2336,6 +2730,22 @@ fn derived_summaries_markdown(report: &Value) -> String {
                     m("flagged_or_unknown_missed"),
                     p("flagged_or_unknown_share_of_missed"),
                 ));
+                let reduced = row
+                    .get("reduced_suite_repos")
+                    .and_then(Value::as_array)
+                    .map(|repos| {
+                        repos
+                            .iter()
+                            .filter_map(|repo| repo.get("repo").and_then(Value::as_str))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if !reduced.is_empty() {
+                    out.push_str(&format!(
+                        "  Computed under a reduced suite for {}: a mutant only the left-out tests kill reads as missed.\n",
+                        reduced.join(", ")
+                    ));
+                }
             } else {
                 let reason = row.get("reason").and_then(Value::as_str).unwrap_or("");
                 out.push_str(&format!("- {language}: not established ({reason}).\n"));
@@ -2906,6 +3316,100 @@ mod tests {
     }
 
     #[test]
+    fn mutmut_test_args_need_a_dump_and_flag_the_recall_figure() -> Result<(), String> {
+        let base = ["--repo", "t=/tmp/t", "--mutmut-dump", "t=/tmp/t.jsonl"];
+        let with = |extra: &[&str]| -> Vec<String> {
+            base.iter()
+                .chain(extra)
+                .map(|arg| arg.to_string())
+                .collect()
+        };
+        let options = parse_options(&with(&["--mutmut-test-args", "t=--deselect=tests/x.py::y"]))?;
+        assert_eq!(
+            options.mutmut_test_args.get("t").map(String::as_str),
+            Some("--deselect=tests/x.py::y")
+        );
+        let orphan = parse_options(&with(&["--mutmut-test-args", "u=-q"]))
+            .err()
+            .unwrap_or_default();
+        assert!(orphan.contains("names no --mutmut-dump"), "{orphan}");
+
+        let mut recall =
+            json!({"by_language": {"python": {"status": "established", "missed_total": 3}}});
+        let repos = vec![
+            json!({"name": "t", "language": "python", "mutation_tool": {"reduced_suite": true, "excluded_tests": ["tests/x.py::y"]}}),
+            json!({"name": "full", "language": "python", "mutation_tool": {"reduced_suite": false}}),
+        ];
+        annotate_reduced_suites(&mut recall, &repos);
+        let row = &recall["by_language"]["python"];
+        assert_eq!(
+            row["reduced_suite_repos"],
+            json!([{"repo": "t", "excluded_tests": ["tests/x.py::y"]}])
+        );
+        assert!(row["reduced_suite_note"].is_string());
+
+        let mut untouched = json!({"by_language": {"python": {"status": "established"}}});
+        annotate_reduced_suites(&mut untouched, &repos[1..]);
+        assert!(
+            untouched["by_language"]["python"]
+                .get("reduced_suite_repos")
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mutmut_dumps_score_one_tool_per_run() -> Result<(), String> {
+        let args = |extra: &[&str]| -> Vec<String> {
+            ["--repo", "h=/tmp/h", "--repo", "c=/tmp/c"]
+                .iter()
+                .chain(extra)
+                .map(|arg| arg.to_string())
+                .collect()
+        };
+        let options = parse_options(&args(&[
+            "--mutmut-dump",
+            "h=/tmp/h.jsonl",
+            "--mutmut-version",
+            "3.8.1",
+        ]))?;
+        assert_eq!(
+            options.mutmut_dumps.get("h"),
+            Some(&PathBuf::from("/tmp/h.jsonl"))
+        );
+        assert_eq!(options.mutmut_version.as_deref(), Some("3.8.1"));
+        for (extra, expected) in [
+            (
+                vec!["--mutmut-dump", "h=/a", "--cosmic-ray-dump", "c=/b"],
+                "would mix tools",
+            ),
+            (
+                vec!["--mutmut-dump", "h=/a", "--stryker-report", "c=/b"],
+                "would mix tools",
+            ),
+            (vec!["--mutmut-dump", "x=/a"], "names no --repo"),
+            (
+                vec!["--mutmut-dump", "h=/a", "--mutmut-dump", "h=/b"],
+                "duplicate --mutmut-dump",
+            ),
+            (
+                vec!["--mutmut-version", "3"],
+                "only applies with --mutmut-dump",
+            ),
+            (
+                vec!["--mutmut-dump", "h=/a", "--mutants-out", "h=/b"],
+                "do not apply",
+            ),
+        ] {
+            let Err(err) = parse_options(&args(&extra)) else {
+                return Err(format!("{extra:?} should be refused"));
+            };
+            assert!(err.contains(expected), "{err}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn original_operator_reads_replace_and_delete_names() {
         assert_eq!(
             original_operator("src/a.rs:3:9: replace > with >= in f"),
@@ -3268,6 +3772,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn records_jsonl_keeps_one_line_per_record_with_its_verdict() -> Result<(), String> {
+        let run = repo_run(vec![
+            synthetic_record("canonical_precise", "no_static_path", "caught"),
+            synthetic_record("no_finding_on_mutated_lines", "", "missed"),
+        ]);
+        let text = records_jsonl(&[run]);
+        let lines: Vec<Value> = text
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()
+            .map_err(|err| err.to_string())?;
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["repo"], "demo");
+        assert_eq!(lines[0]["verdict_token"], "no_static_path");
+        assert_eq!(lines[0]["grip_class"], "ungripped");
+        assert_eq!(lines[0]["outcome"], "caught");
+        assert_eq!(lines[1]["disposition"], "no_finding_on_mutated_lines");
+        assert_eq!(lines[1]["mutant"], "src/a.ts:2:1: M [missed] id=1");
+        Ok(())
+    }
+
     fn synthetic_record(disposition: &str, token: &str, outcome: &str) -> Record {
         Record {
             disposition: disposition.to_string(),
@@ -3286,6 +3812,7 @@ mod tests {
             mutant: format!("src/a.ts:2:1: M [{outcome}] id=1"),
             operator_token: "not_applicable",
             verdict_token: token.to_string(),
+            genre: "EqualityOperator".to_string(),
         }
     }
 
@@ -3430,6 +3957,7 @@ mod tests {
             mutant: "src/a.rs:3:7: replace > with < in f".to_string(),
             operator_token: "present",
             verdict_token: String::new(),
+            genre: "BinaryOperator".to_string(),
         }
     }
 
@@ -3561,6 +4089,14 @@ mod tests {
             "--rust-diff-mode",
         ]));
         assert!(only_ts.is_err_and(|err| err.contains("--rust-diff-mode")));
+        let only_mutmut = parse_options(&args(&[
+            "--repo",
+            "a=/tmp/a",
+            "--mutmut-dump",
+            "a=/tmp/m.jsonl",
+            "--rust-diff-mode",
+        ]));
+        assert!(only_mutmut.is_err_and(|err| err.contains("--rust-diff-mode")));
         assert!(USAGE.contains("--rust-diff-mode"));
         Ok(())
     }
@@ -4006,5 +4542,241 @@ mod tests {
         assert!(markdown.contains("agent-chosen: a majority"));
         assert!(!markdown.contains("one crate, one diff, one run"));
         Ok(())
+    }
+
+    #[test]
+    fn genre_is_retained_for_matched_and_unjoined_records() -> Result<(), String> {
+        let calibration = calibration_v2(
+            json!([
+                {"join_method": "span_containment",
+                 "static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "ungripped", "file": "src/a.rs", "line": 3},
+                 "runtime": {"mutant_id": "src/a.rs:3:9: replace > with < in f", "runtime_outcome": "missed"}}
+            ]),
+            json!([{"runtime": {"mutant_id": "src/a.rs:5:5: delete ! in g", "file": "src/a.rs", "line": 5, "runtime_outcome": "caught"}}]),
+            json!([]),
+            json!([
+                {"mutant_id": "src/a.rs:7:5: replace f -> bool with true", "file": "src/a.rs", "line": 7,
+                 "runtime_outcome": "missed", "unmatched_reason": "no_containing_seam"},
+                {"mutant_id": "src/a.rs:9:5: replace * with + in h", "file": "src/a.rs", "line": 9,
+                 "runtime_outcome": "caught", "unmatched_reason": "no_containing_seam"}
+            ]),
+        );
+        let exposure = json!({"seams": [{"seam_id": "s1", "expression": "i > 0"}]});
+        let genres = BTreeMap::from([
+            (
+                "src/a.rs:3:9: replace > with < in f".to_string(),
+                "BinaryOperator".to_string(),
+            ),
+            (
+                "src/a.rs:5:5: delete ! in g".to_string(),
+                "UnaryOperator".to_string(),
+            ),
+            (
+                "src/a.rs:7:5: replace f -> bool with true".to_string(),
+                "FnValue".to_string(),
+            ),
+        ]);
+        let records = classify_records(&calibration, &exposure, &genres)?;
+        let genre_of = |needle: &str| {
+            records
+                .iter()
+                .find(|record| record.mutant.contains(needle))
+                .map(|record| record.genre.as_str())
+        };
+        assert_eq!(genre_of("replace > with <"), Some("BinaryOperator"));
+        assert_eq!(genre_of("delete ! in g"), Some("UnaryOperator"));
+        assert_eq!(genre_of("replace f -> bool"), Some("FnValue"));
+        // Absent from mutants.json: retained as empty, normalized only at render.
+        assert_eq!(genre_of("replace * with +"), Some(""));
+        assert_eq!(normalized_genre(""), "unknown_genre");
+        let report = build_report(&[repo_run(records)], 5, TEST_ANALYZER);
+        assert_eq!(
+            report["outcomes_by_disposition_and_genre"]["unmatched_no_containing_seam"]["unknown_genre"]
+                ["caught"],
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn genre_cross_tabs_sum_to_totals_and_keep_language_vocabularies_apart() {
+        let mut unknown = span_join_record("strongly_gripped", "caught");
+        unknown.genre = String::new();
+        let rust = repo_run(vec![span_join_record("ungripped", "missed"), unknown]);
+        let mut ts = repo_run(vec![
+            synthetic_record(CANONICAL_PRECISE, "exposed", "caught"),
+            synthetic_record(CANONICAL_PRECISE, "exposed", "missed"),
+        ]);
+        ts.name = "pkg".to_string();
+        ts.language = "typescript".to_string();
+        ts.synthetic = Some(json!({"agreement_method": synthetic_diff::AGREEMENT_METHOD}));
+        ts.pilot = Err("n/a".to_string());
+        let report = build_report(&[rust, ts], 5, TEST_ANALYZER);
+        let total = |table: &Value| sum_outcomes(table, |_, _, _| true);
+        // Top level is the Rust span join only: both cross-tabs sum to it.
+        assert_eq!(
+            total(&report["outcomes_by_disposition_and_genre"]),
+            total(&report["outcomes_by_disposition_and_grip_class"])
+        );
+        assert_eq!(total(&report["outcomes_by_disposition_and_genre"]), 2);
+        assert_eq!(
+            report["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]["BinaryOperator"]["missed"],
+            1
+        );
+        assert_eq!(
+            report["outcomes_by_grip_class_and_genre"]["strongly_gripped"]["unknown_genre"]["caught"],
+            1
+        );
+        // Per-repo tables carry each repo's own records.
+        assert_eq!(
+            total(&report["repos"][0]["outcomes_by_disposition_and_genre"]),
+            2
+        );
+        assert_eq!(
+            total(&report["repos"][1]["outcomes_by_grip_class_and_genre"]),
+            2
+        );
+        // The synthetic section keeps the TypeScript mutator vocabulary.
+        let section = &report["synthetic_diff_verdict"];
+        assert_eq!(total(&section["outcomes_by_disposition_and_genre"]), 2);
+        assert_eq!(
+            section["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]["EqualityOperator"]["caught"],
+            1
+        );
+        assert!(
+            section["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]
+                .get("BinaryOperator")
+                .is_none()
+        );
+        // Per-language merges stay apart.
+        let by_language = &report["genre_outcomes_by_language"];
+        assert_eq!(
+            by_language["rust"]["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]["BinaryOperator"]
+                ["missed"],
+            1
+        );
+        assert!(
+            by_language["rust"]["outcomes_by_disposition_and_genre"][CANONICAL_PRECISE]
+                .get("EqualityOperator")
+                .is_none()
+        );
+        assert_eq!(
+            by_language["typescript"]["outcomes_by_grip_class_and_genre"]["strongly_gripped"]["EqualityOperator"]
+                ["caught"],
+            1
+        );
+        assert!(
+            by_language["typescript"]["outcomes_by_grip_class_and_genre"]["strongly_gripped"]
+                .get("BinaryOperator")
+                .is_none()
+        );
+        let markdown = spot_check_markdown(&report);
+        assert!(markdown.contains("## Outcomes by disposition and genre"));
+        assert!(markdown.contains("| canonical_precise | BinaryOperator | missed 1 |"));
+        assert!(markdown.contains("## Outcomes by grip class and genre"));
+        assert!(markdown.contains("| strongly_gripped | unknown_genre | caught 1 |"));
+    }
+
+    #[test]
+    fn records_jsonl_carries_the_retained_genre() -> Result<(), String> {
+        let mut unknown = synthetic_record(CANONICAL_PRECISE, "exposed", "caught");
+        unknown.genre = String::new();
+        let run = repo_run(vec![
+            synthetic_record(CANONICAL_PRECISE, "exposed", "caught"),
+            unknown,
+        ]);
+        let text = records_jsonl(&[run]);
+        let lines: Vec<Value> = text
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()
+            .map_err(|err| err.to_string())?;
+        assert_eq!(lines[0]["genre"], "EqualityOperator");
+        assert_eq!(lines[1]["genre"], "unknown_genre");
+        Ok(())
+    }
+
+    #[test]
+    fn rederive_preserves_recorded_genre_and_invents_none_for_old_receipts() -> Result<(), String> {
+        let dir = std::env::temp_dir().join(format!("ripr-rederive-genre-{}", std::process::id()));
+        fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+        let path = dir.join("report.json");
+        // A receipt with recorded genre tables keeps them exactly.
+        let report = build_report(
+            &[repo_run(vec![span_join_record("ungripped", "missed")])],
+            5,
+            TEST_ANALYZER,
+        );
+        fs::write(&path, report.to_string()).map_err(|err| err.to_string())?;
+        rederive_summaries(&path)?;
+        let out: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(
+            out["outcomes_by_disposition_and_genre"],
+            report["outcomes_by_disposition_and_genre"]
+        );
+        assert_eq!(
+            out["outcomes_by_grip_class_and_genre"],
+            report["outcomes_by_grip_class_and_genre"]
+        );
+        assert_eq!(
+            out["repos"][0]["outcomes_by_disposition_and_genre"],
+            report["repos"][0]["outcomes_by_disposition_and_genre"]
+        );
+        assert_eq!(
+            out["genre_outcomes_by_language"],
+            report["genre_outcomes_by_language"]
+        );
+        // An old v2 receipt without genre tables gains none.
+        let old = json!({
+            "schema_version": SCHEMA_VERSION,
+            "outcomes_by_disposition_and_grip_class": baseline_outcomes(),
+            "repos": [{"name": "demo"}],
+            "status": "advisory",
+        });
+        fs::write(&path, old.to_string()).map_err(|err| err.to_string())?;
+        rederive_summaries(&path)?;
+        let out: Value =
+            serde_json::from_str(&fs::read_to_string(&path).map_err(|err| err.to_string())?)
+                .map_err(|err| err.to_string())?;
+        assert!(out.get("outcomes_by_disposition_and_genre").is_none());
+        assert!(out.get("outcomes_by_grip_class_and_genre").is_none());
+        assert!(out.get("genre_outcomes_by_language").is_none());
+        assert!(
+            out["repos"][0]
+                .get("outcomes_by_disposition_and_genre")
+                .is_none()
+        );
+        assert_eq!(out["recall_of_missed"]["ungripped_missed"], 34);
+        assert_eq!(out["recall_of_missed"]["missed_total"], 322);
+        assert_eq!(out["recall_of_missed"]["flagged_or_unknown_missed"], 189);
+        assert_eq!(out["seam_coverage"]["no_containing_seam"], 843);
+        assert_eq!(out["seam_coverage"]["mutants_total"], 1745);
+        fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+        Ok(())
+    }
+
+    #[test]
+    fn recorded_genre_merge_adds_no_empty_language_entry() {
+        // A repo without recorded genre tables must not gain an empty
+        // language entry when another repo in the receipt has them.
+        let report = json!({
+            "repos": [
+                {"language": "rust",
+                 "outcomes_by_disposition_and_genre": {"canonical_precise": {"BinaryOperator": {"caught": 2}}},
+                 "outcomes_by_grip_class_and_genre": {"strongly_gripped": {"BinaryOperator": {"caught": 2}}}},
+                {"language": "typescript"},
+            ],
+        });
+        let by_language = recorded_genre_outcomes_by_language(&report).unwrap_or(json!({}));
+        assert_eq!(
+            by_language["rust"]["outcomes_by_disposition_and_genre"]["canonical_precise"]["BinaryOperator"]
+                ["caught"],
+            2
+        );
+        assert!(by_language.get("typescript").is_none());
+        let none = json!({"repos": [{"language": "typescript"}]});
+        assert!(recorded_genre_outcomes_by_language(&none).is_none());
     }
 }

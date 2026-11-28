@@ -12,9 +12,9 @@ head = "HEAD"
 
 [gate]
 required_check = "ub-review/gate"
-# Retain publication for the original admitted passes. The workflow's
-# full-ci label is an explicit operator request and selects the action's manual
-# pass, which bypasses this list without relabeling the event as synchronize.
+# Retain the original publication policy for explicit review consumers.
+# Repository Actions no longer subscribes to development review events;
+# this tool configuration does not request a workflow or authorize a merge.
 post_review_on = ["opened", "synchronize", "reopened"]
 
 # Post actionable findings (severity medium+ or confidence medium-high+) to

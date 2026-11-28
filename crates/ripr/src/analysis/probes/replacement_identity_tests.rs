@@ -11,7 +11,7 @@ use crate::testing::fixture_git::{fixture_git_ok, fixture_git_stdout, remove_fix
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-fn git_probes(before: &str, after: &str) -> Result<Vec<SeededProbe>, String> {
+pub(super) fn git_probes(before: &str, after: &str) -> Result<Vec<SeededProbe>, String> {
     Ok(git_probe_fixture(&[("src/lib.rs", before, after)])?.probes)
 }
 

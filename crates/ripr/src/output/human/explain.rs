@@ -14,6 +14,8 @@
 //! assertion stay here — they are the only copy.
 
 use crate::domain::{
+    ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP, ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP,
+    ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP, BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP,
     ExposureClass, Finding, OracleStrength, ProbeFamily, RelatedTest, RelatedTestMiss,
     StaticLimitKind, StopReason, exact_assertion_fact, input_boundary_fact,
 };
@@ -43,10 +45,15 @@ pub(crate) fn render_verdict_explanation(
         // appear more than once; print each test once with every assertion
         // it was judged by.
         let groups = group_rows_by_test(&finding.related_tests);
-        out.push_str(&format!(
-            "  Tests examined: {} listed ({} assertion row(s) of {total})\n",
+        out.push_str(&tests_examined_line(
             groups.len(),
-            finding.related_tests.len()
+            finding
+                .related_tests
+                .iter()
+                .filter(|row| row.oracle.is_some())
+                .count(),
+            finding.related_tests.len(),
+            total,
         ));
         for rows in groups {
             // The test is judged by its strongest assertion; a weaker row's
@@ -114,15 +121,7 @@ pub(crate) fn render_verdict_explanation(
                 }
             }
         }
-        if total > finding.related_tests.len() {
-            out.push_str(&format!(
-                "  ({} more row(s) examined; ripr keeps the {} most closely related)\n",
-                total - finding.related_tests.len(),
-                finding.related_tests.len()
-            ));
-        }
     }
-    let mut investigation_step_printed = false;
     let needs = verdict_changers(finding, owner_signature);
     if !needs.is_empty() {
         out.push_str("  To change the verdict, a test needs to:\n");
@@ -138,27 +137,50 @@ pub(crate) fn render_verdict_explanation(
     ) || crate::output::next_step::unresolved_edge_guidance(finding).is_some()
     {
         let step = crate::output::next_step::reconcile_next_step(finding);
-        investigation_step_printed = !step.is_empty();
-        if !step.is_empty() {
+        if finding.recommended_next_step.is_some() {
+            // The `Next step` section above prints this same step
+            // (`reconcile_next_step`); repeating a paragraph-long step here
+            // doubled the longest text in the drill-in. Say what kind of
+            // result this is and point at the step instead.
+            out.push_str(
+                "  ripr could not settle this statically; Next step above says what to do about it.\n",
+            );
+        } else if !step.is_empty() {
             out.push_str("  To investigate this uncertainty:\n");
             out.push_str(&format!("  - {step}\n"));
         }
     }
-    if !finding.stop_reasons.is_empty() {
-        out.push_str("  Stop reasons:\n");
-        for reason in &finding.stop_reasons {
-            out.push_str(&format!(
-                "  - {}: {}\n",
-                reason.as_str(),
-                stop_reason_meaning(reason)
-            ));
-            // The unknown classes already print one investigation step above.
-            if !investigation_step_printed {
-                out.push_str(&format!("    Next: {}\n", reason.next_step()));
-            }
-        }
-    }
+    // Stop reasons are not repeated here: the `Stop reasons:` section above
+    // renders `effective_stop_reasons()`, which equals `finding.stop_reasons`
+    // whenever that list is non-empty, each with its sentence and Next line.
     out
+}
+
+/// `Tests examined: N (M assertions)`. `M` counts only rows whose assertion
+/// ripr recorded: a related-test row is an evidence record, and an
+/// assertion-free test keeps one row with no assertion (`oracle: None`), so
+/// counting rows would report assertions a test does not have. When ripr
+/// kept fewer rows than it examined, the dropped rows' assertions are
+/// unknown, so the window is disclosed in rows.
+fn tests_examined_line(
+    tests: usize,
+    recorded_assertions: usize,
+    kept_rows: usize,
+    total_rows: usize,
+) -> String {
+    let assertions = match recorded_assertions {
+        0 => "no assertion recorded".to_string(),
+        1 => "1 assertion".to_string(),
+        n => format!("{n} assertions"),
+    };
+    if total_rows > kept_rows {
+        format!(
+            "  Tests examined: {tests} listed ({assertions}; showing {kept_rows} of \
+             {total_rows} matched rows, ripr keeps the most closely related)\n"
+        )
+    } else {
+        format!("  Tests examined: {tests} ({assertions})\n")
+    }
 }
 
 /// What ripr concluded about one assertion row.
@@ -265,8 +287,15 @@ fn reach_edge_unresolved(finding: &Finding) -> bool {
 /// `exposed` there is nothing to change, for the unknown classes ripr has not
 /// established what is missing, and a gap whose next step was withheld (an
 /// exact oracle already covers the direct sink) indicates no assertion repair.
+/// Build-script and assertion-helper guidance already describes the appropriate
+/// action, so the generic test recipe would be misleading.
 fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<String> {
-    if crate::output::next_step::unresolved_edge_guidance(finding).is_some() {
+    // Base-side evidence (`base_deleted`, `moved_or_renamed`) is not a
+    // candidate edit target: its Next step recommends no test change, so a
+    // test recipe here would contradict it (#15271).
+    if finding.source_currentness.is_base_side()
+        || crate::output::next_step::unresolved_edge_guidance(finding).is_some()
+    {
         return Vec::new();
     }
     if !matches!(
@@ -274,8 +303,15 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
         ExposureClass::NoStaticPath
             | ExposureClass::ReachableUnrevealed
             | ExposureClass::WeaklyExposed
-    ) || finding.recommended_next_step.is_none()
-    {
+    ) || matches!(
+        finding.recommended_next_step.as_deref(),
+        None | Some(
+            BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP
+                | ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP
+                | ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP
+                | ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP
+        )
+    ) {
         return Vec::new();
     }
     // #7796: the recipe names the owner; when the observed call shape is
@@ -323,9 +359,11 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
             RelatedTestMiss::NoAssertion | RelatedTestMiss::AssertionNotObserving => {
                 format!("assert on what {owner} returns or changes")
             }
-            RelatedTestMiss::AssertionNotCredited
-            | RelatedTestMiss::AssertionInert
-            | RelatedTestMiss::AssertionAdmissionUnproven => {
+            // An admission limit alone cannot tell the reader to replace a check.
+            RelatedTestMiss::AssertionNotCredited | RelatedTestMiss::AssertionAdmissionUnproven => {
+                continue;
+            }
+            RelatedTestMiss::AssertionInert => {
                 "use a plain, always-run `assert_eq!`/`assert!` ripr can resolve".to_string()
             }
             RelatedTestMiss::ObservationUnconfirmed => {
@@ -384,40 +422,6 @@ fn verdict_changers(finding: &Finding, owner_signature: Option<&str>) -> Vec<Str
     needs
 }
 
-fn stop_reason_meaning(reason: &StopReason) -> &'static str {
-    match reason {
-        StopReason::MaxDepthReached => "the call walk hit its depth limit before reaching a test",
-        StopReason::ExternalCrateBoundary => {
-            "the path leaves this workspace; ripr does not follow it"
-        }
-        StopReason::DynamicDispatchUnresolved => {
-            "the path goes through a trait object or generic call ripr cannot resolve"
-        }
-        StopReason::ProcMacroOpaque | StopReason::FixtureOpaque => reason.describe(),
-        StopReason::FeatureUnknown => "a cfg or feature gate may change whether the code runs",
-        StopReason::AsyncBoundaryOpaque | StopReason::NoChangedRustLine => reason.describe(),
-        StopReason::InfectionEvidenceUnknown => {
-            "ripr could not tell whether a test input changes this value"
-        }
-        StopReason::PropagationEvidenceUnknown => {
-            "ripr could not trace the changed value to anything a test observes"
-        }
-        StopReason::StaticProbeUnknown => "ripr has no probe shape for this kind of change",
-        StopReason::TransitiveReachUnresolved => reason.describe(),
-        StopReason::MacroReachUnresolved => {
-            "a test may reach this through a macro ripr does not expand"
-        }
-        StopReason::GapEvidenceUnresolved => {
-            "a related test asserts, but ripr could not tie that assertion to this change"
-        }
-        // ADR 0019: the domain gloss is the stop-reason owner. Do not invent
-        // a second identity-unknown sentence here.
-        StopReason::HelperIdentityUnresolved
-        | StopReason::CompileTimeInvariant
-        | StopReason::UnsafeObligation => reason.describe(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,11 +445,22 @@ mod tests {
             !text.contains("To change the verdict, a test needs to:"),
             "{text}"
         );
+        // The boundary is named once, by the `Next step` section
+        // (`reconcile_next_step`); the verdict block points there.
+        let step = crate::output::next_step::reconcile_next_step(&finding);
         assert!(
-            text.contains("Tests cannot close this static-analysis limitation"),
+            step.contains("Tests cannot close this static-analysis limitation"),
+            "{step}"
+        );
+        assert!(step.contains("entry `outer` -> owner `inner`"), "{step}");
+        assert!(
+            text.contains("Next step above says what to do about it"),
             "{text}"
         );
-        assert!(text.contains("entry `outer` -> owner `inner`"), "{text}");
+        assert!(
+            !text.contains("Tests cannot close this static-analysis limitation"),
+            "{text}"
+        );
     }
 
     fn row(oracle: &str, strength: OracleStrength, miss: RelatedTestMiss) -> RelatedTest {
@@ -492,6 +507,25 @@ mod tests {
     }
 
     #[test]
+    fn legacy_refusal_adds_no_recipe_to_an_independent_weak_assertion() {
+        let mut finding = sample_perl_finding();
+        finding.related_tests = vec![row(
+            "assert!(value.is_some())",
+            OracleStrength::Weak,
+            RelatedTestMiss::WeakAssertion,
+        )];
+        let weak_recipe = verdict_changers(&finding, None);
+        assert!(weak_recipe.iter().any(|need| need.contains("exact value")));
+
+        finding.related_tests.push(row(
+            "assert_eq!(value, expected)",
+            OracleStrength::None,
+            RelatedTestMiss::AssertionNotCredited,
+        ));
+        assert_eq!(verdict_changers(&finding, None), weak_recipe);
+    }
+
+    #[test]
     fn unresolved_reach_edge_recipe_does_not_promise_a_direct_call_closes_it() {
         let mut finding = sample_perl_finding();
         finding.class = ExposureClass::NoStaticPath;
@@ -534,19 +568,92 @@ mod tests {
     }
 
     #[test]
-    fn explain_renders_a_next_line_under_each_stop_reason() {
+    fn tests_examined_line_counts_assertions_and_discloses_the_window() {
+        assert_eq!(
+            tests_examined_line(1, 1, 1, 1),
+            "  Tests examined: 1 (1 assertion)\n"
+        );
+        assert_eq!(
+            tests_examined_line(1, 3, 3, 3),
+            "  Tests examined: 1 (3 assertions)\n"
+        );
+        // An assertion-free test keeps one row with no recorded assertion;
+        // that row is not an assertion.
+        assert_eq!(
+            tests_examined_line(1, 0, 1, 1),
+            "  Tests examined: 1 (no assertion recorded)\n"
+        );
+        assert_eq!(
+            tests_examined_line(2, 2, 3, 9),
+            "  Tests examined: 2 listed (2 assertions; showing 3 of 9 matched rows, ripr keeps the most closely related)\n"
+        );
+    }
+
+    /// The finding block's `Stop reasons:` section already renders each
+    /// stop reason with its sentence and Next line; the verdict block must
+    /// not print the list a second time.
+    #[test]
+    fn verdict_block_does_not_repeat_stop_reasons() {
         let mut finding = sample_perl_finding();
         finding.class = ExposureClass::NoStaticPath;
         finding.stop_reasons = vec![StopReason::HelperIdentityUnresolved];
 
         let text = render_verdict_explanation(&finding, None);
+        assert!(!text.contains("Stop reasons"), "{text}");
         assert!(
-            text.contains(&format!(
-                "    Next: {}\n",
-                StopReason::HelperIdentityUnresolved.next_step()
-            )),
+            !text.contains(StopReason::HelperIdentityUnresolved.next_step()),
             "{text}"
         );
+    }
+
+    #[test]
+    fn verdict_recipe_respects_build_script_and_assertion_helper_guidance() {
+        let mut finding = sample_perl_finding();
+        finding.related_tests.clear();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some("Add a test that calls the changed code.".to_string());
+
+        let ordinary = render_verdict_explanation(&finding, Some("main()"));
+        assert!(
+            ordinary.contains("  - call `main()` and assert on its result\n"),
+            "{ordinary}"
+        );
+
+        for (class, step, signature) in [
+            (
+                ExposureClass::NoStaticPath,
+                BUILD_SCRIPT_NO_STATIC_PATH_NEXT_STEP,
+                "main()",
+            ),
+            (
+                ExposureClass::NoStaticPath,
+                ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP,
+                "assert_expected(value: u16)",
+            ),
+            (
+                ExposureClass::ReachableUnrevealed,
+                ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP,
+                "assert_expected(value: u16)",
+            ),
+            (
+                ExposureClass::WeaklyExposed,
+                ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP,
+                "assert_expected(value: u16)",
+            ),
+        ] {
+            finding.class = class;
+            finding.recommended_next_step = Some(step.to_string());
+            let text = render_verdict_explanation(&finding, Some(signature));
+            assert!(text.contains("Why this verdict"), "{text}");
+            assert!(
+                !text.contains("To change the verdict, a test needs to:"),
+                "{text}"
+            );
+            assert_eq!(
+                crate::output::next_step::reconcile_next_step(&finding),
+                step
+            );
+        }
     }
 
     #[test]
@@ -568,6 +675,32 @@ mod tests {
             without_shape.contains("  To change the verdict, a test needs to:\n"),
             "{without_shape}"
         );
+    }
+
+    #[test]
+    fn base_side_finding_gets_no_test_recipe() {
+        // #15271: base-side evidence recommends no test change, so the
+        // verdict block must not ask a test to call deleted code. The same
+        // finding on the candidate side keeps its recipe (the control).
+        use crate::domain::SourceCurrentness;
+        let mut finding = sample_perl_finding();
+        finding.class = ExposureClass::NoStaticPath;
+        finding.recommended_next_step = Some("add a test that calls the owner".to_string());
+        finding.related_tests = Vec::new();
+        let current = render_verdict_explanation(&finding, None);
+        assert!(
+            current.contains("  To change the verdict, a test needs to:\n"),
+            "{current}"
+        );
+        for side in [
+            SourceCurrentness::BaseDeleted,
+            SourceCurrentness::MovedOrRenamed,
+        ] {
+            finding.source_currentness = side;
+            let text = render_verdict_explanation(&finding, None);
+            assert!(!text.contains("To change the verdict"), "{text}");
+            assert!(!text.contains("assert on its result"), "{text}");
+        }
     }
 
     #[test]
@@ -709,7 +842,6 @@ mod tests {
     #[test]
     fn helper_identity_unresolved_explain_uses_domain_describe() {
         let reason = StopReason::HelperIdentityUnresolved;
-        assert_eq!(stop_reason_meaning(&reason), reason.describe());
         assert!(
             reason.describe().contains("workspace function")
                 && reason.describe().contains("not unique"),
@@ -719,10 +851,6 @@ mod tests {
         assert!(
             !reason.describe().contains("probe"),
             "{}",
-            reason.describe()
-        );
-        assert_ne!(
-            stop_reason_meaning(&StopReason::StaticProbeUnknown),
             reason.describe()
         );
     }

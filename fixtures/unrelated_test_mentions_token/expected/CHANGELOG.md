@@ -666,3 +666,58 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (31)
+
+Reason:
+RIPR-SPEC-0219/#14919: an unreferenced changed owner is a test gap on the human surface, matching the agent format
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (32)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (33)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (34)
+
+Reason:
+RIPR-SPEC-0011: an unreferenced new function's no-path gap prints check's repair start (#15926)
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — unrelated_test_mentions_token (35)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless unrelated_test_mentions_token --reason "..."`
+
+Updated:
+- `expected/human.txt`

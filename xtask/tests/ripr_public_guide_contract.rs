@@ -1,5 +1,5 @@
 //! Current repository guides must agree with the candidate's rendered help.
-//! These seven source-checkout audits are deliberately outside the published crate.
+//! The source-checkout audits also cover the lockstep crate publication guide.
 
 #[path = "../../crates/ripr/tests/common/help_contract.rs"]
 mod help_contract;
@@ -151,6 +151,12 @@ fn doc_section(doc: &str, heading: &str) -> Result<String, String> {
         .ok_or_else(|| format!("document has no content for `{heading}`"))
 }
 
+const README_ARCHIVE_CHECK: &str = " && ./ripr-bin/ripr check";
+
+fn readme_first_run_checks_installed_archive(block: &str) -> bool {
+    block.contains("sha256sum -c") && block.ends_with(README_ARCHIVE_CHECK)
+}
+
 /// Keep task ownership and executable entry points aligned without pinning
 /// editorial prose.
 #[test]
@@ -161,9 +167,10 @@ fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     // alternative below it. The block must verify the download and end by
     // inspecting a change.
     let first_run = first_bash_block(ROOT_README)?;
-    if !first_run.contains("sha256sum -c") || !first_run.ends_with(" ripr check") {
+    if !readme_first_run_checks_installed_archive(&first_run) {
         return Err(
-            "README first run must install a checksummed ripr and inspect a change".to_string(),
+            "README first run must verify the archive and inspect a change with the extracted ripr"
+                .to_string(),
         );
     }
     for target in [
@@ -427,34 +434,36 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
     if first_bash_block(changed)? == "ripr check" {
         return Err("a later command must not hide a wrong first-run route".to_string());
     }
-    for (surface, section, expected) in [
-        (
-            "README",
-            doc_section(ROOT_README, "## The first useful run")?,
-            "cargo install ripr ripr check",
-        ),
-        (
-            "Quickstart CLI",
-            doc_section(QUICKSTART_DOC, "## CLI First Hour")?,
-            "ripr check",
-        ),
+    let readme = first_bash_block(&doc_section(ROOT_README, "## The first useful run")?)?;
+    let install = readme
+        .strip_suffix(README_ARCHIVE_CHECK)
+        .ok_or("README negative controls need the guarded extracted command")?;
+    for wrong in [
+        " && ripr check",
+        " ./ripr-bin/ripr check",
+        " && ./ripr-bin/ripr doctor",
+        " && ./ripr-bin/ripr pilot --root .",
+        " && ./ripr-bin/ripr check --base origin/main",
     ] {
-        for command in [
-            "ripr doctor",
-            "ripr pilot --root .",
-            "ripr check --base origin/main",
-        ] {
-            let wrong = section.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
-            if wrong == section {
-                return Err(format!(
-                    "{surface} negative control did not change a command"
-                ));
-            }
-            if first_bash_block(&wrong)? == expected {
-                return Err(format!(
-                    "{surface} first-run guard accepted `{command}` before a later correct example"
-                ));
-            }
+        if readme_first_run_checks_installed_archive(&format!("{install}{wrong}")) {
+            return Err(format!("README first-run guard accepted `{wrong}`"));
+        }
+    }
+
+    let quickstart = doc_section(QUICKSTART_DOC, "## CLI First Hour")?;
+    for command in [
+        "ripr doctor",
+        "ripr pilot --root .",
+        "ripr check --base origin/main",
+    ] {
+        let wrong = quickstart.replacen("\nripr check\n", &format!("\n{command}\n"), 1);
+        if wrong == quickstart {
+            return Err("Quickstart CLI negative control did not change a command".to_string());
+        }
+        if first_bash_block(&wrong)? == "ripr check" {
+            return Err(format!(
+                "Quickstart CLI first-run guard accepted `{command}` before a later correct example"
+            ));
         }
     }
     Ok(())
@@ -821,7 +830,9 @@ fn public_docs_only_pass_flags_the_command_help_lists() -> Result<(), String> {
 }
 
 const PORTABLE_TESTS: &[&str] = &[
+    "help_documentation_links_work_outside_the_source_checkout",
     "pilot_help_describes_limit_summary_without_inventing_a_quote",
+    "agent_setup_help_is_usable_without_repository_docs",
     "init_ci_provider_errors_recover_near_misses",
     "init_ci_provider_valid_preview_keeps_workflow_contract",
     "workflow_help_lists_the_five_governed_identities",
@@ -859,23 +870,51 @@ const PORTABLE_TESTS: &[&str] = &[
     "per_command_help_renders_the_catalog_example",
     "help_all_rejects_trailing_arguments",
     "help_all_flag_pair_is_rejected_outside_check",
+    "help_route_typos_name_the_route_that_works",
 ];
 
+/// The rendered-help harness is a development test: the published package
+/// carries none of `tests/` (#15216). Qualification compiles the same files
+/// standalone against the installed candidate
+/// (`candidate_harness/archive/help_contract.rs`); this compiles them the same
+/// way against the checkout candidate.
 #[test]
-fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Result<(), String> {
-    use ripr_help::{Scratch, compile_portable, extracted_package, require_success, run};
+fn help_harness_stays_out_of_the_package_and_runs_every_case_standalone() -> Result<(), String> {
+    use ripr_help::{
+        Scratch, compile_portable, extracted_package, require_success, run, workspace,
+    };
     let scratch = Scratch::new("packaged-help-contract")?;
-    let package = extracted_package(&scratch.0)?;
+    let extracted = extracted_package(&scratch.0)?;
+    if extracted.join("tests").exists() {
+        return Err(format!(
+            "the published ripr package carries development tests under {}",
+            extracted.join("tests").display()
+        ));
+    }
+    let package = scratch.0.join("help-harness");
+    for relative in [
+        "tests/cli_help_hierarchy.rs",
+        "tests/common/help_contract.rs",
+        "tests/common/help_workspace.rs",
+    ] {
+        let target = package.join(relative);
+        let parent = target
+            .parent()
+            .ok_or_else(|| format!("{relative} has no parent"))?;
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        std::fs::copy(workspace().join("crates/ripr").join(relative), &target)
+            .map_err(|error| format!("copy {relative}: {error}"))?;
+    }
     let executable = scratch
         .0
         .join(format!("help-tests{}", std::env::consts::EXE_SUFFIX));
     require_success(
         compile_portable(&package, &executable)?,
-        "extracted help compile",
+        "standalone help compile",
     )?;
     let mut list = std::process::Command::new(&executable);
     list.arg("--list").current_dir(&scratch.0);
-    let inventory = require_success(run(list)?, "extracted help inventory")?;
+    let inventory = require_success(run(list)?, "standalone help inventory")?;
     let inventory = String::from_utf8(inventory.stdout).map_err(|error| error.to_string())?;
     let actual = inventory
         .lines()
@@ -892,14 +931,14 @@ fn packaged_help_target_runs_every_case_and_rejects_missing_shared_asset() -> Re
     }
     let mut execute = std::process::Command::new(&executable);
     execute.arg("--test-threads=1").current_dir(&scratch.0);
-    let result = require_success(run(execute)?, "extracted help execution")?;
+    let result = require_success(run(execute)?, "standalone help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
     if !text.contains(&format!(
         "test result: ok. {} passed; 0 failed; 0 ignored; 0 measured; 0 filtered out",
         PORTABLE_TESTS.len()
     )) {
         return Err(format!(
-            "extracted target did not run all {} portable cases:\n{text}",
+            "standalone harness did not run all {} portable cases:\n{text}",
             PORTABLE_TESTS.len()
         ));
     }
@@ -1006,4 +1045,69 @@ fn public_leads_ask_the_question_and_qualify_the_test_to_add() -> Result<(), Str
         return Err("an unqualified repair promise passed the lead check".to_string());
     }
     Ok(())
+}
+
+// Keep the fully qualified test selector stable when moving this guide check
+// onto the required docs-only test target (#15796).
+mod publish_rehearsal {
+    mod tests {
+        use std::fs;
+
+        #[test]
+        fn release_guide_binds_to_lockstep_contract_dependency() -> Result<(), String> {
+            let ripr_manifest = fs::read_to_string(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../crates/ripr/Cargo.toml"
+            ))
+            .map_err(|e| format!("read ripr Cargo.toml: {e}"))?;
+            let release_doc =
+                fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/RELEASE.md"))
+                    .map_err(|e| format!("read docs/RELEASE.md: {e}"))?;
+
+            if ripr_manifest.contains("ripr-contract") {
+                // Standalone product dry-run must not appear as an instruction line.
+                for line in release_doc.lines() {
+                    assert_ne!(
+                        line.trim(),
+                        "cargo publish -p ripr --dry-run",
+                        "docs/RELEASE.md must not instruct standalone `cargo publish -p ripr --dry-run`"
+                    );
+                }
+                // Commands must appear as instruction lines, not merely as a
+                // substring of prose: a required command inside a "do not run"
+                // sentence would otherwise satisfy the check.
+                for required in [
+                    "cargo xtask publish-dry-run",
+                    "cargo xtask publish-precheck",
+                    "cargo search ripr-contract",
+                ] {
+                    assert!(
+                        release_doc
+                            .lines()
+                            .any(|line| line.trim_start().starts_with(required)),
+                        "docs/RELEASE.md must give `{required}` as an instruction line, not only mention it"
+                    );
+                }
+                // The real publish runs from the kept stage (#14198), so the guide
+                // must name those exact commands. A prefix match would let the
+                // `ripr-contract` line satisfy the `ripr` requirement.
+                for required in [
+                    "cargo publish --allow-dirty -p ripr-contract",
+                    "cargo publish --allow-dirty -p ripr",
+                ] {
+                    assert!(
+                        release_doc.lines().any(|line| line.trim() == required),
+                        "docs/RELEASE.md must give `{required}` as its own instruction line"
+                    );
+                }
+                for required in ["crates/ripr-contract", "Partial-publication recovery"] {
+                    assert!(
+                        release_doc.contains(required),
+                        "docs/RELEASE.md missing lockstep publication requirement `{required}`"
+                    );
+                }
+            }
+            Ok(())
+        }
+    }
 }

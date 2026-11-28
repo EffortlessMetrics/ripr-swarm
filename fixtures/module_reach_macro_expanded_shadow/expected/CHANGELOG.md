@@ -190,3 +190,48 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — module_reach_macro_expanded_shadow (15)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless module_reach_macro_expanded_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — module_reach_macro_expanded_shadow (16)
+
+Reason:
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless module_reach_macro_expanded_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — module_reach_macro_expanded_shadow (17)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless module_reach_macro_expanded_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — module_reach_macro_expanded_shadow (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless module_reach_macro_expanded_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

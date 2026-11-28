@@ -1,0 +1,1 @@
+crates/ripr/src/cli/commands_agent_support.rs|read agent verify {label} snapshot {} failed: {err}

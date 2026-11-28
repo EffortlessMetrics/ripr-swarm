@@ -843,7 +843,21 @@ fn has_method_segment(text: &str, name: &str) -> bool {
 }
 
 pub(super) fn is_whole_object_equality_assertion(line: &str) -> bool {
-    (line.contains("assert_eq!") || line.contains("assert_ne!")) && line.contains('{')
+    if !(line.contains("assert_eq!") || line.contains("assert_ne!")) || !line.contains('{') {
+        return false;
+    }
+    // Keep the existing whole-object heuristic outside raw literals. Their
+    // contents, including quoted JSON, cannot introduce a struct operand.
+    let mut start = 0;
+    for (open, close, raw) in super::super::mask::string_literal_spans(line) {
+        if raw {
+            if line[start..open].contains('{') {
+                return true;
+            }
+            start = close + 1;
+        }
+    }
+    line[start..].contains('{')
 }
 
 /// RIPR-SPEC-0231 rule 1: `assert_ne!`, `debug_assert_ne!` and any other
@@ -1135,9 +1149,10 @@ fn resolve_pattern_comparison(left: &str, right: &str, not_equal: bool) -> Patte
 
 /// How many negations (`!` prefixes and `.not()` calls) wrap one complete
 /// `matches!` or `assert_matches!` operand, or `None` when the operand is not
-/// such a pattern.
+/// such a pattern. Comments, grouping parentheses and a block holding only the
+/// operand are transparent (`(matches!(..)) /* note */`, `{ matches!(..) }`).
 pub(super) fn pattern_operand_negations(operand: &str) -> Option<usize> {
-    let mut text = unwrap_parentheses(operand.trim());
+    let mut text = transparent_operand(operand);
     let mut negations = 0;
     loop {
         if is_complete_macro_invocation(text, "matches!")
@@ -1146,9 +1161,38 @@ pub(super) fn pattern_operand_negations(operand: &str) -> Option<usize> {
             return Some(negations);
         }
         let rest = text.strip_prefix('!').or_else(|| strip_not_call(text))?;
-        text = unwrap_parentheses(rest.trim());
+        text = transparent_operand(rest);
         negations += 1;
     }
+}
+
+/// `operand` without the comments around it, the parentheses that group it,
+/// or a block that holds only it, repeated until none is left
+/// (`{ (matches!(..)) /* note */ }` is `matches!(..)`; #16290).
+pub(super) fn transparent_operand(operand: &str) -> &str {
+    let mut text = operand.trim();
+    loop {
+        let unwrapped = unwrap_parentheses(without_edge_comments(text));
+        let next = super::bool_operands::unwrap_block(unwrapped).unwrap_or(unwrapped);
+        if next.len() == text.len() {
+            return text;
+        }
+        text = next;
+    }
+}
+
+/// `text` without comments before its first or after its last code byte.
+fn without_edge_comments(text: &str) -> &str {
+    let masked = mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let Some(start) = bytes.iter().position(|byte| !byte.is_ascii_whitespace()) else {
+        return text.trim();
+    };
+    let end = bytes
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map_or(start, |last| last + 1);
+    text.get(start..end).unwrap_or(text).trim()
 }
 
 /// The receiver of a trailing `.not()` call (`std::ops::Not`).
@@ -1695,7 +1739,9 @@ fn result_ufcs_expect_err_start(masked: &str, name_at: usize) -> Option<usize> {
     let mut path_start = type_name_start;
     while path_start > 0 {
         let before = path_start.saturating_sub(2);
-        if before + 2 <= masked.len() && &masked[before..path_start] == "::" {
+        // #14089: compare bytes; `path_start - 2` can fall inside a
+        // three- or four-byte char directly before the type name.
+        if bytes.get(before..path_start) == Some(b"::".as_slice()) {
             let seg_end = before;
             let seg_start = bytes[..seg_end]
                 .iter()
@@ -2884,6 +2930,38 @@ mod expect_err_open_tests {
                 start: 0,
                 open: 11,
                 form: ExpectErrForm::Method,
+            })
+        );
+    }
+
+    /// #14089: a three-byte identifier char right before `Result` put the
+    /// two-byte `::` probe inside that char.
+    #[test]
+    fn ufcs_result_after_a_wide_identifier_char_does_not_slice_inside_it() {
+        // The UFCS anchor starts at `Result`; the wide char is not `::`.
+        assert_eq!(
+            next_expect_err_open("日本Result::expect_err(\"m\")", 0),
+            Some(ExpectErrOpen {
+                start: 6,
+                open: 24,
+                form: ExpectErrForm::ResultUfcs,
+            })
+        );
+        assert_eq!(
+            next_expect_err_open("値Result::expect_err(\"m\")", 0),
+            Some(ExpectErrOpen {
+                start: 3,
+                open: 21,
+                form: ExpectErrForm::ResultUfcs,
+            })
+        );
+        // ASCII control: a full path still anchors at its first segment.
+        assert_eq!(
+            next_expect_err_open("x(std::result::Result::expect_err(r, \"m\"))", 0),
+            Some(ExpectErrOpen {
+                start: 2,
+                open: 33,
+                form: ExpectErrForm::ResultUfcs,
             })
         );
     }

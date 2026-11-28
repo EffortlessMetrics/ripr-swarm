@@ -1,0 +1,1 @@
+crates/ripr/tests/unread_owner_result_field_repair_start.rs|Command::new|2|13700-unread-owner-result-field|Fixture setup runs local git (init/commit) in a temp repository and the built ripr binary (check, repair) against it; no shell or network.

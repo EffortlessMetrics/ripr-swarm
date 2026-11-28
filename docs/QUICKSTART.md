@@ -20,7 +20,7 @@ archive (about a second on Linux). Pick your platform; the
 [release](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0) has
 archives for Linux and macOS on x86-64 and ARM64 and for Windows on x86-64.
 `.github/workflows/first-run-archive.yml` runs exactly these two snippets on
-hosted runners and records the timings (#5311).
+hosted runners when explicitly dispatched and records the timings (#5311).
 
 Linux and macOS (Bash or zsh):
 
@@ -32,9 +32,10 @@ v=0.10.0; case "$(uname -s)-$(uname -m)" in
   *) echo "no prebuilt archive for this platform; install with cargo install ripr or build from source" >&2; exit 1;; esac
 f=ripr-server-v$v-$t.tar.gz
 b=https://github.com/EffortlessMetrics/ripr/releases/download/v$v
-curl -fsSLO $b/$f && curl -fsSLO $b/$f.sha256
-echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
-  && tar xzf $f && export PATH="$PWD:$PATH"   # ./ripr is now first on PATH for this shell
+curl -fsSLO "$b/$f" && curl -fsSLO "$b/$f.sha256" && \
+  echo "$(cat $f.sha256)  $f" | { sha256sum -c - || shasum -a 256 -c -; } \
+  && mkdir ripr-bin && tar xzf $f -C ripr-bin \
+  && export PATH="$PWD/ripr-bin:$PATH"   # ripr-bin/ripr is now first on PATH for this shell
 ```
 
 Windows (PowerShell):
@@ -204,6 +205,11 @@ standalone — it does not chain with `&&`.) To explore a clean repository
 without making a change, use the separate
 [repository exploration](#explore-the-repository) path,
 `ripr pilot --root .`.
+
+To get this advisory check on every commit or push, add the shipped
+[pre-commit hooks](INTEGRATIONS.md#pre-commit-framework) or a
+[lefthook, husky or plain Git hook](INTEGRATIONS.md#lefthook-husky-and-plain-git-hooks).
+Findings exit 0, so a hook never blocks on them.
 
 ### Reference: output mechanics and terms
 
@@ -392,10 +398,12 @@ has a Python marker (`pyproject.toml`, `setup.py`, `setup.cfg`,
 `requirements.txt`, `pytest.ini`, `tox.ini`, or `noxfile.py`) or Python source
 under `src/` or `tests/`. Work from a Python repository on a branch with a
 change to inspect.
+To try it first on a small project with a known gap, use the
+[Python starter example](../examples/python-bulk-discount/README.md).
 
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check
@@ -422,7 +430,9 @@ To enable, add to ripr.toml:
 enabled = ["python"]
 ```
 
-Enable it exactly as printed. Repair routes and evidence limits are in
+Enable it exactly as printed: the block keeps the languages your `ripr.toml`
+already lists, so `enabled = ["rust"]` prints `enabled = ["rust", "python"]`.
+Repair routes and evidence limits are in
 [Known Limits](#known-limits) and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md).
 The repair route is the [shared preview repair route](#python-and-typescript-repair-route)
 below.
@@ -431,16 +441,19 @@ below.
 
 TypeScript analysis is `preview`: its evidence is advisory, not Rust-grade. No
 `ripr.toml` is needed. The CLI auto-enables the preview when the repository root
-has a `tsconfig.json` or `jsconfig.json` (or TypeScript source under `src/` or
+has a `tsconfig.json`, `jsconfig.json`, `deno.json` or `deno.jsonc` (or TypeScript source under `src/` or
 `tests/`), or a package one level down or under `packages/*`, `apps/*`, `libs/*`
 or `libraries/*` has one. JavaScript-led repositories can also qualify through a
-root `package.json` with eligible JavaScript or TypeScript source; see
+`package.json` with eligible JavaScript or TypeScript source, at the root or in
+one of those workspace packages; see
 [language configuration](CONFIGURATION.md#languages) for the full detection
 rules, including mixed Rust repositories and compiled-adapter requirements.
 Work from a TypeScript repository on a branch with a change to inspect.
-First add `/target/ripr/` (or `/target/`) to `.gitignore`: `check`, `pilot` and
-`agent repair` write reports under `target/ripr`, and ignoring it keeps
-`git add -A` from committing them. Then run:
+To try it first on a small project with a known gap, use the
+[TypeScript starter example](../examples/typescript-discount-threshold/README.md).
+`check`, `pilot` and `agent repair` write reports under `target/ripr`. That
+folder ignores itself (ripr puts a `.gitignore` inside it), so `git status`
+stays clean and you do not need to edit your own `.gitignore`. Run:
 
 ```bash
 ripr check
@@ -694,6 +707,9 @@ It also appears when no repairable PR-local gap was selected; read the printed
 
 ## Troubleshooting
 
+The [troubleshooting guide](TROUBLESHOOTING.md) lists each situation by the
+line `ripr` prints. The common ones:
+
 | Symptom | Next step |
 | --- | --- |
 | Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
@@ -748,4 +764,4 @@ and [Language adapters](LANGUAGE_ADAPTER_PREVIEW.md) for supported cases.
 
 [Command guide](COMMAND_HIERARCHY.md) · [Configuration](CONFIGURATION.md) ·
 [Targeted tests](TARGETED_TEST_WORKFLOW.md) · [Output formats](OUTPUT_SCHEMA.md) ·
-[Terminology](TERMINOLOGY.md)
+[Integrations and Git hooks](INTEGRATIONS.md) · [Terminology](TERMINOLOGY.md)

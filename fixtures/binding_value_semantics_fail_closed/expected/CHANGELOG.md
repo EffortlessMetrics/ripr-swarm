@@ -165,3 +165,60 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — binding_value_semantics_fail_closed (14)
+
+Reason:
+RIPR-SPEC-0122: the check digest states each fact once (no Why hint the Analyzer limit line repeats; no stage detail that repeats the missing-evidence line)
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — binding_value_semantics_fail_closed (15)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — binding_value_semantics_fail_closed (16)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — binding_value_semantics_fail_closed (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — binding_value_semantics_fail_closed (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless binding_value_semantics_fail_closed --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

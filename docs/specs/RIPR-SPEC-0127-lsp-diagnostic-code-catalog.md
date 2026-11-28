@@ -101,14 +101,27 @@ constructor that is the single source of truth for that family:
   (`data.kind` `preview_finding_withheld`, message `... not an actionable
   gap`) that names the static class and the owner or changed expression.
   Rows are one per distinct line (findings on the same line aggregate into
-  one row naming their count and classes), and markers plus rows together never
+  one row naming their count and classes). The marker is anchored on the
+  file's first withheld finding, so the row for that line would share its
+  range; it is folded into the marker instead (#15315): one Hint per range,
+  whose text appends `This line: ...` and whose `data.line` carries the row's
+  class, classes and count, and the folded row spends no cap slot. Markers plus rows together never
   exceed the 50 cap (markers are reserved first; rows beyond the remaining cap
   are silent apart from the marker count), are absent in the `full` profile, never use Warning severity, and carry no
   finding id, repair, witness, or `preview_actionability` data.
   These are not analyzer findings or actionable repairs.
 
 The quarantine-withdrawn marker names its cause through `data.reason`, the
-hover and log text, and the workspace-status `staleness_reason`. When a
+hover and log text, and the workspace-status `staleness_reason`. A buffer
+that equals the recorded saved content which the committed snapshot did not
+analyze (the file was saved, or rewritten on disk and reloaded into the
+buffer, after the last analysis) is `saved_content_not_yet_analyzed`
+(#15316), not `buffer_diverges_from_analyzed_saved_content`: its text says
+the saved file changed since ripr last analyzed it and its recovery
+(`data.recovery` `await_analysis_or_refresh`) is the next analysis or
+`ripr.refresh`, never "save the file". A reloaded external rewrite registers
+its buffer change and the implied save as one step, so a push client
+receives one withdrawal marker for that document version. When a
 `didOpen` is refused because the store-wide open-document or retained-text
 limit was reached (#11666), the document is held as an unknown-authority
 placeholder with empty text and the reason is `document_store_limit_reached`,
@@ -138,6 +151,17 @@ requires a server restart. A document already quarantined under another
 reason that then loses authority to the store limit refreshes its marker to
 the new reason without repeating the once-per-episode disclosure. This is a
 static delivery limitation, not a finding, repair, or runtime outcome.
+
+A never-saved document whose path lies outside the session's effective
+analyzed root (#15462) is disclosed with the reason `outside_analyzed_root`
+instead of `no_analyzed_saved_content`, because saving it can never give it
+analyzed saved content in this session. The text names the analyzed root and
+the recovery of opening that file's repository in its own editor window or
+session (`data.recovery` `open_repository_in_own_session`). The mapping happens
+at serve time over the stored reason, so push and pull markers, hover, the log
+line and the workspace-status `staleness_reason` agree; without an effective
+root it fails closed to the stored reason. It changes disclosure only and
+never relaxes withdrawal.
 
 Each catalog entry carries the code identity used today: the stable `code` and
 the deprecated `aliases` that still resolve to it. Compatibility aliases are
@@ -216,9 +240,42 @@ asks for an action that is already underway (#11253):
 - With no committed snapshot and no queued or running attempt, the existing
   "has not analyzed this workspace yet" wording and `ripr.refresh` route stay.
 
-The `ripr-diagnostic-analysis-pending` marker, its result ids and its wire
-shape are unchanged. These are advisory hover words using static vocabulary;
-they make no runtime-outcome or test-sufficiency claim.
+The `ripr-diagnostic-analysis-pending` marker follows the same rule (#14447).
+While no snapshot exists and an attempt is queued or running, the marker says
+"ripr analysis is in progress" and that results replace it when the attempt
+finishes, under recovery `analysis_running`, on push and on both pull paths.
+A push client also gets that route when an unblocked refresh is about to
+start an attempt; a pull client is asked to re-pull once the attempt is
+queued. The marker does not request `ripr.refresh`. When the attempt ends
+without a snapshot and no follow-up attempt starts, the marker returns to
+recovery `save_or_refresh` and its "has not analyzed this workspace yet"
+wording, unless the attempt failed with a recorded failure: then a bare retry
+fails the same way (for example outside a Git work tree, or in a repository
+with no commits), so the marker says "ripr could not analyze this workspace",
+quotes the recorded failure (bounded and path-redacted, as the health status
+carries it), and asks to fix that cause before saving or running
+`ripr.refresh`, under recovery `fix_failure_then_refresh` with
+`data.failure_kind` naming the failure kind. Its result id folds a digest of
+the failure, so a different failure re-renders. Blocked states keep their own
+recovery routes. A pull client is
+asked to re-pull only when the served recovery route changes.
+
+When a snapshot is committed and an attempt then fails because the requested
+base does not resolve (`failure_kind` `base_unresolvable`), the retained
+findings answer an earlier base, so they are withdrawn from service (#15312).
+Push and both pull paths serve the same marker code with `data.state`
+`withdrawn_analysis_failure`, recovery `fix_failure_then_refresh` and
+`data.failure_kind`, saying "previously reported findings are withdrawn" and
+quoting the recorded failure. The withdrawal holds while a retry is queued or
+running and ends when an attempt publishes a snapshot or fails for another
+reason; any other failure kind leaves the retained snapshot in service. A push
+client receives the marker for its tracked documents, and a pull client is
+asked to re-pull.
+
+The marker's code, data kind and state are unchanged; #14447 adds only the
+`analysis_running` recovery and its result id. These are advisory hover
+words using static vocabulary; they make no runtime-outcome or
+test-sufficiency claim.
 
 ## Required Evidence
 
@@ -284,12 +341,35 @@ they make no runtime-outcome or test-sufficiency claim.
   covers production constructors for pending, overflow, and unsupported
   markers: they keep their existing wire recovery ids and resolve to the
   catalog metadata for those families.
+- `analysis_pending_tests.rs::analysis_pending_marker_names_a_running_attempt_instead_of_asking_to_start_one`
+  pins the pull marker's `analysis_running` route while an attempt is queued
+  or running and the return to `save_or_refresh` after a failed state with no
+  recorded failure;
+  `analysis_pending_tests.rs::analysis_pending_marker_names_the_recorded_failure_after_a_failed_attempt`
+  pins the `fix_failure_then_refresh` route, the quoted failure and the
+  per-failure result id;
+  `lsp/tests.rs::framed_push_client_pending_marker_names_the_running_first_analysis`
+  pins the push marker on an unblocked didOpen and its retraction on commit;
+  `lsp/tests.rs::framed_push_client_pending_marker_names_the_failure_after_a_failed_first_analysis`
+  pins the push marker naming the failure after a failed first attempt;
+  `analysis_pending_tests.rs::push_marker_recovery_shows_running_when_a_retry_starts_after_a_failure`
+  pins `analysis_running` on a push save that retries a failed attempt; and
+  `analysis_pending_tests.rs::analysis_pending_blocked_routes_win_over_a_running_attempt`
+  pins blocked routes over a running attempt (#14447).
 - `lsp/tests.rs::hover_without_evidence_states_are_distinct_and_static` and
   the two `backend.rs::pull_disclosure_dedup_tests::no_evidence_hover_*` tests pin the in-progress
   and clean-workspace hover states against their discriminating negatives
   (idle session, snapshot without `no_changed_lines`).
 - The existing LSP diagnostic unit tests continue to pass unchanged, pinning
   the byte-identical emitted code strings for known kinds.
+- `lsp/tests.rs::out_of_root_document_names_the_root_instead_of_save_then_refresh`
+  pins the `outside_analyzed_root` pull marker, result id and workspace-status
+  reason for a file outside the root, against an in-root never-saved file
+  that keeps `save_then_refresh` (#15462).
+- `lsp/tests.rs::non_file_document_keeps_save_then_refresh_outside_a_root`
+  pins that a buffer with no admitted file path (an `untitled:` document)
+  keeps `no_analyzed_saved_content` while a root is set, and that no root
+  keeps the stored reason (#15462).
 
 ## Implementation Mapping
 

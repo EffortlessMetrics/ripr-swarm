@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_path_keyword_affinity/input
 
-Summary: 6 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 1 no test path, 5 unclear. 6 found, 0 suppressed by your settings (1 base-side evidence, not candidate edit targets)
+Summary: 6 changed behaviors checked on 5 candidate lines: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 1 no test path, 5 unclear. 6 found, 0 suppressed by your settings (1 base-side evidence, not candidate edit targets)
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 12 changed line(s), 5 candidate line(s), 6 changed behavior(s) checked, 6 finding(s)
@@ -18,10 +18,9 @@ Start here:
   Related test: tests/other.rs:25 seeds_base
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place
-    this line inside an analyzed Rust function. Add or strengthen a test only if this inspection
-    finds a gap. Compare the original and changed implementations with a focused run using the
-    project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification
-    may remain unknown
+    this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap;
+    compare old and new code with the project's configured test runner (`cargo test` for ordinary
+    Cargo tests). The static class may remain unknown
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · assertion unknown
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -29,7 +28,8 @@ Start here:
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
-      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;
+      both can rest on a test link ripr could not confirm; the reach stage says which;
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers

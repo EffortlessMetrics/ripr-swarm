@@ -249,7 +249,13 @@ pub(crate) fn build_policy_readiness_report(input: PolicyReadinessInput) -> Poli
     let suppression_health = suppression_health_axis(&suppression);
     let calibration_health = calibration_axis(&recommendation, &mutation);
     let preview_evidence_boundary = preview_axis(preview);
-    warnings.extend(suppression_health.warnings.clone());
+    // An invalid suppression-health input already contributed its notice above;
+    // adding the axis copy would count one bad input twice.
+    for notice in &suppression_health.warnings {
+        if !warnings.contains(notice) {
+            warnings.push(notice.clone());
+        }
+    }
     warnings.extend(preview_evidence_boundary.warnings.clone());
 
     // A gate decision that failed evaluation is a config error for
@@ -500,12 +506,27 @@ fn parse_optional_json(
         }
     };
     match serde_json::from_str::<Value>(&text) {
-        Ok(value) => ArtifactParse {
-            label,
-            path,
-            status: ArtifactStatus::Loaded,
-            value: Some(value),
-            notice: None,
+        Ok(value) => match unrecognized_shape(label, &value) {
+            None => ArtifactParse {
+                label,
+                path,
+                status: ArtifactStatus::Loaded,
+                value: Some(value),
+                notice: None,
+            },
+            Some(reason) => ArtifactParse {
+                label,
+                path,
+                status: ArtifactStatus::Invalid,
+                value: None,
+                notice: Some(Notice {
+                    kind: UNRECOGNIZED_INPUT.to_string(),
+                    message: format!(
+                        "{label} input {path_value} is not a {label} artifact: {reason}"
+                    ),
+                    source_artifact: Some(path_value),
+                }),
+            },
         },
         Err(error) => ArtifactParse {
             label,
@@ -519,6 +540,64 @@ fn parse_optional_json(
             }),
         },
     }
+}
+
+/// Notice kinds that mean an explicitly supplied input could not be used.
+const SUPPLIED_INPUT_FAILURES: [&str; 4] = [
+    "missing_supplied_input",
+    "invalid_input",
+    "invalid_json",
+    UNRECOGNIZED_INPUT,
+];
+const UNRECOGNIZED_INPUT: &str = "unrecognized_input";
+
+/// Why a parsed supplied input is not the artifact its flag names, or `None`
+/// when it has that artifact's minimal shape (#14311). A `{}` or `[]` must not
+/// load: every axis reads absent fields as zero, so an empty document would
+/// read as a healthy artifact and promote readiness. Producers that stamp a
+/// `kind` must carry their own; a gate decision carries no `kind`, so it must
+/// carry the `status` and `summary` its axis reads.
+fn unrecognized_shape(label: &str, value: &Value) -> Option<String> {
+    let Some(object) = value.as_object() else {
+        return Some("expected a JSON object".to_string());
+    };
+    if object.is_empty() {
+        return Some("the JSON object is empty".to_string());
+    }
+    let expected_kind = match label {
+        "baseline_delta" => Some("baseline_debt_delta"),
+        "waiver_aging" => Some("waiver_aging"),
+        "suppression_health" => Some("suppression_health"),
+        "previous_readiness" => Some(REPORT_KIND),
+        _ => None,
+    };
+    let kind = object.get("kind").and_then(Value::as_str);
+    if let (Some(expected), Some(kind)) = (expected_kind, kind)
+        && kind != expected
+    {
+        return Some(format!("its kind is `{kind}`, expected `{expected}`"));
+    }
+    if label == "gate_decision"
+        && !(object.get("status").is_some_and(Value::is_string)
+            && object.get("summary").is_some_and(Value::is_object))
+    {
+        return Some(
+            "expected the `status` and `summary` fields that `ripr gate evaluate` writes"
+                .to_string(),
+        );
+    }
+    None
+}
+
+/// The supplied inputs that could not be used, one message each. A non-empty
+/// list means the readiness run could not complete (#14311).
+pub(crate) fn supplied_input_failures(report: &PolicyReadinessReport) -> Vec<String> {
+    report
+        .warnings
+        .iter()
+        .filter(|notice| SUPPLIED_INPUT_FAILURES.contains(&notice.kind.as_str()))
+        .map(|notice| notice.message.clone())
+        .collect()
 }
 
 fn blocking_axis(gate: &ArtifactParse, facts: &GateFacts) -> Axis {

@@ -113,7 +113,7 @@ fn nested_record_declaration_retains_its_unsafe_boundary() -> Result<(), String>
     assert_eq!(shapes.len(), 2);
     let declaration = shapes
         .iter()
-        .find(|shape| !shape.unsafe_boundary)
+        .find(|shape| shape.unsafe_boundary.is_none())
         .ok_or_else(|| "unsafe boundary hid the declaration".to_string())?;
     assert_eq!(declaration.family, ProbeFamily::StaticUnknown);
     assert_eq!(declaration.start_line, 3);
@@ -121,9 +121,9 @@ fn nested_record_declaration_retains_its_unsafe_boundary() -> Result<(), String>
     assert_eq!(declaration.text, "value: u8,");
     let retained = shapes
         .iter()
-        .find(|shape| shape.unsafe_boundary)
+        .find(|shape| shape.unsafe_boundary.is_some())
         .ok_or_else(|| "record field handling erased the unsafe boundary".to_string())?;
-    assert_eq!(retained.start_byte, boundary.start_byte);
+    assert_eq!(retained.start_byte, boundary.start_byte());
     assert_eq!(retained.text, boundary.text);
     let probes = probes_at(source, 3)?;
     assert!(probes.iter().any(|probe| probe.expression == "value: u8,"));

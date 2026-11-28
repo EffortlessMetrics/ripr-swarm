@@ -762,10 +762,12 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         &mut snapshot.owners,
     );
     let module_objects = module_object_bindings(source, &module.body);
+    let module_rebound_names = super::module_constants::module_rebound_names(source, &module.body);
     for owner in snapshot.owners.iter_mut().filter(|owner| {
         owner.class_path.is_empty() && matches!(owner.owner_kind, Some(OwnerKind::Function))
     }) {
         owner.class_facts.module_objects = module_objects.clone();
+        owner.class_facts.module_rebound_names = module_rebound_names.clone();
     }
     mark_rebound_decorators(source, &mut snapshot.owners);
     super::cli_subcommand::mark_cli_subcommands(
@@ -790,11 +792,13 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
             module_values: &module_values,
             standard_unittest_list: false,
             subclassed: false,
+            async_case: false,
             admission: &PythonAdmissionContext::of_module(
                 &module.body,
                 &imports,
                 &dotted_dir(file),
-            ),
+            )
+            .with_swallowing_wrappers(source, &module.body, &imports),
         },
         &mut snapshot.tests,
     );
@@ -839,6 +843,13 @@ fn extract_source_facts_with(file: &Path, source: &str, workspace: bool) -> Pyth
         test.constant_rebinding.header_reach |= header_reach;
     }
     super::oracles::unittest_list::withhold_modified_oracles(&mut snapshot.tests);
+    super::value_helpers::attach_value_helpers(
+        file,
+        written,
+        &module.body,
+        &imports,
+        &mut snapshot.tests,
+    );
     collect_source_facts_from_statements(
         file,
         source,

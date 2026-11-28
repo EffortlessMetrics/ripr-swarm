@@ -3,10 +3,15 @@
 `ripr` is one published package with strong internal module seams.
 
 Repository automation uses unpublished `xtask` and the bounded `repo-policy`
-package introduced by #7158 and extended by #7324. The latter owns only
-workflow-policy, agent-skill and Git-index executable-file checks, with no
-normal/build dependency on `ripr` or its parser stack. Both its
+package introduced by #7158 and extended by #7324/#8198. The latter owns
+workflow-policy, agent-skill, Git-index executable-file checks and the shared
+user-text matcher, with no normal/build dependency on `ripr` or its parser stack.
+Both its
 lightweight front door and the retained xtask commands share that implementation.
+The matcher stays at `xtask/src/policy/user_text.rs` to preserve trusted-base
+source pins and workflow capability discovery. `repo-policy` compiles that shared
+file directly and includes it in executable identity and build invalidation; the
+xtask front door delegates to the package without compiling a second matcher.
 This tooling boundary does not split the published product or add a product API.
 
 ```text

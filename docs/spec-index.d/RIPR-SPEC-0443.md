@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0443](../specs/RIPR-SPEC-0443-branch-local-return-value-grip.md) | accepted | A branch-local `return_value` seam keeps strong grip only when the crediting test's call reaches that branch; a call that takes the other branch withholds credit and moves the seam to `weakly_gripped` (#14496) |

@@ -5,10 +5,6 @@ name: Windows Gate
 # surfaces. Branch-protection promotion to required is a separate owner step.
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches: [main, master]
   workflow_dispatch:
 
 permissions:
@@ -218,7 +214,8 @@ jobs:
                 verdict_pass=false
               fi
             done
-          } | tee target/windows-gate-verdict.md | tee -a "$GITHUB_STEP_SUMMARY"
+          } > target/windows-gate-verdict.md
+          tee -a "$GITHUB_STEP_SUMMARY" < target/windows-gate-verdict.md
           echo "verdict_pass=$verdict_pass" >> "$GITHUB_OUTPUT"
 
       - name: Upload gate subset evidence
@@ -235,6 +232,7 @@ jobs:
             target/gate-subset-clippy.status
             target/windows-gate-verdict.md
           if-no-files-found: ignore
+          retention-days: 14
 
   result:
     name: Ripr Windows Gate Result

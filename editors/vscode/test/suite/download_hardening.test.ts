@@ -456,8 +456,68 @@ suite('VS Code download hardening (#11477 item 5)', () => {
     const good = buildZipCentralDirectory([{ name: 'ripr' }]);
     assert.throws(() => listZipCentralDirectoryEntries(good.subarray(0, good.length - 10)), /not a readable zip|malformed/);
     const wrongCount = buildZipCentralDirectory([{ name: 'ripr' }]);
+    wrongCount.writeUInt16LE(2, wrongCount.length - 22 + 8);
     wrongCount.writeUInt16LE(2, wrongCount.length - 22 + 10);
     assert.throws(() => listZipCentralDirectoryEntries(wrongCount), /expected 2/);
+  });
+
+  test('listZipCentralDirectoryEntries refuses ZIP64, split counts and records that do not end the file', () => {
+    const eocdField = (archive: Buffer, offset: number): number => archive.length - 22 + offset;
+    const withU16 = (offset: number, value: number): Buffer => {
+      const archive = buildZipCentralDirectory([{ name: 'ripr' }]);
+      archive.writeUInt16LE(value, eocdField(archive, offset));
+      return archive;
+    };
+    const withU32 = (offset: number, value: number): Buffer => {
+      const archive = buildZipCentralDirectory([{ name: 'ripr' }]);
+      archive.writeUInt32LE(value, eocdField(archive, offset));
+      return archive;
+    };
+    assert.throws(() => listZipCentralDirectoryEntries(withU16(10, 0xffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU16(8, 0xffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU32(12, 0xffffffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU32(16, 0xffffffff)), /ZIP64/);
+    assert.throws(() => listZipCentralDirectoryEntries(withU16(8, 0)), /multi-disk/);
+    // A central directory that claims to run into the end record.
+    assert.throws(() => listZipCentralDirectoryEntries(withU32(12, 60)), /past the end-of-central-directory/);
+
+    const good = buildZipCentralDirectory([{ name: 'ripr' }]);
+    assert.throws(
+      () => listZipCentralDirectoryEntries(Buffer.concat([good, Buffer.from([0])])),
+      /does not end the file/
+    );
+    // A genuine trailing comment is accepted when its length reaches EOF.
+    const comment = Buffer.from('release ripr');
+    const commented = Buffer.concat([good, comment]);
+    commented.writeUInt16LE(comment.length, good.length - 22 + 20);
+    assert.deepStrictEqual(listZipCentralDirectoryEntries(commented).map((entry) => entry.name), ['ripr']);
+    // A second directory smuggled inside the comment: the last record found is
+    // the smuggled one, and its own comment length does not reach EOF.
+    const hidden = buildZipCentralDirectory([{ name: 'hidden' }]);
+    const tail = Buffer.concat([hidden, Buffer.from('pad')]);
+    const smuggled = Buffer.concat([good, tail]);
+    smuggled.writeUInt16LE(tail.length, good.length - 22 + 20);
+    assert.throws(() => listZipCentralDirectoryEntries(smuggled), /does not end the file/);
+  });
+
+  test('assertSafeZipListing refuses stream, empty and Windows-special member names', () => {
+    assert.doesNotThrow(() => assertSafeZipListing([
+      { name: 'console.txt', externalAttributes: 0 },
+      { name: 'com10', externalAttributes: 0 },
+      { name: 'bin/ripr.exe', externalAttributes: 0 },
+      { name: 'caf\u00e9/', externalAttributes: 0 },
+      { name: './ripr.exe', externalAttributes: 0 },
+      { name: './bin/', externalAttributes: 0 }
+    ]));
+    for (const name of ['', 'ripr.exe:stream', ':stream', 'D:evil.dll']) {
+      assert.throws(() => assertSafeZipListing([{ name, externalAttributes: 0 }]), /unsafe path/, JSON.stringify(name));
+    }
+    for (const name of [
+      '.. /evil', 'ripr.exe.', 'ripr.exe ', '.../x', 'CON', 'dir/aux.txt', 'lpt1', 'NUL.tar.gz',
+      'COM\u00b9', 'lpt\u00b2.log', 'com0', 'LPT0.txt', 'CONIN$', 'CONOUT$', 'con .txt'
+    ]) {
+      assert.throws(() => assertSafeZipListing([{ name, externalAttributes: 0 }]), /unsafe Windows path/, JSON.stringify(name));
+    }
   });
 
   test('inspectZipArchive accepts a safe fabricated zip and refuses a symlink member', async () => {

@@ -563,3 +563,37 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — strong_boundary_oracle (28)
+
+Reason:
+RIPR-SPEC-0122: the all-clear Start here says no test gap was found and that nothing is needed (#14080); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless strong_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — strong_boundary_oracle (29)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless strong_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — strong_boundary_oracle (30)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless strong_boundary_oracle --reason "..."`
+
+Updated:
+- `expected/human.txt`

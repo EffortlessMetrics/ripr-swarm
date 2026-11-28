@@ -434,6 +434,12 @@ pub(crate) fn typescript_target_assertion_shape_with_boundary_facts(
     boundary_input: Option<&TypeScriptBoundaryInputFact>,
     boundary_parameters: Option<&TypeScriptBoundaryParametersFact>,
 ) -> TargetAssertionShape {
+    // #16458: a wrapper around the owner call (`Math.max(owner(100), 100)`)
+    // is the observation the classifier refused as a discriminator; a packet
+    // repeating it would hand an agent the same non-discriminating shape.
+    // Project from the wrapped direct owner call instead.
+    let unwrapped = wrapped_owner_call_argument(observed, owner_name);
+    let observed = unwrapped.as_deref().unwrap_or(observed);
     let expected_clause = match family {
         crate::domain::ProbeFamily::ErrorPath => ".toThrow(expected)",
         _ => ".toBe(expected)",
@@ -641,6 +647,20 @@ fn parse_static_call_expression(expr: &str) -> Option<StaticCall> {
     Some(StaticCall {
         callee: callee.to_string(),
         args,
+    })
+}
+
+/// The first argument of a non-owner call that is itself one direct owner
+/// call (#16458): `owner(100)` for `Math.max(owner(100), 100)`. `None` when
+/// `observed` is not a call, already calls the owner, or wraps no owner call.
+fn wrapped_owner_call_argument(observed: &str, owner_name: Option<&str>) -> Option<String> {
+    let call = parse_static_call_expression(observed)?;
+    if call_callee_is_owner(&call.callee, owner_name) {
+        return None;
+    }
+    call.args.into_iter().find(|argument| {
+        parse_static_call_expression(argument)
+            .is_some_and(|inner| call_callee_is_owner(&inner.callee, owner_name))
     })
 }
 
@@ -1227,7 +1247,8 @@ fn thrown_error_variant(discriminator: &str) -> Option<String> {
 /// that shape. A bare throw check carries no `typescript_oracle_expected`,
 /// but for an error-path change the missing discriminator itself names the
 /// thrown variant, so the repair target is concrete without borrowing an
-/// expected value from another assertion.
+/// expected value from another assertion. For the generic `Error` class the
+/// target is the plain literal message instead (see `thrown_error_message`).
 fn bare_throw_variant_target(
     finding: &Finding,
     related_test: &crate::domain::RelatedTest,
@@ -1242,7 +1263,61 @@ fn bare_throw_variant_target(
         return None;
     }
     let discriminator = &finding.activation.missing_discriminators.first()?.value;
-    thrown_error_variant(discriminator)
+    thrown_error_variant(discriminator).or_else(|| {
+        thrown_error_message(
+            discriminator,
+            &finding.probe.expression,
+            evidence_value(finding, "typescript_error_message_pin: "),
+        )
+    })
+}
+
+/// The quoted message literal a bare `toThrow()` can be strengthened to pin
+/// when the throws discriminator names the generic `Error` class with a
+/// literal message (`throws Error matching 'division by zero'`).
+///
+/// `toThrow(Error)` cannot discriminate, but `toThrow('<message>')` checks the
+/// thrown message, which the changed `new Error('<message>')` fixes. The
+/// discriminator's literal is only the first quoted string on the changed
+/// line, so the changed line itself must be exactly `throw new Error('<message>')`
+/// with that one literal as the whole argument: a lookup key
+/// (`new Error(t('key'))`), a ternary or a `||` fallback would pin a string
+/// the error may not carry. The message must be plain text (letters, digits,
+/// spaces and `_ - , . :`) with a word of at least three letters, so the
+/// emitted string needs no escaping and a substring match on it is not
+/// trivially satisfied. The analyzer's `typescript_error_message_pin` fact
+/// must name the same message: it is emitted only at the owner's sole throw
+/// site and only when the old side cannot satisfy the same substring check
+/// (a pure addition, or an old message that does not contain the new one).
+/// Anything else stays `None`.
+fn thrown_error_message(
+    discriminator: &str,
+    changed_line: &str,
+    pinned: Option<&str>,
+) -> Option<String> {
+    let rest = discriminator
+        .trim()
+        .strip_prefix("throws Error matching ")?;
+    let quote = rest.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+    let body = rest.strip_prefix(quote)?.strip_suffix(quote)?;
+    let plain =
+        |c: char| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '-' | ',' | '.' | ':');
+    let has_word = body
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .any(|word| word.len() >= 3);
+    if !has_word || body.len() > 120 || !body.chars().all(plain) {
+        return None;
+    }
+    let statement = changed_line.trim();
+    let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
+    let argument = statement
+        .strip_prefix("throw new Error(")?
+        .strip_suffix(')')?
+        .trim();
+    if argument != format!("{quote}{body}{quote}") || pinned != Some(body) {
+        return None;
+    }
+    Some(format!("'{body}'"))
 }
 
 /// Project a TypeScript preview finding into a `GapRecord` for validator
@@ -1442,6 +1517,12 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
     {
         stop_conditions.push(boundary_stop);
     }
+    if bare_variant.is_some() {
+        stop_conditions.push(
+            "Stop if the observed call throws from a different `throw` than the changed one."
+                .to_string(),
+        );
+    }
 
     let repair_route = GapRepairRoute {
         route_kind: route_kind.to_string(),
@@ -1536,6 +1617,7 @@ pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> 
         authority_boundary: TS_AUTHORITY_BOUNDARY.to_string(),
         typescript_package_root: evidence_value(finding, "typescript_package_root: ")
             .map(ToString::to_string),
+        verify_cwd: None,
     };
     // Receipt command (RIPR-SPEC-0079 `canonical_receipt_command` field rule):
     // the canonical `ripr receipt write …` form built by the shared receipt-write
@@ -1630,14 +1712,26 @@ pub(crate) fn typescript_dynamic_assertion_blocker(finding: &Finding) -> Option<
             "typescript_limitation_sample: typescript_dynamic_assertion_unresolved at ",
         )
     })?;
-    let matcher = finding.evidence.iter().find_map(|line| {
-        let why = line.strip_prefix(
+    let why = finding.evidence.iter().find_map(|line| {
+        line.strip_prefix(
             "typescript_limitation_why: typescript_dynamic_assertion_unresolved \u{2014} the matcher `.",
-        )?;
-        why.split_once("(...)`").map(|(name, _)| name.to_string())
+        )
     });
+    let matcher = why.and_then(|why| why.split_once("(...)`"));
     Some(match matcher {
-        Some(name) => format!(
+        Some((name, rest)) if rest.starts_with(" expects `undefined`") => format!(
+            "ripr cannot tell whether the test at `{}` covers this change: its `.{name}(...)` expects `undefined`, which ripr does not read as a fixed expected value",
+            sample.trim()
+        ),
+        Some((name, rest))
+            if rest.starts_with(" receives an object or array literal that contains variables") =>
+        {
+            format!(
+                "ripr cannot tell whether the test at `{}` covers this change: its `.{name}(...)` expects an object or array literal that contains variables, so the expected value is not fixed",
+                sample.trim()
+            )
+        }
+        Some((name, _)) => format!(
             "ripr cannot tell whether the test at `{}` covers this change: its `.{name}(...)` compares against a variable or computed value, not a literal",
             sample.trim()
         ),
@@ -1743,6 +1837,7 @@ pub(crate) mod tests {
             id: "probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_discount.ts:typescript_preview:a1b2c3d4".to_string()),
                 location: SourceLocation::new("src/discount.ts", 3, 1),
                 owner: Some(SymbolId(
@@ -2149,21 +2244,141 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// A bare `toThrow()` on a generic `Error` with a literal message pins
+    /// that message: `toThrow(Error)` could not discriminate, but the message
+    /// the change fixes can (repair-start set, `typescript/panic-guard`).
+    #[test]
+    fn bare_tothrow_generic_error_message_projects_a_message_packet() -> Result<(), String> {
+        for (discriminator, line, expected) in [
+            (
+                "throws Error matching 'division by zero'",
+                "    throw new Error('division by zero');",
+                "expect(() => parse('abcdefghijklmnop')).toThrow('division by zero')",
+            ),
+            (
+                "throws Error matching \"too long\"",
+                "throw new Error(\"too long\")",
+                "expect(() => parse('abcdefghijklmnop')).toThrow('too long')",
+            ),
+        ] {
+            let mut finding = bare_throw_finding(discriminator);
+            finding.probe.expression = line.to_string();
+            let message = line
+                .split(['\'', '"'])
+                .nth(1)
+                .ok_or("fixture line must quote its message")?;
+            finding
+                .evidence
+                .push(format!("typescript_error_message_pin: {message}"));
+            let record = typescript_gap_record_for(&finding)
+                .ok_or(format!("`{discriminator}` must project a record"))?;
+            validate_agent_gap_record_packet(&record)?;
+            let route = record
+                .repair_route
+                .as_ref()
+                .ok_or("record must carry a repair route")?;
+            let shape = route.assertion_shape.as_deref().unwrap_or_default();
+            if shape != expected {
+                return Err(format!(
+                    "`{discriminator}` shape must pin the message: {shape}"
+                ));
+            }
+            if !route
+                .stop_conditions
+                .iter()
+                .any(|stop| stop.contains("different `throw`"))
+            {
+                return Err(format!("`{discriminator}` must carry the other-throw stop"));
+            }
+        }
+        Ok(())
+    }
+
     /// #12953 negative controls: a discriminator that names no specific
-    /// variant (generic `Error`, or a message with no class) still projects
-    /// no record, so the shared validator is never reached with a packet
-    /// whose `toThrow(...)` edit could not discriminate the change.
+    /// variant and no plain literal message (generic `Error` alone, a
+    /// lowercase class, or a message that would need escaping, could be read
+    /// as a template, or is too short to pin anything) still projects no
+    /// record, so the shared validator is never reached with a packet whose
+    /// `toThrow(...)` edit could not discriminate the change.
     #[test]
     fn bare_tothrow_without_a_specific_variant_stays_not_ready() {
         for discriminator in [
             "throws Error",
-            "throws Error matching \"too long\"",
+            "throws Error matching",
+            "throws Error matching ''",
+            "throws Error matching \"   \"",
+            "throws Error matching 'a'",
+            "throws Error matching 'e1 x2'",
             "throws error matching \"too long\"",
+            "throws Error matching 'it\\'s gone'",
+            "throws Error matching 'don't'",
+            "throws Error matching 'bad ${value}'",
+            "throws Error matching \"too long'",
+            "throws Error matching /too long/",
+            "throws Error matching `too long`",
+            "throws Error matching 'too long' extra",
         ] {
-            let finding = bare_throw_finding(discriminator);
+            let mut finding = bare_throw_finding(discriminator);
+            finding.probe.expression = format!(
+                "throw new Error({})",
+                discriminator.trim_start_matches("throws Error matching ")
+            );
+            // The analyzer pin names the same text, so only the message rules
+            // themselves can refuse these.
+            let tail = discriminator.trim_start_matches("throws Error matching ");
+            finding.evidence.push(format!(
+                "typescript_error_message_pin: {}",
+                tail.trim_matches(|c| c == '\'' || c == '"')
+            ));
             assert!(
                 typescript_gap_record_for(&finding).is_none(),
                 "`{discriminator}` must project no record"
+            );
+        }
+    }
+
+    /// The discriminator's literal is only the first string on the changed
+    /// line. Unless that literal is the whole `new Error(...)` argument, the
+    /// error may carry a different message, so no message packet projects.
+    #[test]
+    fn bare_tothrow_message_needs_the_analyzer_pin_fact() {
+        for pin in [None, Some("division by"), Some("division by zero occurred")] {
+            let mut finding = bare_throw_finding("throws Error matching 'division by zero'");
+            finding.probe.expression = "throw new Error('division by zero');".to_string();
+            if let Some(pin) = pin {
+                finding
+                    .evidence
+                    .push(format!("typescript_error_message_pin: {pin}"));
+            }
+            assert!(
+                typescript_gap_record_for(&finding).is_none(),
+                "pin {pin:?} must project no message record"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_tothrow_message_must_be_the_whole_error_argument() {
+        for line in [
+            "throw new Error(t('too long'));",
+            "throw new Error(MESSAGES['too long']);",
+            "throw new Error(strict ? 'too long' : 'too short');",
+            "throw new Error(detail || 'too long');",
+            "throw new Error('too long' + suffix);",
+            "throw new Error('too long', { cause });",
+            "throw new RangeError('too long');",
+            "throw makeError('too long');",
+            "reject(new Error('too long'));",
+            "",
+        ] {
+            let mut finding = bare_throw_finding("throws Error matching 'too long'");
+            finding.probe.expression = line.to_string();
+            finding
+                .evidence
+                .push("typescript_error_message_pin: too long".to_string());
+            assert!(
+                typescript_gap_record_for(&finding).is_none(),
+                "`{line}` must project no message record"
             );
         }
     }
@@ -2672,6 +2887,49 @@ pub(crate) mod tests {
             shape,
             TargetAssertionShape::Observed {
                 shape: "expect(limit(3)).toBe(expected)".to_string(),
+            }
+        );
+    }
+
+    /// #16458: the classifier refuses a wrapper around the owner call as a
+    /// discriminator, so the packet projects the wrapped direct owner call
+    /// rather than repeating the wrapper. A call with no owner inside keeps
+    /// its observed shape.
+    #[test]
+    fn target_shape_unwraps_a_wrapper_around_the_owner_call() {
+        let hit = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "Math.max(limit(3), 3)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
+        assert_eq!(
+            hit,
+            TargetAssertionShape::Observed {
+                shape: "expect(limit(3)).toBe(expected)".to_string(),
+            }
+        );
+        let miss = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "Math.max(limit(5), 3)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
+        assert!(
+            matches!(&miss, TargetAssertionShape::Unreachable { observed_call, .. } if observed_call == "limit(5)"),
+            "{miss:?}"
+        );
+        assert!(!miss.shape().contains("Math.max"), "{miss:?}");
+        let unrelated = typescript_target_assertion_shape(
+            &ProbeFamily::Predicate,
+            "format(total)",
+            Some("amount == 3"),
+            Some("limit"),
+        );
+        assert_eq!(
+            unrelated,
+            TargetAssertionShape::Observed {
+                shape: "expect(format(total)).toBe(expected)".to_string(),
             }
         );
     }

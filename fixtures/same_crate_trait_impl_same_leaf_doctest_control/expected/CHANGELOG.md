@@ -180,3 +180,48 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — same_crate_trait_impl_same_leaf_doctest_control (15)
+
+Reason:
+RIPR-SPEC-0108: a doctest in io/take.rs shares only the leaf file name with the changed stream/take.rs, so it is no longer related as same_test_file (#7527)
+
+Command:
+`cargo xtask goldens bless same_crate_trait_impl_same_leaf_doctest_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — same_crate_trait_impl_same_leaf_doctest_control (16)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless same_crate_trait_impl_same_leaf_doctest_control --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — same_crate_trait_impl_same_leaf_doctest_control (17)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless same_crate_trait_impl_same_leaf_doctest_control --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — same_crate_trait_impl_same_leaf_doctest_control (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless same_crate_trait_impl_same_leaf_doctest_control --reason "..."`
+
+Updated:
+- `expected/human.txt`

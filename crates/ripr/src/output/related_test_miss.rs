@@ -89,10 +89,16 @@ pub(crate) fn related_test_miss_reason(test: &RelatedTest, family: &ProbeFamily)
             "assertion not credited: ripr could not establish that this assertion counts here"
                 .to_string()
         }
-        RelatedTestMiss::AssertionInert => {
-            "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
-                .to_string()
-        }
+        // #15337: the Rust producer names the construct the assertion sits
+        // in when every refusal of the row agrees on it.
+        RelatedTestMiss::AssertionInert => match &test.miss_support {
+            Some(support) => format!(
+                "assertion inert: this test's assertion is inside {}",
+                one_line(&support.value)
+            ),
+            None => "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+                .to_string(),
+        },
         RelatedTestMiss::AssertionAdmissionUnproven => {
             "assertion admission unproven: ripr could not establish that this assertion counts here"
                 .to_string()
@@ -376,6 +382,7 @@ mod tests {
 
         fn stage(state: StageState) -> StageEvidence {
             StageEvidence {
+                static_limit_kind: None,
                 state,
                 confidence: Confidence::Low,
                 summary: String::new(),
@@ -389,6 +396,7 @@ mod tests {
                 id: "probe:src/a.ts:typescript_preview:deadbeef".to_string(),
                 canonical_gap: None,
                 probe: Probe {
+                    before_condition: None,
                     id: ProbeId("probe:src/a.ts:typescript_preview:deadbeef".to_string()),
                     family,
                     delta: DeltaKind::Control,
@@ -506,6 +514,7 @@ mod tests {
 
         fn stage(state: StageState) -> StageEvidence {
             StageEvidence {
+                static_limit_kind: None,
                 state,
                 confidence: Confidence::Low,
                 summary: String::new(),
@@ -527,6 +536,7 @@ mod tests {
             id: "probe:src/discount.ts:typescript_preview:2396aec1".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId(
                     "probe:src/discount.ts:typescript_preview:2396aec1".to_string(),
                 ),
@@ -740,6 +750,66 @@ mod tests {
         );
     }
 
+    /// #14483: the headline anchor is the first row of the best observation
+    /// tier. A listed-first row that cannot observe the change gives way to
+    /// one that can, a `no_call_path` row ranks below both, and a Python
+    /// changed-file stamp never pulls the headline back to a row of a worse
+    /// tier.
+    #[test]
+    fn headline_anchors_on_the_first_row_that_can_observe_the_change() {
+        let mut rows = vec![
+            python_row("tests/test_a.py", "a", 1),
+            python_row("tests/test_b.py", "b", 2),
+            python_row("tests/test_c.py", "c", 3),
+        ];
+        rows[0].miss = Some(RelatedTestMiss::NoCallPath);
+        rows[1].miss = Some(RelatedTestMiss::AssertionNotObserving);
+        let mut rust = python_finding(rows.clone(), Vec::new());
+        rust.language = Some(LanguageId::Rust);
+        assert_eq!(
+            headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
+            Some("c")
+        );
+        // The tier reads only the recorded miss, never the relation: a row
+        // linked by file location may still reach the owner through a helper.
+        // `no_assertion` ranks with the observing rows (a reaching test is
+        // where the missing assertion goes), ahead of `assertion_not_observing`.
+        let mut located = rust.clone();
+        located.related_tests[1].relation_reason = Some(RelationReason::SameTestFile);
+        located.related_tests[1].miss = Some(RelatedTestMiss::NoAssertion);
+        located.related_tests[2].miss = Some(RelatedTestMiss::AssertionNotObserving);
+        assert_eq!(
+            headline_related_test_for_finding(&located).map(|t| t.name.as_str()),
+            Some("b")
+        );
+        // An unknown-edge miss ranks with the observing rows too.
+        let mut unknown = rust.clone();
+        unknown.related_tests[2].miss = Some(RelatedTestMiss::ObservationUnconfirmed);
+        assert_eq!(
+            headline_related_test_for_finding(&unknown).map(|t| t.name.as_str()),
+            Some("c")
+        );
+        rust.related_tests.truncate(2);
+        assert_eq!(
+            headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
+            Some("b")
+        );
+        let stamped = python_finding(rows.clone(), vec![changed_stamp("tests/test_b.py", 2)]);
+        assert_eq!(
+            headline_related_test_for_finding(&stamped).map(|t| t.name.as_str()),
+            Some("c")
+        );
+        // Control: with no recorded miss the listed-first row leads again.
+        for row in &mut rows {
+            row.miss = None;
+        }
+        rust.related_tests = rows;
+        assert_eq!(
+            headline_related_test_for_finding(&rust).map(|t| t.name.as_str()),
+            Some("a")
+        );
+    }
+
     fn support(value: &str) -> RelatedTestMissSupport {
         RelatedTestMissSupport {
             value: value.to_string(),
@@ -761,6 +831,36 @@ mod tests {
 
     fn reason(test: &RelatedTest, family: &ProbeFamily) -> Option<String> {
         related_test_miss_reason(test, family)
+    }
+
+    #[test]
+    fn an_inert_row_names_its_construct_only_from_its_own_support() {
+        let family = ProbeFamily::ReturnValue;
+        assert_eq!(
+            reason(
+                &row_named(
+                    "loops",
+                    RelatedTestMiss::AssertionInert,
+                    Some(support("a `for` loop, which may run zero times")),
+                ),
+                &family,
+            )
+            .as_deref(),
+            Some(
+                "assertion inert: this test's assertion is inside a `for` loop, which may run zero times"
+            )
+        );
+        // Without row-owned support the generic sentence stays.
+        assert_eq!(
+            reason(
+                &row_named("loops", RelatedTestMiss::AssertionInert, None),
+                &family
+            )
+            .as_deref(),
+            Some(
+                "assertion inert: this test's assertion has a shape that can keep it from running as a standard check here"
+            )
+        );
     }
 
     #[test]

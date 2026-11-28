@@ -25,47 +25,56 @@ function launcherManifest(overrides = {}) {
   return { ...structuredClone(manifest), ...overrides };
 }
 
-function platformRow(packageName = "@effortlessmetrics/ripr-linux-x64-gnu") {
+function platformRow(
+  packageName = process.platform === "win32"
+    ? "@effortlessmetrics/ripr-win32-x64-msvc"
+    : "@effortlessmetrics/ripr-linux-x64-gnu",
+) {
   return manifest.ripr.platforms.find((entry) => entry.package === packageName);
 }
 
 function nativeFixture(options = {}) {
   const root = fixtureRoot("native");
-  const launcherRoot = path.join(root, "launcher");
-  const selected = options.selected || platformRow();
-  writeJson(path.join(launcherRoot, "package.json"), manifest);
-  fs.mkdirSync(path.join(launcherRoot, "bin"), { recursive: true });
-  fs.mkdirSync(path.join(launcherRoot, "lib"), { recursive: true });
-  fs.copyFileSync(path.join(__dirname, "..", "bin", "ripr.cjs"), path.join(launcherRoot, "bin", "ripr.cjs"));
-  fs.copyFileSync(path.join(__dirname, "..", "lib", "launcher.cjs"), path.join(launcherRoot, "lib", "launcher.cjs"));
-  fs.chmodSync(path.join(launcherRoot, "bin", "ripr.cjs"), 0o755);
-  const packageRoot = path.join(launcherRoot, "node_modules", ...selected.package.split("/"));
-  const executableRelative = options.executable || selected.executable;
-  writeJson(path.join(packageRoot, "package.json"), {
-    name: options.name || selected.package,
-    version: options.version || manifest.version,
-    riprNative: {
-      schemaVersion: 1,
-      product: "ripr",
-      target: options.target || selected.rustTarget,
-      executable: executableRelative,
-    },
-  });
-  if (options.createExecutable !== false) {
-    const executablePath = path.join(packageRoot, ...executableRelative.split("/"));
-    fs.mkdirSync(path.dirname(executablePath), { recursive: true });
-    if (options.executableKind === "directory") {
-      fs.mkdirSync(executablePath);
-    } else if (options.executableKind === "symlink") {
-      const target = path.join(root, "outside");
-      fs.writeFileSync(target, "outside");
-      fs.symlinkSync(target, executablePath);
-    } else {
-      fs.copyFileSync(process.execPath, executablePath);
-      fs.chmodSync(executablePath, options.mode === undefined ? 0o755 : options.mode);
+  try {
+    const launcherRoot = path.join(root, "launcher");
+    const selected = options.selected || platformRow();
+    writeJson(path.join(launcherRoot, "package.json"), manifest);
+    fs.mkdirSync(path.join(launcherRoot, "bin"), { recursive: true });
+    fs.mkdirSync(path.join(launcherRoot, "lib"), { recursive: true });
+    fs.copyFileSync(path.join(__dirname, "..", "bin", "ripr.cjs"), path.join(launcherRoot, "bin", "ripr.cjs"));
+    fs.copyFileSync(path.join(__dirname, "..", "lib", "launcher.cjs"), path.join(launcherRoot, "lib", "launcher.cjs"));
+    fs.chmodSync(path.join(launcherRoot, "bin", "ripr.cjs"), 0o755);
+    const packageRoot = path.join(launcherRoot, "node_modules", ...selected.package.split("/"));
+    const executableRelative = options.executable || selected.executable;
+    writeJson(path.join(packageRoot, "package.json"), {
+      name: options.name || selected.package,
+      version: options.version || manifest.version,
+      riprNative: {
+        schemaVersion: 1,
+        product: "ripr",
+        target: options.target || selected.rustTarget,
+        executable: executableRelative,
+      },
+    });
+    if (options.createExecutable !== false) {
+      const executablePath = path.join(packageRoot, ...executableRelative.split("/"));
+      fs.mkdirSync(path.dirname(executablePath), { recursive: true });
+      if (options.executableKind === "directory") {
+        fs.mkdirSync(executablePath);
+      } else if (options.executableKind === "symlink") {
+        const target = path.join(root, "outside");
+        fs.writeFileSync(target, "outside");
+        fs.symlinkSync(target, executablePath);
+      } else {
+        fs.copyFileSync(process.execPath, executablePath);
+        fs.chmodSync(executablePath, options.mode === undefined ? 0o755 : options.mode);
+      }
     }
+    return { root, launcherRoot, selected, packageRoot };
+  } catch (error) {
+    cleanup(root);
+    throw error;
   }
-  return { root, launcherRoot, selected, packageRoot };
 }
 
 function cleanup(root) {
@@ -225,6 +234,30 @@ test("detects glibc and rejects musl or unknown Linux libc", () => {
     launcher.selectPlatform(contract.platforms, { platform: "linux", arch: "x64", libc: "glibc" }).rustTarget,
     "x86_64-unknown-linux-gnu",
   );
+  assert.equal(
+    launcher.selectPlatform(contract.platforms, { platform: "win32", arch: "arm64" }).rustTarget,
+    "x86_64-pc-windows-msvc",
+  );
+  const missingFixture = nativeFixture({ createExecutable: false });
+  try {
+    assert.throws(
+      () =>
+        launcher.resolveNativeExecutable({
+          launcherRoot: missingFixture.launcherRoot,
+          platformOptions: { platform: "win32", arch: "arm64" },
+          resolver: {
+            resolve: () => {
+              throw Object.assign(new Error("Cannot find module"), { code: "MODULE_NOT_FOUND" });
+            },
+          },
+        }),
+      (error) =>
+        error.code === "native_package_missing" &&
+        error.message.includes("with --cpu=x64 and optional dependencies enabled"),
+    );
+  } finally {
+    cleanup(missingFixture.root);
+  }
   assert.throws(() => launcher.selectPlatform(contract.platforms, { platform: "linux", arch: "x64", libc: "musl" }), {
     code: "platform_unsupported",
   });
@@ -397,7 +430,15 @@ test("rejects missing, wrong-version, wrong-target, traversal, symlink, director
     ["symlink", { executableKind: "symlink" }, "native_executable_symlink"],
     ["directory", { executableKind: "directory" }, "native_executable_not_file"],
   ]) {
-    const fixture = nativeFixture(options);
+    let fixture;
+    try {
+      fixture = nativeFixture(options);
+    } catch (error) {
+      if (name === "symlink" && process.platform === "win32" && error && error.code === "EPERM") {
+        continue;
+      }
+      throw error;
+    }
     try {
       assert.throws(
         () => launcher.resolveNativeExecutable({ launcherRoot: fixture.launcherRoot, selectedPlatform: fixture.selected }),
@@ -511,7 +552,7 @@ test("public bin simulated unsupported platforms fail without reinstall advice o
       ["linux", "x64", { sharedObjects: ["/lib/ld-musl-x86_64.so.1"] }, "unsupported Linux libc musl; this release provides glibc payloads only"],
       ["linux", "x64", { header: {}, sharedObjects: [] }, "unsupported Linux libc unknown; this release provides glibc payloads only"],
       ["freebsd", "x64", {}, "unsupported platform freebsd/x64/none"],
-      ["win32", "arm64", {}, "unsupported platform win32/arm64/none"],
+      ["win32", "ia32", {}, "unsupported platform win32/ia32/none"],
       ["linux", "riscv64", { header: { glibcVersionRuntime: "2.36" } }, "unsupported platform linux/riscv64/glibc"],
     ]) {
       fs.writeFileSync(preload,

@@ -207,3 +207,38 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — selector_swap_try_not_error_path (17)
+
+Reason:
+RIPR-SPEC-0003: the unknown-class next-step hedge is shorter and keeps its runner and may-remain-unknown caveats (#14308)
+
+Command:
+`cargo xtask goldens bless selector_swap_try_not_error_path --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — selector_swap_try_not_error_path (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless selector_swap_try_not_error_path --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — selector_swap_try_not_error_path (19)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless selector_swap_try_not_error_path --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

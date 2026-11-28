@@ -1,0 +1,9 @@
+diff --git a/shop/app.py b/shop/app.py
+--- a/shop/app.py
++++ b/shop/app.py
+@@ -5,4 +5,4 @@
+ 
+ @app.get("/price")
+ def price():
+-    return {"openapi": "3.0.0", "count": 3}
++    return {"openapi": "3.1.0", "count": 3}

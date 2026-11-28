@@ -17,8 +17,7 @@
 
 use super::gaps::{GapItem, RepairFixSite};
 use super::workspace::{
-    AttemptFailure, CODE_ITEM_NOT_FOUND, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession,
-    bounded_document,
+    AttemptFailure, RECOVERY_REPAIR_TOO_LARGE, WorkspaceSession, bounded_document,
 };
 use crate::app::repair_attempt::{
     AttemptTerminalReceipt, RepairAttemptInventoryEntry, RepairAttemptState,
@@ -399,8 +398,11 @@ fn durable_attempt_document(
         limitations.insert(0, limitation);
     }
     limitations.extend(route_limitations);
+    if let Some(limitation) = route_projection_limitation(&command_routes) {
+        limitations.push(limitation.to_string());
+    }
     if let Some(limitation) =
-        crate::app::agent_status::focused_receipt_recovery_limitation(manifest)
+        crate::app::agent_status::focused_receipt_recovery_limitation(root, manifest)
     {
         limitations.push(limitation.to_string());
     }
@@ -411,7 +413,7 @@ fn durable_attempt_document(
     limitations.push("ordinary next-action displays bind the portable root `.` and are presentation only; the host-local root path is intentionally not projected and a display is never execution authority; trust-bound or store-qualified continuations keep their persisted advanced spelling".to_string());
     // #8766: a restart the shared repair gate refuses is named as by-hand work.
     limitations.extend(selected.restart_withheld.clone());
-    json!({
+    let mut document = json!({
         "schema_version": REPAIR_ATTEMPT_SCHEMA_VERSION,
         "attempt_id": manifest.repair_attempt_id.as_str(),
         "origin": "durable_store",
@@ -445,21 +447,31 @@ fn durable_attempt_document(
             "receipt": format!("ripr://receipt/{}", manifest.repair_attempt_id.as_str()),
         },
         "claim_boundary": "Read-only projection of one durable repair attempt from this session's root store, loaded and digest-validated by the shared repair-attempt authority on every read. MCP did not create it and executes nothing it names; the host-local root path is intentionally not projected.",
-    })
+    });
+    // Retained limitations, non-claims and routes are producer text that may
+    // spell the checkout; `next_command` keeps its own portable-root contract.
+    for field in ["limitations", "non_claims", "command_routes"] {
+        if let Some(entry) = document.get_mut(field) {
+            project_root_relative(entry, root);
+        }
+    }
+    document
 }
 
 fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
     let (detail, recovery) = if root_present {
         (
             format!(
-                "no repair attempt or receipt `{attempt_id}` is held by this server session, and no durable attempt manifest in this workspace root's store has that identity. Transactions created by ripr_prepare_repair live only in this server's memory (they are never written to the durable store), so one from an earlier server process or past the 64-entry superseded bound is gone"
+                "no repair attempt or receipt `{}` is held by this server session, and no durable attempt manifest in this workspace root's store has that identity. Transactions created by ripr_prepare_repair live only in this server's memory (they are never written to the durable store), so one from an earlier server process or past the 64-entry superseded bound is gone",
+                super::escape_echoed_argument(attempt_id)
             ),
             "if the id came from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again to create a current transaction; durable attempts come from the CLI repair workflow and are listed by ripr_list_repair_attempts",
         )
     } else {
         (
             format!(
-                "no repair attempt or receipt `{attempt_id}` exists in this session, and the workspace root is unavailable so the durable store cannot be read"
+                "no repair attempt or receipt `{}` exists in this session, and the workspace root is unavailable so the durable store cannot be read",
+                super::escape_echoed_argument(attempt_id)
             ),
             "restart the server with `ripr mcp --stdio --root <repository>` and retry",
         )
@@ -491,7 +503,10 @@ fn load_durable_attempt(
             RepairAttemptInventoryEntry::Invalid { directory, .. } if directory == attempt_id => {
                 return Err(AttemptFailure::new(
                     CODE_ATTEMPT_INVALID,
-                    format!("repair attempt `{attempt_id}` failed canonical validation"),
+                    format!(
+                        "repair attempt `{}` failed canonical validation",
+                        super::escape_echoed_argument(attempt_id)
+                    ),
                     "read ripr_list_repair_attempts for the invalid directory identity; inspect `ripr agent status` for the full canonical validation diagnostic",
                 ));
             }
@@ -501,7 +516,8 @@ fn load_durable_attempt(
     Err(AttemptFailure::new(
         CODE_ATTEMPT_NOT_FOUND,
         format!(
-            "no durable repair attempt manifest `{attempt_id}` exists in this workspace root's store. Transactions created by ripr_prepare_repair are in-memory session state and never appear in the durable store"
+            "no durable repair attempt manifest `{}` exists in this workspace root's store. Transactions created by ripr_prepare_repair are in-memory session state and never appear in the durable store",
+            super::escape_echoed_argument(attempt_id)
         ),
         "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id; for an id from ripr_prepare_repair, call ripr_refresh and ripr_prepare_repair again",
     ))
@@ -546,6 +562,7 @@ pub(super) fn durable_receipt_document(
     let current_head = crate::agent::artifact::current_git_head(root).ok();
     let head_reading = repair_attempt_head_reading(root, manifest, current_head.as_deref());
     let baseline = repair_attempt_baseline_reading(root, manifest);
+    let mut test_run = None;
     let (status, receipt) = match &manifest.state {
         RepairAttemptState::Prepared | RepairAttemptState::AwaitingEdit
             if !baseline.permits_continuation() =>
@@ -609,6 +626,9 @@ pub(super) fn durable_receipt_document(
             AttemptTerminalReceipt::Issued { path, value } => {
                 // Preserve the presence lifecycle and original producer
                 // document, while the shared reading owns semantic strength.
+                // #16251: the caller-reported run reads back as CLI status does.
+                test_run =
+                    crate::app::agent_status::test_run::issued_test_run_json(manifest, &value);
                 let lifecycle_state = receipt_lifecycle_state_from_receipt_value(&value);
                 let status = terminal_receipt_status(&value);
                 let binding = find_terminal_artifact_by_role(
@@ -658,8 +678,13 @@ pub(super) fn durable_receipt_document(
         ) => "limited",
         _ => status,
     };
+    let scope = if test_run.is_some() {
+        "`status` reports static receipt state only; `test_run` relays the caller's own test report, which RIPR did not execute"
+    } else {
+        "this document reports static receipt state only"
+    };
     let mut limitations = vec![
-        "static movement and focused runtime test execution remain separate evidence axes; this document reports static receipt state only".to_string(),
+        format!("static movement and focused runtime test execution remain separate evidence axes; {scope}"),
         "RIPR executed nothing to produce this state and executes nothing in response to reading it".to_string(),
     ];
     if matches!(
@@ -669,7 +694,7 @@ pub(super) fn durable_receipt_document(
     {
         limitations.insert(0, limitation);
     }
-    json!({
+    let mut projected = json!({
         "schema_version": RECEIPT_STATUS_SCHEMA_VERSION,
         "receipt_id": attempt_id,
         "status": status,
@@ -697,13 +722,284 @@ pub(super) fn durable_receipt_document(
         "links": {
             "repair_attempt": format!("ripr://repair-attempt/{attempt_id}"),
         },
-    })
+    });
+    if let (Some(test_run), Some(document)) = (test_run, projected.as_object_mut()) {
+        document.insert("test_run".to_string(), test_run);
+    }
+    // The embedded CLI receipt keeps host-absolute paths on disk; the MCP
+    // projection never returns them (ADR 0022).
+    project_root_relative(&mut projected, root);
+    projected
+}
+
+/// Rewrite every string in `value` that spells the host-local repository root
+/// into its root-relative form: `<root>/a/b` becomes `a/b`, a bare `<root>`
+/// becomes `.`, and a bare root token before whitespace, end or punctuation
+/// becomes `.` (so `--root <root> check` stays runnable from the root).
+/// Both the spelling the server was given and its canonical form are matched,
+/// because the CLI records the canonical root in receipts and manifests.
+fn project_root_relative(value: &mut Value, root: &Path) {
+    let mut spellings = vec![root.display().to_string()];
+    if let Ok(canonical) = std::fs::canonicalize(root) {
+        spellings.push(canonical.display().to_string());
+    }
+    project_root_relative_with(value, &root_spellings(&spellings));
+}
+
+/// Whether `spelling` is a Windows-form root: one that starts with a drive
+/// letter and colon, a verbatim prefix (backslash-backslash-question-backslash
+/// or `//?/`) or a UNC double-backslash prefix. Only these forms treat a
+/// backslash as a separator; on any other root a backslash is a legal literal
+/// name character (a Unix root may even end in one).
+fn is_windows_root_form(spelling: &str) -> bool {
+    let body = spelling
+        .strip_prefix("\\\\?\\")
+        .or_else(|| spelling.strip_prefix("//?/"))
+        .unwrap_or(spelling);
+    let bytes = body.as_bytes();
+    let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+    drive || spelling.starts_with("\\\\") || spelling.starts_with("//?/")
+}
+
+/// One matchable spelling of the repository root. `windows` is classified
+/// once from the raw spelling it was derived from, so a forward-slash twin of
+/// a UNC or verbatim root (`//server/share`) still treats a backslash as a
+/// separator, while a Unix root (even `//x/y`) never does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RootSpelling {
+    text: String,
+    windows: bool,
+}
+
+/// Normalize root spellings: add the forward-slash form, trim trailing
+/// separators, drop empty or filesystem-root spellings (rewriting those would
+/// corrupt every path), dedupe, and order longest first. Backslashes are
+/// trimmed and normalized only for Windows-form roots; a non-Windows root
+/// keeps them literal.
+fn root_spellings(raw: &[String]) -> Vec<RootSpelling> {
+    let mut out: Vec<RootSpelling> = Vec::new();
+    let mut push = |candidate: &str, windows: bool| {
+        if !out.iter().any(|existing| existing.text == candidate) {
+            out.push(RootSpelling {
+                text: candidate.to_string(),
+                windows,
+            });
+        }
+    };
+    for spelling in raw {
+        let windows = is_windows_root_form(spelling);
+        let separators: &[char] = if windows { &['/', '\\'] } else { &['/'] };
+        // Windows verbatim roots also appear without their prefix; a verbatim
+        // UNC root (`\\?\UNC\server\share`) appears as `\\server\share`.
+        let mut forms = vec![spelling.clone()];
+        if windows {
+            for verbatim in ["\\\\?\\", "//?/"] {
+                if let Some(stripped) = spelling.strip_prefix(verbatim) {
+                    if let Some(share) = stripped
+                        .strip_prefix("UNC\\")
+                        .or_else(|| stripped.strip_prefix("UNC/"))
+                    {
+                        forms.push(format!("\\\\{share}"));
+                    } else {
+                        forms.push(stripped.to_string());
+                    }
+                }
+            }
+        }
+        for form in forms {
+            let mut candidates = vec![form.clone()];
+            if windows {
+                candidates.push(form.replace('\\', "/"));
+            }
+            for candidate in candidates {
+                let trimmed = candidate.trim_end_matches(separators);
+                let body = trimmed
+                    .strip_prefix("\\\\?\\")
+                    .or_else(|| trimmed.strip_prefix("//?/"))
+                    .unwrap_or(trimmed);
+                let bytes = body.as_bytes();
+                let drive = windows
+                    && bytes.len() > 2
+                    && bytes[0].is_ascii_alphabetic()
+                    && bytes[1] == b':'
+                    && matches!(bytes[2], b'/' | b'\\');
+                let unc = windows && body.len() > 2 && body.starts_with("\\\\");
+                // The verbatim UNC spelling itself (`\\?\UNC\server\share`).
+                let verbatim_unc = windows
+                    && body.len() < trimmed.len()
+                    && body.len() > 4
+                    && (body.starts_with("UNC\\") || body.starts_with("UNC/"));
+                if !(body.starts_with('/') || drive || unc || verbatim_unc) || body.ends_with(':') {
+                    continue;
+                }
+                push(trimmed, windows);
+                if drive {
+                    // Drive letters compare case-insensitively.
+                    let mut swapped = trimmed.to_string();
+                    let offset = trimmed.len() - body.len();
+                    let letter = bytes[0] as char;
+                    let other = if letter.is_ascii_uppercase() {
+                        letter.to_ascii_lowercase()
+                    } else {
+                        letter.to_ascii_uppercase()
+                    };
+                    swapped.replace_range(offset..=offset, &other.to_string());
+                    push(&swapped, windows);
+                }
+            }
+        }
+    }
+    out.sort_by_key(|spelling| std::cmp::Reverse(spelling.text.len()));
+    out
+}
+
+fn is_path_char(character: char) -> bool {
+    character.is_alphanumeric() || matches!(character, '_' | '-' | '.' | '/' | '\\')
+}
+
+fn project_root_text(text: &str, root: &RootSpelling) -> String {
+    let spelling = root.text.as_str();
+    if text == spelling {
+        return ".".to_string();
+    }
+    // A backslash separates components only after a Windows-form root.
+    let windows = root.windows;
+    let is_separator = |c: char| c == '/' || (windows && c == '\\');
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut previous: Option<char> = None;
+    while let Some(index) = rest.find(spelling) {
+        let (head, tail) = rest.split_at(index);
+        out.push_str(head);
+        let after_root = &tail[spelling.len()..];
+        // A `file://` scheme or extra leading slashes sit before the root; they
+        // are part of the same path token, not a preceding path component.
+        let token_len = out.trim_end_matches('/').len();
+        let slashes = out.len() - token_len;
+        let token_start = &out[..token_len];
+        let lead_char = token_start.chars().next_back();
+        let scheme = slashes >= 2 && token_start.ends_with("file:");
+        // `https:///root/x` keeps its scheme and slashes; only a bare leading
+        // `//root` or a `file://` prefix is dropped.
+        let keep_scheme_slashes = slashes >= 1 && !scheme && lead_char == Some(':');
+        let leading = slashes >= 1
+            && !scheme
+            && !keep_scheme_slashes
+            && lead_char.is_none_or(|c| !is_path_char(c));
+        let before = if scheme {
+            token_start.trim_end_matches("file:").chars().next_back()
+        } else if leading || keep_scheme_slashes {
+            lead_char
+        } else {
+            out.chars().next_back()
+        }
+        .or(previous);
+        let start_ok = before.is_none_or(|c| !is_path_char(c));
+        let next = after_root.chars().next();
+        // A run of dots (sentence end or ellipsis) is punctuation, not a name.
+        let trailing_dots = after_root.trim_start_matches('.');
+        let sentence_dots = next == Some('.')
+            && trailing_dots
+                .chars()
+                .next()
+                .is_none_or(|c| !is_path_char(c));
+        if !start_ok || next.is_some_and(|c| !is_separator(c) && is_path_char(c) && !sentence_dots)
+        {
+            // Not a whole-root occurrence (sibling prefix or longer path).
+            out.push_str(spelling);
+            previous = spelling.chars().next_back();
+            rest = after_root;
+            continue;
+        }
+        if keep_scheme_slashes && spelling.starts_with('/') {
+            // The root's own leading slash completed the host-less `://`.
+            out.push('/');
+        }
+        if scheme {
+            out.truncate(token_len - "file:".len());
+        } else if leading {
+            out.truncate(token_len);
+        }
+        if next.is_some_and(is_separator) {
+            // Skip the whole separator run: `<root>//x` names `x`, never the
+            // absolute `/x`.
+            rest = after_root.trim_start_matches(is_separator);
+            previous = None;
+            // A root that starts the string value makes the value a path, so
+            // the remainder is a relative path kept verbatim, even a child name
+            // that begins with whitespace or punctuation (` artifacts/x`,
+            // `;x`, `,x`); only an empty remainder is the root itself, `.`.
+            // Mid-string (prose or a command), `<root>/` names the root when
+            // nothing path-like follows: end of string, whitespace, or a prose
+            // punctuation character followed by whitespace or end. So
+            // `--root <root>/ check` stays runnable as `--root . check`.
+            let at_value_start = out.is_empty();
+            let mut chars = rest.chars();
+            let names_root = match chars.next() {
+                None => true,
+                Some(_) if at_value_start => false,
+                Some(c) if c.is_whitespace() => true,
+                Some(c) => {
+                    matches!(c, ',' | ';' | ':' | ')' | '"' | '\'' | '`')
+                        && chars.next().is_none_or(char::is_whitespace)
+                }
+            };
+            if names_root {
+                out.push('.');
+            }
+        } else {
+            // A bare root token (followed by whitespace, end or punctuation)
+            // stands for the repository root itself, which is `.`.
+            out.push('.');
+            rest = after_root;
+            previous = Some('.');
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn project_root_string(text: &str, spellings: &[RootSpelling]) -> String {
+    let mut text = text.to_string();
+    for spelling in spellings {
+        if text.contains(spelling.text.as_str()) {
+            text = project_root_text(&text, spelling);
+        }
+    }
+    text
+}
+
+/// Walk strings and object keys alike.
+fn project_root_relative_with(value: &mut Value, spellings: &[RootSpelling]) {
+    match value {
+        Value::String(text) => *text = project_root_string(text, spellings),
+        Value::Array(items) => {
+            for item in items {
+                project_root_relative_with(item, spellings);
+            }
+        }
+        Value::Object(map) => {
+            let entries = std::mem::take(map);
+            for (key, mut item) in entries {
+                project_root_relative_with(&mut item, spellings);
+                map.insert(project_root_string(&key, spellings), item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Command routes are rewritten with the root projected away, so they are only
+/// runnable from the repository root.
+fn route_projection_limitation(routes: &[Value]) -> Option<&'static str> {
+    (!routes.is_empty()).then_some(
+        "command_routes project the host-local root as `.` and repository-relative paths (the root path is not returned); run them from the repository root",
+    )
 }
 
 /// How an agent re-checks its own test edit. ripr never runs the tests; the
-/// default `ripr_refresh` analyses the committed diff and does not see an
-/// uncommitted edit, so the re-check names `source: "worktree"` (audit
-/// finding 2).
+/// re-check names `source: "worktree"` (audit finding 2) so it reads the saved
+/// edit explicitly instead of relying on the default selection (#13096).
 ///
 /// The re-check must analyse the same scope as the snapshot the agent read, so
 /// it carries that snapshot's explicit base (#13196). A snapshot analysed
@@ -720,8 +1016,15 @@ pub(super) fn verify_after_editing_tests(base: Option<&str>) -> Value {
             "tool": "ripr_refresh",
             "arguments": arguments,
         },
-        "note": "run the project's tests yourself (ripr executes nothing); the default ripr_refresh analyses the committed diff and does not see an uncommitted edit",
+        "note": "run the project's tests yourself (ripr executes nothing); source worktree reads your saved test edit",
     })
+}
+
+/// True when `token` can be pasted into a shell command unquoted.
+fn shell_safe_token(token: &str) -> bool {
+    !token
+        .chars()
+        .any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c))
 }
 
 /// The one machine-readable next step for a refused `ripr_prepare_repair`,
@@ -732,6 +1035,7 @@ fn refusal_next(
     class: &str,
     canonical_id: &str,
     stub_route: Option<&(String, usize, &'static str)>,
+    stub_seam_id: Option<&str>,
     terminal_static_limit: Option<&Value>,
 ) -> Value {
     let gap_route = json!({
@@ -741,7 +1045,7 @@ fn refusal_next(
     let (kind, detail, mcp, verify) = match reason {
         "seam_already_gripped" if class == "exposed" => (
             "nothing_to_do",
-            "existing tests already grip this seam; no static gap remains to repair",
+            "nothing to do: existing tests already grip this seam, so the change is already pinned and no static gap remains to repair. This is the closed-gap success state; isError only means no repair transaction was created",
             Value::Null,
             Value::Null,
         ),
@@ -759,8 +1063,8 @@ fn refusal_next(
         ),
         "worktree_source_not_committed" => (
             "commit_then_refresh",
-            "a saved-worktree snapshot is never repair-ready; commit the edit and run ripr_refresh with the default committed source",
-            json!({ "tool": "ripr_refresh", "arguments": {} }),
+            "a saved-worktree snapshot is never repair-ready; commit the edit and run ripr_refresh with source committed",
+            json!({ "tool": "ripr_refresh", "arguments": { "source": "committed" } }),
             Value::Null,
         ),
         // A producer readiness fact is read from the committed source and
@@ -810,19 +1114,122 @@ fn refusal_next(
     // `ripr repair` names: the shared resolver derives the test skeleton from
     // the changed code. Guidance only: it grants no repair readiness. A path
     // that would need shell quoting names no command rather than a wrong one.
+    // An unquotable seam id names no command either, never the `--at` form
+    // that the id replaced because it refuses as ambiguous.
+    let command = match (stub_route, stub_seam_id) {
+        (Some(_), Some(id)) => {
+            shell_safe_token(id).then(|| format!("ripr agent stub --seam-id {id}"))
+        }
+        (Some((file, line, family)), None) => shell_safe_token(file)
+            .then(|| format!("ripr agent stub --at {file}:{line} --kind {family}")),
+        (None, _) => None,
+    };
     if matches!(reason, "seam_not_found" | "seam_ambiguous")
-        && let Some((file, line, family)) = stub_route
-        && !file
-            .chars()
-            .any(|c| c.is_whitespace() || "'\"`$\\;&|<>()*?[]{}!#~".contains(c))
+        && let Some(command) = command
     {
         next["stub_route"] = json!({
-            "command": format!("ripr agent stub --at {file}:{line} --kind {family}"),
+            "command": command,
             "run_from": "the repository root",
             "note": "writes nothing without --write; derives a test skeleton from the changed code. Fill its todo!() values by hand, then re-check with after_editing_tests. This route does not make the item repair-ready.",
         });
     }
     next
+}
+
+/// The seam a ready item's durable attempt would be filed under. Fail closed
+/// (#15244): an item that cannot be mapped to a seam refuses instead of
+/// creating a session attempt that might be a rival the store would have
+/// shown.
+fn item_seam_id(
+    snapshot: &super::workspace::Snapshot,
+    item: &GapItem,
+) -> Result<String, AttemptFailure> {
+    let Some(producers) = &snapshot.card_producers else {
+        return Err(AttemptFailure::new(
+            super::workspace::CODE_NO_SNAPSHOT,
+            "the current snapshot carries no repair-card producers, so the durable attempt store cannot be checked for this item's seam; no session attempt was created",
+            "re-run ripr_refresh to commit a complete snapshot, then retry",
+        ));
+    };
+    let Some(binding) = producers
+        .bindings
+        .iter()
+        .find(|binding| binding.item_canonical_id == item.canonical_id)
+    else {
+        return Err(AttemptFailure::new(
+            super::repair_card::CODE_SEAM_NOT_FOUND,
+            format!(
+                "canonical item {} is not bound to a seam, so the durable attempt store cannot be checked for it; no session attempt was created",
+                item.canonical_id
+            ),
+            "read the item's evidence with ripr_get_gap, or run `ripr agent card` in the repository",
+        ));
+    };
+    Ok(binding.seam.seam.id().as_str().to_string())
+}
+
+/// What a store-aware prepare must read from the durable attempt store,
+/// taken from the session under its lock. Reading it ([`Self::read`]) runs
+/// git and the filesystem inventory, so the server runs it on a blocking
+/// worker without holding the session lock (#15244).
+pub(crate) struct DurableLookup {
+    snapshot_id: String,
+    /// `None` when the item is not repair-ready in the admitted snapshot, so
+    /// no durable attempt can bear on the outcome.
+    seam_id: Option<String>,
+}
+
+impl DurableLookup {
+    pub(crate) fn read(self, root: &Path) -> Result<DurableCheck, AttemptFailure> {
+        let reading = match &self.seam_id {
+            None => DurableReading::NotNeeded,
+            Some(seam_id) => DurableReading::Read(durable_attempt_for_seam(root, seam_id)?),
+        };
+        Ok(DurableCheck {
+            snapshot_id: self.snapshot_id,
+            reading,
+        })
+    }
+}
+
+/// The durable store's answer for one admitted snapshot. Prepare only uses it
+/// when the session's current snapshot is still that snapshot.
+pub(crate) struct DurableCheck {
+    snapshot_id: String,
+    reading: DurableReading,
+}
+
+enum DurableReading {
+    NotNeeded,
+    Read(Option<crate::app::task_first::ReusableAttempt>),
+}
+
+fn durable_attempt_for_seam(
+    root: &Path,
+    seam_id: &str,
+) -> Result<Option<crate::app::task_first::ReusableAttempt>, AttemptFailure> {
+    crate::app::task_first::checked_reusable_awaiting_attempt(root, seam_id).map_err(|error| {
+        AttemptFailure::new(
+            super::workspace::CODE_ANALYSIS_FAILED,
+            format!(
+                "no session attempt was created: the durable attempt store could not be fully read, so a live attempt for this seam cannot be ruled out: {error}"
+            ),
+            "run `ripr agent status` in the repository for the full diagnostic, then retry",
+        )
+    })
+}
+
+/// The next step for a repair start held only by an uncommitted inline test
+/// target (#11397): commit or stash that file, as `ripr repair` says, then
+/// refresh. Refreshing the unchanged tree cannot lift the hold.
+fn held_target_next(file: &str) -> Value {
+    json!({
+        "kind": "commit_then_refresh",
+        "reason": super::repair_admission::SEAM_GATE_REFUSED,
+        "detail": format!("the repair start is held because `{file}` has uncommitted changes; commit or stash `{file}`, then run ripr_refresh again. Re-running ripr_refresh on the unchanged tree returns the same refusal"),
+        "mcp": { "tool": "ripr_refresh", "arguments": {} },
+        "after_editing_tests": Value::Null,
+    })
 }
 
 impl WorkspaceSession {
@@ -845,21 +1252,90 @@ impl WorkspaceSession {
     /// ineligible item returns an honest negative document with
     /// `repair_packet_ready: false` and no attempt — never a fabricated
     /// field and never a misleading transaction.
+    #[cfg(test)]
     pub(crate) fn prepare_repair(
         &mut self,
         canonical_id: &str,
         requested: Option<&str>,
         root_identity: Option<&str>,
     ) -> Result<Value, AttemptFailure> {
+        self.prepare_repair_with_store(canonical_id, requested, root_identity, None)
+    }
+
+    /// `prepare_repair` plus the durable attempt store (#15170): when
+    /// `store_root` names the workspace root and the CLI's own single-attempt
+    /// rule (`reusable_awaiting_attempt`) finds a live durable attempt for the
+    /// item's seam, no rival session transaction is created. The document
+    /// discloses the durable attempt and routes to it instead, exactly as
+    /// `ripr repair` refuses a second attempt. The server runs these same
+    /// steps with the store read off the session lock.
+    #[cfg(test)]
+    pub(crate) fn prepare_repair_with_store(
+        &mut self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        root_identity: Option<&str>,
+        store_root: Option<&Path>,
+    ) -> Result<Value, AttemptFailure> {
+        let durable = match store_root {
+            Some(root) => Some(
+                self.prepare_repair_durable_lookup(canonical_id, requested)?
+                    .read(root)?,
+            ),
+            None => None,
+        };
+        self.prepare_repair_checked(canonical_id, requested, root_identity, durable)
+    }
+
+    /// The first step of a store-aware prepare: what the durable store must be
+    /// asked, for the snapshot this call admits. It reads only the session.
+    pub(crate) fn prepare_repair_durable_lookup(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+    ) -> Result<DurableLookup, AttemptFailure> {
+        let snapshot = self.active_snapshot(requested)?;
+        let item = snapshot.require_item(canonical_id)?;
+        let seam_id = if item.repair_readiness.ready {
+            Some(item_seam_id(snapshot, item)?)
+        } else {
+            None
+        };
+        Ok(DurableLookup {
+            snapshot_id: snapshot.snapshot_id.clone(),
+            seam_id,
+        })
+    }
+
+    /// The last step of prepare. `durable` is `None` only when there is no
+    /// store to check; otherwise it is the store's answer for the snapshot
+    /// [`Self::prepare_repair_durable_lookup`] admitted, which may have been
+    /// read without the session lock. A snapshot that changed meanwhile
+    /// refuses with `stale_snapshot` before anything is replayed or created.
+    pub(crate) fn prepare_repair_checked(
+        &mut self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        root_identity: Option<&str>,
+        durable: Option<DurableCheck>,
+    ) -> Result<Value, AttemptFailure> {
         let snapshot = self.active_snapshot(requested)?;
         let snapshot_id = snapshot.snapshot_id.clone();
-        let Some(item) = snapshot.item(canonical_id) else {
+        if let Some(check) = &durable
+            && check.snapshot_id != snapshot_id
+        {
             return Err(AttemptFailure::new(
-                CODE_ITEM_NOT_FOUND,
-                format!("no canonical item {canonical_id} exists in the current snapshot"),
-                "list the current canonical ids with ripr_list_gaps, then retry",
-            ));
-        };
+                super::workspace::CODE_STALE_SNAPSHOT,
+                format!(
+                    "snapshot {} was replaced while the durable attempt store was read; no session attempt was created",
+                    check.snapshot_id
+                ),
+                "retry ripr_prepare_repair against the current snapshot",
+            )
+            .with_data(json!({ "current_snapshot_id": snapshot_id })));
+        }
+        // #14138: a withheld owner opt-out id refuses with `owner_opt_out`.
+        let item = snapshot.require_item(canonical_id)?;
         let readiness = &item.repair_readiness;
         if !readiness.ready {
             let reason = readiness.ineligibility.unwrap_or("repair_not_established");
@@ -872,9 +1348,18 @@ impl WorkspaceSession {
                     .unwrap_or(""),
                 &item.canonical_id,
                 item.stub_route.as_ref(),
+                item.stub_seam_id.as_deref(),
                 item.terminal_static_limit().as_ref(),
             );
             let mut next = next;
+            // A seam held only by an uncommitted inline test target: a refresh
+            // of the same tree reproduces the refusal, so the step is the
+            // commit the CLI names, not an edit-and-recheck loop.
+            if reason == super::repair_admission::SEAM_GATE_REFUSED
+                && let Some(file) = readiness.held_file.as_deref()
+            {
+                next = held_target_next(file);
+            }
             if next["after_editing_tests"].is_object() {
                 next["after_editing_tests"] = verify_after_editing_tests(snapshot.base.as_deref());
             }
@@ -907,6 +1392,73 @@ impl WorkspaceSession {
                     "no attempt was created: the tool must not create a misleading transaction",
                 ],
                 "claim_boundary": "Repair-packet evaluation for one canonical item. This negative document authorizes nothing and creates nothing.",
+            });
+            return bounded_document(document, RECOVERY_REPAIR_TOO_LARGE);
+        }
+
+        // A live durable attempt for this seam wins over a session one: the
+        // CLI refuses a second attempt, and a session transaction would be
+        // superseded by the very refresh the flow prescribes after editing
+        // tests, while only a durable attempt can reach `improved`.
+        let existing = match durable.map(|check| check.reading) {
+            None => None,
+            Some(DurableReading::Read(existing)) => existing,
+            Some(DurableReading::NotNeeded) => {
+                // The same snapshot admitted this item as not ready; a ready
+                // reading now is a projection bug, never "no attempt".
+                return Err(AttemptFailure::new(
+                    CODE_ATTEMPT_INVALID,
+                    "the durable attempt store was not checked for a ready item; no session attempt was created",
+                    "re-run ripr_refresh and retry ripr_prepare_repair",
+                ));
+            }
+        };
+        if let Some(existing) = existing {
+            let existing_id = existing.attempt_id;
+            let document = json!({
+                "schema_version": REPAIR_PACKET_SCHEMA_VERSION,
+                "snapshot_id": snapshot_id,
+                "requested_snapshot_id": requested,
+                "item": {
+                    "canonical_id": item.canonical_id,
+                    "finding_id": item.finding_id,
+                },
+                "repair_packet_ready": false,
+                "ineligibility": {
+                    "reason": "durable_attempt_awaiting",
+                    "detail": "a durable repair attempt for this seam is already awaiting its focused test edit at the current HEAD; no second attempt was started, as `ripr repair` also refuses one",
+                },
+                "attempt": Value::Null,
+                "existing_attempt": {
+                    "attempt_id": existing_id,
+                    "state": "awaiting_edit",
+                    "origin": "durable_cli",
+                    "snapshot_id": snapshot_id,
+                    "canonical_id": item.canonical_id,
+                    "finding_id": item.finding_id,
+                },
+                "next": {
+                    "kind": "resume_durable_attempt",
+                    "reason": "durable_attempt_awaiting",
+                    "detail": "read the existing durable attempt, edit the focused test it names, then re-check; only a durable attempt can reach `improved`, and a session transaction would be superseded by the refresh that follows the edit",
+                    "mcp": {
+                        "tool": "ripr_get_repair_attempt",
+                        "arguments": { "attempt_id": existing_id },
+                    },
+                    "after_editing_tests": verify_after_editing_tests(snapshot.base.as_deref()),
+                },
+                "recovery": "do not retry ripr_prepare_repair for this item: it creates nothing while the durable attempt awaits its edit. Continue with ripr_get_repair_attempt",
+                "limitations": [
+                    "no session transaction was created: the durable attempt is the one attempt for this seam",
+                    "the durable attempt's liveness is the CLI's own awaiting-at-current-HEAD reading, taken when this tool ran",
+                ],
+                "links": {
+                    "gap": format!("ripr://gap/{}", item.canonical_id),
+                    "snapshot": format!("ripr://snapshot/{snapshot_id}"),
+                    "repair_attempt": format!("ripr://repair-attempt/{existing_id}"),
+                    "receipt": format!("ripr://receipt/{existing_id}"),
+                },
+                "claim_boundary": "Disclosure of an existing durable attempt for one canonical item. This document authorizes nothing and creates nothing.",
             });
             return bounded_document(document, RECOVERY_REPAIR_TOO_LARGE);
         }
@@ -1307,7 +1859,276 @@ pub(super) mod injected_prepare_panic {
 
 #[cfg(test)]
 pub(super) mod tests {
-    use super::super::workspace::CODE_STALE_SNAPSHOT;
+
+    fn projected(text: &str, roots: &[&str]) -> String {
+        let spellings = root_spellings(&roots.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+        let mut value = Value::String(text.to_string());
+        project_root_relative_with(&mut value, &spellings);
+        value.as_str().unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn root_projection_matches_given_and_canonical_spellings() {
+        let roots = ["/var/w/repo-link", "/private/var/w/repo"];
+        assert_eq!(projected("/var/w/repo-link/a/b.json", &roots), "a/b.json");
+        assert_eq!(
+            projected("/private/var/w/repo/a/b.json", &roots),
+            "a/b.json"
+        );
+        assert_eq!(projected("/private/var/w/repo", &roots), ".");
+    }
+
+    #[test]
+    fn root_projection_never_rewrites_a_filesystem_root() {
+        assert_eq!(projected("/usr/lib/x", &["/"]), "/usr/lib/x");
+        assert!(root_spellings(&["/".to_string(), "".to_string()]).is_empty());
+        // A relative root such as `.` must never rewrite every dot.
+        assert!(root_spellings(&[".".to_string(), "repo".to_string()]).is_empty());
+        assert_eq!(projected("a.b/c.d", &["."]), "a.b/c.d");
+    }
+
+    #[test]
+    fn root_projection_trims_trailing_separators() {
+        assert_eq!(projected("/w/repo/a/b", &["/w/repo/"]), "a/b");
+        assert_eq!(projected("/w/repo", &["/w/repo/"]), ".");
+    }
+
+    #[test]
+    fn root_projection_leaves_sibling_prefixes_alone() {
+        assert_eq!(projected("/w/repo2/x", &["/w/repo"]), "/w/repo2/x");
+        assert_eq!(projected("/q/w/repo/x", &["/w/repo"]), "/q/w/repo/x");
+    }
+
+    #[test]
+    fn root_projection_keeps_bare_root_arguments_runnable() {
+        assert_eq!(
+            projected("ripr check --root /w/repo check", &["/w/repo"]),
+            "ripr check --root . check"
+        );
+        assert_eq!(projected("see /w/repo...", &["/w/repo"]), "see ....");
+        assert_eq!(projected("see /w/repo… ", &["/w/repo"]), "see .… ");
+        assert_eq!(projected("https:///w/repo/x", &["/w/repo"]), "https:///x");
+    }
+
+    #[test]
+    fn root_projection_keeps_unix_backslashes_literal() {
+        // On Unix a backslash is a legal name character, so a root ending in
+        // one keeps it, and a backslash after a Unix root is not a separator.
+        let unix_root = "/w/repo\\";
+        assert_eq!(
+            root_spellings(&[unix_root.to_string()]),
+            vec![RootSpelling {
+                text: unix_root.to_string(),
+                windows: false,
+            }]
+        );
+        assert_eq!(
+            projected("/w/repo\\/target/result.json", &[unix_root]),
+            "target/result.json"
+        );
+        assert_eq!(projected("/w/repo\\", &[unix_root]), ".");
+        // A Windows-form root still trims and normalizes its backslashes.
+        let up = 'C';
+        assert_eq!(
+            projected(
+                &format!("{up}:/w/repo/a.json"),
+                &[format!("{up}:\\w\\repo\\").as_str()]
+            ),
+            "a.json"
+        );
+        // The `/w/repo` sibling with a literal backslash name is untouched.
+        assert_eq!(
+            projected("/w/repo\\x/a.json", &["/w/repo"]),
+            "/w/repo\\x/a.json"
+        );
+        assert_eq!(projected("/w/repo/a\\b.json", &["/w/repo"]), "a\\b.json");
+    }
+
+    #[test]
+    fn root_projection_never_inserts_a_dot_before_a_child_name() {
+        // Once a separator follows the root, the rest is a relative path,
+        // even when its first name begins with whitespace or punctuation.
+        assert_eq!(
+            projected("/w/repo/ artifacts/after.json", &["/w/repo"]),
+            " artifacts/after.json"
+        );
+        assert_eq!(
+            projected("/w/repo/;x/after.json", &["/w/repo"]),
+            ";x/after.json"
+        );
+        assert_eq!(projected("/w/repo/,x.json", &["/w/repo"]), ",x.json");
+    }
+
+    #[test]
+    fn root_projection_skips_every_consecutive_separator() {
+        // `<root>//x` names `x`, never the absolute `/x` or `\\x`.
+        assert_eq!(projected("/w/repo//x", &["/w/repo"]), "x");
+        assert_eq!(
+            projected("see /w/repo///x/y.rs", &["/w/repo"]),
+            "see x/y.rs"
+        );
+        assert_eq!(projected("/w/repo//", &["/w/repo"]), ".");
+        let up = 'C';
+        let root = format!("{up}:\\w\\repo");
+        assert_eq!(projected(&format!("{root}\\\\x"), &[root.as_str()]), "x");
+        assert_eq!(projected(&format!("{root}\\/x"), &[root.as_str()]), "x");
+        // A Unix root skips only `/`; a following backslash is a literal name.
+        assert_eq!(projected("/w/repo/\\x", &["/w/repo"]), "\\x");
+    }
+
+    #[test]
+    fn root_projection_matches_unc_and_verbatim_unc_roots() {
+        let unc = "\\\\server\\share";
+        let forward = "//server/share";
+        for text in [
+            format!("{unc}\\a.json"),
+            format!("{forward}\\a.json"),
+            format!("{forward}/a.json"),
+            format!("{unc}/a.json"),
+        ] {
+            assert_eq!(projected(&text, &[unc]), "a.json", "{text}");
+        }
+        let spellings = root_spellings(&[unc.to_string()]);
+        assert!(
+            spellings.iter().all(|spelling| spelling.windows),
+            "{spellings:?}"
+        );
+        assert!(
+            spellings.iter().any(|spelling| spelling.text == unc),
+            "{spellings:?}"
+        );
+
+        let verbatim = "\\\\?\\UNC\\server\\share";
+        for text in [
+            format!("{verbatim}\\a.json"),
+            format!("{unc}\\a.json"),
+            format!("{forward}\\a.json"),
+            format!("{forward}/a.json"),
+        ] {
+            assert_eq!(projected(&text, &[verbatim]), "a.json", "{text}");
+        }
+    }
+
+    #[test]
+    fn root_projection_keeps_backslashes_literal_on_a_double_slash_unix_root() {
+        let root = "//x/y";
+        assert_eq!(
+            root_spellings(&[root.to_string()]),
+            vec![RootSpelling {
+                text: root.to_string(),
+                windows: false,
+            }]
+        );
+        assert_eq!(projected("//x/y/a.json", &[root]), "a.json");
+        assert_eq!(projected("//x/y\\a.json", &[root]), "//x/y\\a.json");
+    }
+
+    #[test]
+    fn root_projection_keeps_bare_root_prose_punctuation() {
+        assert_eq!(projected("/w/repo/", &["/w/repo"]), ".");
+        assert_eq!(projected("see /w/repo/, then", &["/w/repo"]), "see ., then");
+        assert_eq!(projected("at /w/repo/; done", &["/w/repo"]), "at .; done");
+        assert_eq!(projected("(in /w/repo/)", &["/w/repo"]), "(in .)");
+        // Mid-string, `<root>/` before whitespace names the root, so prose
+        // and command routes stay runnable from the repository root.
+        assert_eq!(projected("in /w/repo/ now", &["/w/repo"]), "in . now");
+        assert_eq!(
+            projected("cd /w/repo/ && make", &["/w/repo"]),
+            "cd . && make"
+        );
+        assert_eq!(
+            projected("ripr check --root /w/repo/ check", &["/w/repo"]),
+            "ripr check --root . check"
+        );
+        assert_eq!(
+            projected("open /w/repo/ artifacts/after.json", &["/w/repo"]),
+            "open . artifacts/after.json"
+        );
+        assert_eq!(projected("in /w/repo/ ", &["/w/repo"]), "in . ");
+        assert_eq!(projected("see /w/repo, then", &["/w/repo"]), "see ., then");
+        assert_eq!(projected("see /w/repo; x", &["/w/repo"]), "see .; x");
+    }
+
+    #[test]
+    fn root_projection_rewrites_object_keys() {
+        let spellings = root_spellings(&["/w/repo".to_string()]);
+        let mut value = json!({"/w/repo/a.json": {"/w/repo": "/w/repo/b"}});
+        project_root_relative_with(&mut value, &spellings);
+        assert_eq!(value, json!({"a.json": {".": "b"}}));
+    }
+
+    #[test]
+    fn route_limitation_present_only_with_routes() {
+        assert!(route_projection_limitation(&[]).is_none());
+        let routes = [json!({"argv": ["ripr"]})];
+        let text = route_projection_limitation(&routes).unwrap_or_default();
+        assert!(text.contains("repository root"), "{text}");
+    }
+
+    #[test]
+    fn root_projection_handles_globs_urls_verbatim_and_lookalikes() {
+        // Drive letters are spliced in so fixture text carries no literal local path.
+        let (up, lo) = ('C', 'c');
+        assert_eq!(projected("see /w/repo/*.rs", &["/w/repo"]), "see *.rs");
+        assert_eq!(projected("file:///w/repo/a.json", &["/w/repo"]), "a.json");
+        assert_eq!(projected("//w/repo/a.json", &["/w/repo"]), "a.json");
+        assert_eq!(
+            projected(
+                &format!("\\\\?\\{up}:\\w\\repo\\a.json"),
+                &[format!("\\\\?\\{up}:\\w\\repo").as_str()]
+            ),
+            "a.json"
+        );
+        assert_eq!(
+            projected(
+                &format!("{up}:\\w\\repo\\a.json"),
+                &[format!("\\\\?\\{up}:\\w\\repo").as_str()]
+            ),
+            "a.json"
+        );
+        assert_eq!(
+            projected(
+                &format!("{lo}:/w/repo/a.json"),
+                &[format!("{up}:\\w\\repo").as_str()]
+            ),
+            "a.json"
+        );
+        assert_eq!(projected("/a/repo.bak/x", &["/a/repo"]), "/a/repo.bak/x");
+        assert_eq!(projected("/a/repo-old/x", &["/a/repo"]), "/a/repo-old/x");
+        assert_eq!(
+            projected("/w/rép\u{00f8}/a.json", &["/w/rép\u{00f8}"]),
+            "a.json"
+        );
+        assert_eq!(
+            projected("/w/rép\u{00f8}s/a.json", &["/w/rép\u{00f8}"]),
+            "/w/rép\u{00f8}s/a.json"
+        );
+    }
+
+    #[test]
+    fn root_projection_rewrites_prose_and_backslash_spellings() {
+        let up = 'C';
+        assert_eq!(
+            projected("failed at /w/repo: bad; see /w/repo/t.rs.", &["/w/repo"]),
+            "failed at .: bad; see t.rs."
+        );
+        assert_eq!(projected("open /w/repo.", &["/w/repo"]), "open ..");
+        assert_eq!(
+            projected(
+                &format!("{up}:\\w\\repo\\a\\b.json"),
+                &[format!("{up}:\\w\\repo").as_str()]
+            ),
+            "a\\b.json"
+        );
+        assert_eq!(
+            projected(
+                &format!("{up}:/w/repo/a/b.json"),
+                &[format!("{up}:\\w\\repo").as_str()]
+            ),
+            "a/b.json"
+        );
+    }
+    use super::super::workspace::{CODE_ITEM_NOT_FOUND, CODE_STALE_SNAPSHOT};
     use super::*;
     use crate::analysis_outcome::{AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind};
     use crate::domain::DiscriminatorShape;
@@ -1383,6 +2204,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         })
     }
@@ -1412,7 +2234,7 @@ pub(super) mod tests {
     #[test]
     fn refusal_next_maps_each_reason_to_one_route() -> Result<(), String> {
         let check_route = |reason: &str, class: &str, kind: &str, verify: bool| {
-            let next = refusal_next(reason, class, "gap:x", None, None);
+            let next = refusal_next(reason, class, "gap:x", None, None, None);
             if next["kind"] != kind
                 || next["reason"] != reason
                 || next["after_editing_tests"].is_null() == verify
@@ -1458,7 +2280,14 @@ pub(super) mod tests {
             "await_producer_fact",
             false,
         )?;
-        let by_hand = refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None);
+        let by_hand = refusal_next(
+            "seam_not_found",
+            "weakly_exposed",
+            "gap:x",
+            None,
+            None,
+            None,
+        );
         if by_hand["mcp"]["arguments"]["canonical_id"] != "gap:x"
             || by_hand["after_editing_tests"]["mcp"]["arguments"]["source"] != "worktree"
         {
@@ -1476,7 +2305,7 @@ pub(super) mod tests {
     fn refusal_next_carries_the_stub_route_only_for_unbound_seams() -> Result<(), String> {
         let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
         for reason in ["seam_not_found", "seam_ambiguous"] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None, None);
             if next["stub_route"]["command"]
                 != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
                 || next["kind"] != "write_test_by_hand"
@@ -1490,14 +2319,21 @@ pub(super) mod tests {
             "seam_inventory_truncated",
             "something_new",
         ] {
-            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None);
+            let next = refusal_next(reason, "weakly_exposed", "gap:x", Some(&route), None, None);
             if next.get("stub_route").is_some() {
                 return Err(format!("{reason} must not name a stub route: {next}"));
             }
         }
-        if refusal_next("seam_not_found", "weakly_exposed", "gap:x", None, None)
-            .get("stub_route")
-            .is_some()
+        if refusal_next(
+            "seam_not_found",
+            "weakly_exposed",
+            "gap:x",
+            None,
+            None,
+            None,
+        )
+        .get("stub_route")
+        .is_some()
         {
             return Err("no resolver route means no stub_route".into());
         }
@@ -1508,11 +2344,59 @@ pub(super) mod tests {
             "gap:x",
             Some(&spaced),
             None,
+            None,
         )
         .get("stub_route")
         .is_some()
         {
             return Err("a path needing quoting must not name a command".into());
+        }
+        Ok(())
+    }
+
+    /// An ambiguous `--at` line names the changed seam's own id, the same
+    /// selector `ripr repair` prints; a missing id keeps the location form.
+    #[test]
+    fn refusal_next_names_the_seam_id_when_the_line_is_ambiguous() -> Result<(), String> {
+        let route = ("src/pricing.rs".to_string(), 88_usize, "predicate");
+        let named = refusal_next(
+            "seam_ambiguous",
+            "weakly_exposed",
+            "gap:x",
+            Some(&route),
+            Some("seam:src/pricing.rs:88:retries"),
+            None,
+        );
+        if named["stub_route"]["command"]
+            != "ripr agent stub --seam-id seam:src/pricing.rs:88:retries"
+        {
+            return Err(format!("seam id not named: {named}"));
+        }
+        let located = refusal_next(
+            "seam_ambiguous",
+            "weakly_exposed",
+            "gap:x",
+            Some(&route),
+            None,
+            None,
+        );
+        if located["stub_route"]["command"]
+            != "ripr agent stub --at src/pricing.rs:88 --kind predicate"
+        {
+            return Err(format!("location form lost: {located}"));
+        }
+        // An id that needs quoting names no command, never the ambiguous
+        // `--at` form it replaced.
+        let unsafe_id = refusal_next(
+            "seam_ambiguous",
+            "weakly_exposed",
+            "gap:x",
+            Some(&route),
+            Some("seam id; rm"),
+            None,
+        );
+        if unsafe_id.get("stub_route").is_some() {
+            return Err(format!("unquotable id must drop the route: {unsafe_id}"));
         }
         Ok(())
     }
@@ -1529,6 +2413,7 @@ pub(super) mod tests {
             "infection_unknown",
             "gap:x",
             Some(&route),
+            None,
             Some(&limit),
         );
         if terminal["kind"] != "terminal_static_limit"
@@ -1546,18 +2431,39 @@ pub(super) mod tests {
             ("seam_inventory_truncated", "change_policy"),
             ("worktree_source_not_committed", "commit_then_refresh"),
         ] {
-            let next = refusal_next(reason, "infection_unknown", "gap:x", None, Some(&limit));
+            let next = refusal_next(
+                reason,
+                "infection_unknown",
+                "gap:x",
+                None,
+                None,
+                Some(&limit),
+            );
             if next["kind"] != kind || next.get("static_limit").is_some() {
                 return Err(format!("{reason} must keep its own route: {next}"));
             }
         }
         for reason in ["seam_gate_refused", "seam_ambiguous", "static_limitation"] {
-            let next = refusal_next(reason, "infection_unknown", "gap:x", None, Some(&limit));
+            let next = refusal_next(
+                reason,
+                "infection_unknown",
+                "gap:x",
+                None,
+                None,
+                Some(&limit),
+            );
             if next["kind"] != "terminal_static_limit" {
                 return Err(format!("{reason} must carry the marker: {next}"));
             }
         }
-        let ordinary = refusal_next("seam_not_found", "infection_unknown", "gap:x", None, None);
+        let ordinary = refusal_next(
+            "seam_not_found",
+            "infection_unknown",
+            "gap:x",
+            None,
+            None,
+            None,
+        );
         if ordinary["kind"] != "write_test_by_hand" || ordinary.get("static_limit").is_some() {
             return Err(format!("no limit must keep the ordinary route: {ordinary}"));
         }
@@ -1577,6 +2483,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         for index in 0..MAX_SUPERSEDED_TOMBSTONES + 10 {
@@ -1610,6 +2517,7 @@ pub(super) mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             desired_base: None,
             desired_source: Default::default(),
+            desired_source_defaulted: false,
             superseded_order: std::collections::VecDeque::new(),
         };
         let total = MAX_SUPERSEDED_TOMBSTONES + 10;
@@ -1734,6 +2642,107 @@ pub(super) mod tests {
                 session.repairs.len()
             ));
         }
+        Ok(())
+    }
+
+    /// #15244: a ready item that cannot be mapped to a seam cannot rule out a
+    /// durable attempt, so a store-aware prepare refuses instead of creating a
+    /// session attempt; without a store the session route is unchanged.
+    #[test]
+    fn store_aware_prepare_fails_closed_when_the_item_has_no_seam_binding() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let root = unique_test_dir("store-aware")?;
+        let refused = session.prepare_repair_with_store(
+            "gap:test:1",
+            None,
+            Some("root:sha256:a"),
+            Some(&root),
+        );
+        let failure = refused.err().ok_or("a store-aware prepare must refuse")?;
+        assert_eq!(failure.code, super::super::workspace::CODE_NO_SNAPSHOT);
+        if !session.repairs.is_empty() {
+            return Err("a refusal must not create a session transaction".to_string());
+        }
+        let created = session
+            .prepare_repair_with_store("gap:test:1", None, Some("root:sha256:a"), None)
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(created["attempt"]["origin"], "mcp_session");
+        Ok(())
+    }
+
+    /// #15244: the store answer may be read off the session lock, so the
+    /// last step revalidates the admitted snapshot before it replays or
+    /// creates anything, and only a matching answer decides the outcome.
+    #[test]
+    fn checked_prepare_binds_the_durable_answer_to_its_admitted_snapshot() -> Result<(), String> {
+        let mut session = session_with(&[super::super::gaps::test_finding()?], "root:sha256:a")?;
+        let current = session
+            .last_good
+            .as_ref()
+            .map(|snapshot| snapshot.snapshot_id.clone())
+            .ok_or("fixture lost its snapshot")?;
+        let check = |snapshot_id: &str, reading| DurableCheck {
+            snapshot_id: snapshot_id.to_string(),
+            reading,
+        };
+        let root = Some("root:sha256:a");
+        // A snapshot replaced during the store read refuses stale.
+        let stale = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check("snapshot:replaced", DurableReading::Read(None))),
+            )
+            .err()
+            .ok_or("an answer for another snapshot must refuse")?;
+        assert_eq!(stale.code, CODE_STALE_SNAPSHOT);
+        assert_eq!(stale.data["current_snapshot_id"], current.as_str());
+        // A ready item whose store was never asked refuses too.
+        let unchecked = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check(&current, DurableReading::NotNeeded)),
+            )
+            .err()
+            .ok_or("an unchecked store must refuse a ready item")?;
+        assert_eq!(unchecked.code, CODE_ATTEMPT_INVALID);
+        // A live durable attempt is disclosed, not rivalled.
+        let disclosed = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check(
+                    &current,
+                    DurableReading::Read(Some(crate::app::task_first::ReusableAttempt {
+                        attempt_id: "repair-attempt:durable".to_string(),
+                        next_command: String::new(),
+                    })),
+                )),
+            )
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(
+            disclosed["existing_attempt"]["attempt_id"],
+            "repair-attempt:durable"
+        );
+        assert_eq!(disclosed["repair_packet_ready"], false);
+        if !session.repairs.is_empty() {
+            return Err("no refusal or disclosure may create a session transaction".to_string());
+        }
+        // Control: the current snapshot with no durable attempt creates one.
+        let created = session
+            .prepare_repair_checked(
+                "gap:test:1",
+                None,
+                root,
+                Some(check(&current, DurableReading::Read(None))),
+            )
+            .map_err(|failure| failure.detail)?;
+        assert_eq!(created["attempt"]["origin"], "mcp_session");
+        assert_eq!(session.repairs.len(), 1);
         Ok(())
     }
 
@@ -2751,7 +3760,131 @@ pub(super) mod tests {
             .receipt_status_document(retained.repair_attempt_id.as_str(), Some(root), None)
             .map_err(|failure| format!("receipt fixture projection: {}", failure.detail))?;
         assert_eq!(document["receipt"]["status"], "issued", "{}", case.label);
-        assert_eq!(document["receipt"]["document"], receipt, "{}", case.label);
+        // The on-disk receipt keeps host-absolute paths; the MCP projection
+        // returns neither the given nor the canonical root spelling.
+        let root_text = root.display().to_string();
+        let canonical_text = std::fs::canonicalize(root)
+            .map_err(|error| error.to_string())?
+            .display()
+            .to_string();
+        // Compare against serialized JSON in its escaped form: a Windows root
+        // (drive letter, backslash separators) serializes with doubled
+        // backslashes, so the raw spelling never occurs in the document text
+        // (#16105). On Windows that made the positive control fail and both
+        // leak checks vacuous.
+        let json_spelling = |text: &str| -> String {
+            let quoted = Value::String(text.to_string()).to_string();
+            quoted
+                .strip_prefix('"')
+                .and_then(|inner| inner.strip_suffix('"'))
+                .unwrap_or(&quoted)
+                .to_string()
+        };
+        let root_json = json_spelling(&root_text);
+        let canonical_json = json_spelling(&canonical_text);
+        assert!(
+            receipt.to_string().contains(&root_json),
+            "{} positive control: the on-disk receipt spells the root",
+            case.label,
+        );
+        assert_eq!(
+            document["receipt"]["document"]["provenance"]["repo_root"], ".",
+            "{} embedded repo_root is projected",
+            case.label,
+        );
+        assert!(
+            !document.to_string().contains(&canonical_json),
+            "{} MCP receipt status leaked the canonical root",
+            case.label,
+        );
+        assert!(
+            !document.to_string().contains(&root_json),
+            "{} MCP receipt status leaked the host-local root: {document}",
+            case.label,
+        );
+        assert!(
+            document.to_string().contains("target/ripr/"),
+            "{} root-relative artifact paths remain",
+            case.label,
+        );
+        // Non-path fields survive the projection: the MCP document equals the
+        // on-disk receipt after an independent naive rewrite that only
+        // replaces the exact root prefix in strings and keys (`<root>/`, and
+        // on Windows `<root>\` since `root.join` adds a backslash, with
+        // nothing, then a remaining bare `<root>` with `.`).
+        let mut fixture_roots = vec![root_text.clone(), canonical_text.clone()];
+        if cfg!(windows) {
+            // The repair-attempt binding records the root with `/` separators
+            // (the bound-root display rule, #4287), so the naive rewrite
+            // matches that spelling too (#16105).
+            let forward: Vec<String> = fixture_roots
+                .iter()
+                .map(|spelling| spelling.replace('\\', "/"))
+                .collect();
+            for spelling in &forward {
+                assert!(
+                    !document.to_string().contains(spelling.as_str()),
+                    "{} MCP receipt status leaked the forward-slash root {spelling}",
+                    case.label,
+                );
+            }
+            fixture_roots.extend(forward);
+        }
+        fixture_roots.sort_by_key(|spelling| std::cmp::Reverse(spelling.len()));
+        fixture_roots.dedup();
+        let naive = |text: &str| -> String {
+            let mut text = text.to_string();
+            for spelling in &fixture_roots {
+                text = text.replace(&format!("{spelling}/"), "");
+                if cfg!(windows) {
+                    text = text.replace(&format!("{spelling}\\"), "");
+                }
+                text = text.replace(spelling.as_str(), ".");
+            }
+            text
+        };
+        fn naive_walk(value: &Value, naive: &dyn Fn(&str) -> String) -> Value {
+            match value {
+                Value::String(text) => Value::String(naive(text)),
+                Value::Array(items) => {
+                    Value::Array(items.iter().map(|item| naive_walk(item, naive)).collect())
+                }
+                Value::Object(map) => Value::Object(
+                    map.iter()
+                        .map(|(key, item)| (naive(key), naive_walk(item, naive)))
+                        .collect(),
+                ),
+                other => other.clone(),
+            }
+        }
+        assert_eq!(
+            document["receipt"]["document"],
+            naive_walk(&receipt, &naive),
+            "{} MCP receipt document preserves every non-root field",
+            case.label,
+        );
+        // Discriminating spot checks on fields the root never touches.
+        for pointer in [
+            "/status",
+            "/seam/seam_id",
+            "/seam/grip_class",
+            "/seam/change",
+            "/seam/evidence_delta",
+            "/provenance/ripr_version",
+            "/provenance/movement",
+            "/provenance/before_artifact/sha256",
+            "/verification",
+        ] {
+            let on_disk = receipt
+                .pointer(pointer)
+                .ok_or_else(|| format!("{} fixture receipt omits {pointer}", case.label))?;
+            assert_eq!(
+                document["receipt"]["document"].pointer(pointer),
+                Some(on_disk),
+                "{} non-path field {pointer} is preserved",
+                case.label,
+            );
+        }
         assert_eq!(
             document["receipt"]["binding"]["sha256"], artifact.sha256,
             "{}",
@@ -3462,5 +4595,83 @@ pub(super) mod tests {
         ] {
             assert_eq!(receipt_resource_id(uri), expected, "{uri}");
         }
+    }
+
+    fn fix_site(inline_module: Option<&str>, new_test_kind: Option<&'static str>) -> RepairFixSite {
+        RepairFixSite {
+            test_name: String::new(),
+            file: "src/lib.rs".to_string(),
+            line: 0,
+            oracle: None,
+            oracle_kind: "none",
+            oracle_strength: "none",
+            inline_test_module: inline_module.map(str::to_string),
+            new_test_kind,
+        }
+    }
+
+    #[test]
+    fn prepare_limitations_distinguish_existing_test_grip_from_an_admitted_proposal() {
+        let existing = prepare_limitations(&fix_site(None, None));
+        assert_eq!(existing.len(), 2);
+        assert!(existing[0].contains("target-admission authority has not run"));
+        assert!(!existing[0].contains("new-test proposal"));
+        let proposal = prepare_limitations(&fix_site(None, Some("integration")));
+        assert_eq!(proposal.len(), 2);
+        assert!(proposal[0].contains("new-test proposal the shared repair gate admitted"));
+        assert!(!proposal[0].contains("target-admission authority has not run"));
+        // Both always state that the transaction dies with the session.
+        for limitations in [&existing, &proposal] {
+            assert!(limitations[1].contains("the transaction is in-memory"));
+            assert!(limitations[1].contains("ripr_get_repair_attempt"));
+        }
+    }
+
+    #[test]
+    fn inline_test_module_boundary_confines_new_tests_to_the_governed_module() {
+        assert_eq!(
+            inline_test_module_boundary(&fix_site(None, None)),
+            Value::Null
+        );
+        let boundary = inline_test_module_boundary(&fix_site(Some("tests"), Some("inline_unit")));
+        assert_eq!(boundary["file"], "src/lib.rs");
+        assert_eq!(boundary["module"], "tests");
+        let text = boundary["boundary"].as_str().unwrap_or_default();
+        assert!(
+            text.contains("inside this inline test module only"),
+            "{text}"
+        );
+        assert!(
+            text.contains(
+                "production code, the module declaration and existing tests stay unchanged"
+            )
+        );
+        assert_eq!(boundary.as_object().map(serde_json::Map::len), Some(3));
+    }
+
+    #[test]
+    fn must_not_change_swaps_the_production_statement_for_the_inline_module_cage() {
+        use crate::output::agent_seam_packets::{
+            EDIT_CAGE_PRODUCTION_STATEMENT, EDIT_CAGE_TERMINALITY_WARNING,
+            inline_test_module_edit_statement,
+        };
+        assert_eq!(
+            must_not_change(&fix_site(None, None)),
+            vec![
+                EDIT_CAGE_PRODUCTION_STATEMENT.to_string(),
+                EDIT_CAGE_TERMINALITY_WARNING.to_string()
+            ]
+        );
+        let inline = must_not_change(&fix_site(Some("tests"), Some("inline_unit")));
+        assert_eq!(
+            inline,
+            vec![
+                inline_test_module_edit_statement("src/lib.rs", "tests"),
+                EDIT_CAGE_TERMINALITY_WARNING.to_string()
+            ]
+        );
+        assert!(inline[0].contains("src/lib.rs"));
+        assert!(inline[0].contains("mod tests"));
+        assert!(!inline.contains(&EDIT_CAGE_PRODUCTION_STATEMENT.to_string()));
     }
 }

@@ -23,7 +23,8 @@
 //! be taken (a poisoned lock).
 
 use super::{
-    MacroScanFile, ScannedMacroSites, TargetRoots, partition_macro_scan_files, scan_macro_sites,
+    MacroScanFile, ScannedMacroSites, TargetRoots, is_uncompiled_lexical_source,
+    partition_macro_scan_files, scan_macro_sites,
 };
 use crate::analysis::facts::SourceRoleProvenanceEdge;
 use crate::analysis::rust_index::RustIndex;
@@ -47,10 +48,11 @@ struct ScanKey {
     /// Fact storage identity and membership revision.
     storage: (usize, usize, u64),
     /// Per file in path order: path, source allocation, source length and the
-    /// stored macro candidates' allocation. Pointer identity of an immutable
+    /// stored macro candidates' allocation, plus the lexical-source exclusion
+    /// from composition. Pointer identity of an immutable
     /// `Arc<str>` is exact for "same text"; a different allocation with equal
     /// text only costs a recompute.
-    files: Vec<(PathBuf, usize, usize, Option<usize>)>,
+    files: Vec<(PathBuf, usize, usize, Option<usize>, bool)>,
     /// Crates whose glob imports the scan treats as workspace-owned.
     macro_scope_crates: BTreeSet<String>,
     /// The module edges that decide which declarations resolved.
@@ -61,6 +63,11 @@ struct ScanKey {
     include_targets: usize,
     /// Whether target roots are disabled for the whole workspace.
     roots_disabled: bool,
+    /// #14116: the crate roots an unread include fragment left unplaced.
+    /// Read from disk, so the index alone does not determine it.
+    roots_tainted: BTreeSet<PathBuf>,
+    /// #14116: the files an unindexed member mounts. Read from disk too.
+    roots_mounted: BTreeSet<PathBuf>,
 }
 
 impl ScanKey {
@@ -79,6 +86,7 @@ impl ScanKey {
                         data.macro_candidates
                             .as_deref()
                             .map(|candidates| std::ptr::from_ref(candidates) as usize),
+                        is_uncompiled_lexical_source(facts),
                     )
                 })
                 .collect(),
@@ -88,6 +96,8 @@ impl ScanKey {
             include_parents: index.include_parents.len(),
             include_targets: index.include_targets.len(),
             roots_disabled: roots.disabled,
+            roots_tainted: roots.tainted.clone(),
+            roots_mounted: roots.mounted.clone(),
         }
     }
 }

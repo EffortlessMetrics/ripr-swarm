@@ -6,7 +6,6 @@ use crate::app::agent_brief::{
 use crate::config::{CONFIG_FILE_NAME, config_fingerprint};
 use crate::output;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(super) fn validate_agent_receipt_verify_path(
     root: &Path,
@@ -14,7 +13,7 @@ pub(super) fn validate_agent_receipt_verify_path(
 ) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent receipt root {} failed: {err}",
+            "canonicalize agent receipt root {} failed: {err}; pass an existing directory as --root",
             root.display()
         )
     })?;
@@ -33,8 +32,12 @@ pub(super) fn validate_agent_receipt_verify_path(
         // unknowable at the receipt, and naming the workflow pair for it
         // would steer the caller at a comparison they never asked for.
         let failure = format!(
-            "canonicalize agent receipt --verify-json {} failed: {err}",
-            path.display()
+            "agent receipt --verify-json {} {}",
+            path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &err,
+                "pass the verify JSON that `ripr agent verify` wrote"
+            )
         );
         let is_workflow_artifact =
             candidate == root.join(crate::agent::loop_commands::WORKFLOW_AGENT_VERIFY_ARTIFACT);
@@ -117,7 +120,7 @@ fn agent_receipt_artifact_provenance(
         path: crate::agent::loop_commands::root_path_display(Path::new(display_path)),
         sha256: provenance::sha256_file(&resolved).map_err(|err| {
             format!(
-                "hash agent receipt {output_name} {} failed: {err}",
+                "hash agent receipt {output_name} {} failed: {err}; check that the file still exists and is readable, then rerun",
                 display_path
             )
         })?,
@@ -131,7 +134,7 @@ fn validate_agent_receipt_artifact_path(
 ) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent receipt root {} failed: {err}",
+            "canonicalize agent receipt root {} failed: {err}; pass an existing directory as --root",
             root.display()
         )
     })?;
@@ -142,8 +145,12 @@ fn validate_agent_receipt_artifact_path(
     };
     let candidate = candidate.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent receipt {role} {} failed: {err}",
-            path.display()
+            "agent receipt {role} {} {}",
+            path.display(),
+            crate::bounded_input::unreadable_input_phrase(
+                &err,
+                "pass the snapshot JSON that `ripr check --format repo-exposure-json` wrote"
+            )
         )
     })?;
 
@@ -180,11 +187,7 @@ fn agent_receipt_config_fingerprint(root: &Path) -> Result<Option<String>, Strin
 }
 
 fn agent_receipt_generated_at() -> Result<String, String> {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|err| format!("system clock before unix epoch: {err}; set the system clock to the current time, then rerun"))?
-        .as_millis();
-    Ok(format!("unix_ms:{millis}"))
+    crate::cli::commands_timestamps::generated_at_unix_ms()
 }
 
 pub(super) fn validate_agent_verify_snapshot_path(
@@ -194,7 +197,7 @@ pub(super) fn validate_agent_verify_snapshot_path(
 ) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent verify root {} failed: {err}",
+            "canonicalize agent verify root {} failed: {err}; pass an existing directory as --root",
             root.display()
         )
     })?;
@@ -249,7 +252,7 @@ pub(super) fn validate_agent_verify_snapshot_path(
 /// pre-check saw length 0 for a character device such as `/dev/zero` and let
 /// the unbounded read run forever.
 pub(super) fn read_agent_verify_snapshot(path: &Path, label: &str) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         format!(
             "read agent verify {label} snapshot {} failed: {err}",
             output::outcome::display_path(path)
@@ -317,7 +320,7 @@ pub(super) fn resolve_agent_brief_working_set(
 pub(super) fn validate_agent_brief_diff_path(root: &Path, path: &Path) -> Result<PathBuf, String> {
     let root = root.canonicalize().map_err(|err| {
         format!(
-            "canonicalize agent brief root {} failed: {err}",
+            "canonicalize agent brief root {} failed: {err}; pass an existing directory as --root",
             root.display()
         )
     })?;
@@ -438,6 +441,29 @@ pub(super) fn agent_brief_owners_for_lines(
         .collect()
 }
 
+/// Owner attribution for changed lines from one index build.
+pub(super) struct AgentBriefOwnerAttribution {
+    /// Innermost owner per changed line.
+    pub(super) changed_owners: Vec<AgentBriefChangedOwner>,
+    /// Every owner whose span contains a changed line.
+    pub(super) enclosing_owners: Vec<AgentBriefChangedOwner>,
+    /// Header line of every function whose span contains a changed line.
+    /// `None` when attribution failed, so "was this test edited" stays
+    /// unknown instead of reading as "no".
+    pub(super) edited_function_headers: Option<Vec<AgentBriefLine>>,
+}
+
+impl AgentBriefOwnerAttribution {
+    /// No attribution: owner-span overlap and test edits stay unknown.
+    pub(super) fn unknown() -> Self {
+        Self {
+            changed_owners: Vec::new(),
+            enclosing_owners: Vec::new(),
+            edited_function_headers: None,
+        }
+    }
+}
+
 /// Innermost and enclosing owner attribution for changed lines from one
 /// index build. PR review placement uses the enclosing list to decide whether
 /// a seam owner's span overlaps the diff (RIPR-SPEC-0012). A resolution error
@@ -446,13 +472,13 @@ pub(super) fn agent_brief_owners_for_lines(
 pub(super) fn agent_brief_owner_attribution_for_lines(
     root: &Path,
     lines: &[AgentBriefLine],
-) -> (Vec<AgentBriefChangedOwner>, Vec<AgentBriefChangedOwner>) {
+) -> AgentBriefOwnerAttribution {
     let owner_inputs = lines
         .iter()
         .map(|line| (line.file.clone(), line.line))
         .collect::<Vec<_>>();
     let Ok(ownership) = analysis::changed_line_ownership_for_lines(root, &owner_inputs) else {
-        return (Vec::new(), Vec::new());
+        return AgentBriefOwnerAttribution::unknown();
     };
     let project = |owners: Vec<analysis::ChangedLineOwner>| {
         owners
@@ -460,10 +486,17 @@ pub(super) fn agent_brief_owner_attribution_for_lines(
             .map(|owner| AgentBriefChangedOwner::new(owner.file, owner.line, owner.owner))
             .collect::<Vec<_>>()
     };
-    (
-        project(ownership.owners),
-        project(ownership.enclosing_owners),
-    )
+    AgentBriefOwnerAttribution {
+        changed_owners: project(ownership.owners),
+        enclosing_owners: project(ownership.enclosing_owners),
+        edited_function_headers: Some(
+            ownership
+                .edited_function_headers
+                .into_iter()
+                .map(|(file, line)| AgentBriefLine::new(file, line))
+                .collect(),
+        ),
+    }
 }
 
 /// Confine an agent-brief `--files` entry to the workspace (#2100): strip
@@ -704,7 +737,7 @@ mod tests {
         };
         assert!(
             err.contains(&format!(
-                "canonicalize agent receipt --verify-json {verify_input} failed"
+                "agent receipt --verify-json {verify_input} does not exist"
             )),
             "error must name the missing receipt input: {err}"
         );
@@ -743,7 +776,7 @@ mod tests {
             return Err("a missing custom verify artifact must fail the receipt".to_string());
         };
         assert!(
-            err.contains("canonicalize agent receipt --verify-json comparisons/verify.json failed"),
+            err.contains("agent receipt --verify-json comparisons/verify.json does not exist"),
             "error must name the missing receipt input: {err}"
         );
         assert!(

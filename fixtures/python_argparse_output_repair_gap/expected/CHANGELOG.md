@@ -672,3 +672,25 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_argparse_output_repair_gap (37)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_argparse_output_repair_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_argparse_output_repair_gap (38)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_argparse_output_repair_gap --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -1,0 +1,46 @@
+{
+  "case_id": "arbitrary_cfg_test_generator_stays_test_code",
+  "subject_id": "authored-arbitrary-shapes-quickcheck",
+  "diff": "cases/arbitrary_cfg_test_generator_stays_test_code.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 36
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "quickcheck_cfg_test_arbitrary_impl_change",
+  "hard_case": "The changed generator lives inside `#[cfg(test)] mod tests`. Test-only source keeps its CfgTestModule evidence role (RIPR-SPEC-0153), so ripr seeds no production probe and reads silent; it must not surface a product gap.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Window(a, a.wrapping_add(7))",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests::window_width_is_end_minus_start",
+        "equivalence_review": "not equivalent: the in-module property pins every generated window's width to 4, so a window of width 7 fails `tests::window_width_is_end_minus_start`. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_failed."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "A generator in a test-only module is test code like any other cfg(test) helper (#11545, RIPR-SPEC-0153): the TestInputGenerator role does not override the CfgTestModule role, so silent is acceptable, not ideal. The in-module property pins the generated width, so the edit is discriminated.",
+  "axes": [
+    "test_library_idiom"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "9d0d4fecc0",
+    "full_checkout_verdict": "silent",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "matched"
+  }
+}

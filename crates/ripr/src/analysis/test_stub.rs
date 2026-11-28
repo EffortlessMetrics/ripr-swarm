@@ -5,6 +5,7 @@
 //! the end of a top-level owner file that has none, or the producer-admitted
 //! integration file. It calls the owner with its real receiver and argument
 //! shape, fills a boundary input when the seam's own comparison names one,
+//! builds the receiver from a constructor the impl establishes (`receiver`),
 //! and leaves every value ripr cannot know as a labelled `todo!()`.
 //!
 //! The expected value is never invented. A value-seam stub always stops at
@@ -25,7 +26,7 @@ use super::repair_route::{
 use super::seams::{RepoSeam, RequiredDiscriminator, SeamKind};
 use super::syntax::fn_signature::{
     OwnerContainer, OwnerParam, OwnerReceiver, OwnerSignature, field_init_is_returned,
-    identifier_offsets, owner_signature_at, single_comparison,
+    identifier_offsets, owner_signature_at, single_comparison, single_logical,
 };
 use super::syntax::{
     GovernedCfgTestModule, governed_cfg_test_modules, has_test_attribute,
@@ -121,6 +122,12 @@ pub(crate) struct RustTestStub {
     pub(crate) fill_ins: Vec<String>,
     /// Inputs ripr wrote from the seam's own comparison, as `name = value`.
     pub(crate) derived_inputs: Vec<String>,
+    /// #8361: how the receiver was built when ripr could name a constructor
+    /// (`subject = TokenBucket::new(5), as in the existing test ...`).
+    pub(crate) receiver_setup: Option<String>,
+    /// #8361: the inputs copied from an existing test's call
+    /// (`amount = 10_000, as in the existing test ...`).
+    pub(crate) input_setup: Option<String>,
 }
 
 /// Typed reason no stub was produced. Every refusal names what blocked it.
@@ -245,7 +252,10 @@ pub(crate) fn rust_test_stub_for_classified_seam(
         // The repair packet's edit cage allows only this existing integration
         // file, so the stub goes there rather than into the production file.
         RepairTargetSelection::Existing(existing)
-            if existing.test_kind() == TestKind::Integration =>
+            if matches!(
+                existing.test_kind(),
+                TestKind::Integration | TestKind::DeclaredIntegration
+            ) =>
         {
             let file = existing.file().to_path_buf();
             let crate_name = library_crate_name_for_root_file(root, entry.seam.file(), Some(&file));
@@ -437,7 +447,7 @@ fn rust_test_stub_for_target(
     } else {
         PathScope::ChildModule
     };
-    let body = stub_body(seam, &signature, &scope_import, source, path_scope)?;
+    let body = stub_body(seam, &signature, &scope_import, source, path_scope, &scope)?;
     // #8891: a second run for the same seam recomputes byte-identical text.
     // When the name collision is that earlier stub, the CLI reports "already
     // written" instead of suffixing a `_2` duplicate; a different test that
@@ -526,6 +536,8 @@ fn rust_test_stub_for_target(
         already_present,
         fill_ins: body.fill_ins,
         derived_inputs: body.derived_inputs,
+        receiver_setup: body.receiver_setup,
+        input_setup: body.input_setup,
     })
 }
 
@@ -772,6 +784,8 @@ struct StubBody {
     lines: Vec<String>,
     fill_ins: Vec<String>,
     derived_inputs: Vec<String>,
+    receiver_setup: Option<String>,
+    input_setup: Option<String>,
 }
 
 /// Where the test sits relative to the owner's module, which decides how
@@ -790,6 +804,7 @@ fn stub_body(
     scope_import: &str,
     source: &str,
     path_scope: PathScope<'_>,
+    scope: &StubScope<'_>,
 ) -> Result<StubBody, TestStubRefusal> {
     // `Self` is substituted with the impl type as the owner spells it, and
     // each completed type is respelled for the test once; respelling the
@@ -875,6 +890,9 @@ fn stub_body(
     let mut lines = vec![scope_import.to_string()];
     let mut fill_ins = Vec::new();
     let mut derived_inputs = Vec::new();
+    // `(binding, value)` for each input written as a concrete value.
+    let mut written_inputs: Vec<(String, String)> = Vec::new();
+    let mut receiver_setup = None;
     let mut boundary = boundary_inputs(seam, signature);
     if matches!(path_scope, PathScope::Integration(_)) {
         // A `tests/` file sees crate-root `pub const` items through
@@ -887,37 +905,163 @@ fn stub_body(
         });
     }
 
+    // #8361: a boundary on a `&str` parameter's length writes a string of
+    // exactly that length (a literal, so it holds in either test scope).
+    if boundary.is_empty() {
+        boundary = length_inputs::length_inputs(seam, signature, source);
+    }
+
+    // #8361: a match-arm stub writes the value the changed arm's own pattern
+    // names (`Event::Fail`, `2`) for each parameter it decides.
+    // The receiver state the arm also needs is named on the receiver line.
+    let mut arm_state = Vec::new();
+    if seam.kind() == SeamKind::MatchArm {
+        let arm = match_inputs::match_arm_inputs(
+            seam,
+            signature,
+            source,
+            matches!(path_scope, PathScope::ChildModule),
+        );
+        boundary.extend(arm.inputs);
+        arm_state = arm.state;
+    }
+    // #15281: a boundary over receiver state (`self.len >= MAX`) is only
+    // discriminated when the receiver sits on it; a constructed default
+    // (`len == 0`) passes under both comparisons.
+    let state_note = if arm_state.is_empty() {
+        receiver_boundary_state(seam, signature, subject)
+            .map(|state| format!("; for this case, set it so {state}"))
+    } else {
+        Some(format!(
+            "; for this arm, set it so {}",
+            arm_state.join(" and ")
+        ))
+    };
+
     // #11402: the pushed-into buffer starts empty, so the contents check
     // below reads exactly what this one call pushed.
     let pushed = pushed_buffer_parameter(seam, signature, source);
 
+    // #8361: a boundary stub on a free function copies the parameters the
+    // comparison does not read from an existing test's literal call, so the
+    // stub runs on one concrete case.
+    let bindings: Vec<String> = signature
+        .params
+        .iter()
+        .enumerate()
+        .map(|(index, param)| {
+            param
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("arg{}", index + 1))
+        })
+        .collect();
+    let reused = (seam.kind() == SeamKind::PredicateBoundary
+        && !boundary.is_empty()
+        && signature.receiver.is_none()
+        && self_type.is_none()
+        && qualified_self.is_none()
+        && matches!(path_scope, PathScope::ChildModule))
+    .then(|| {
+        let open: Vec<String> = bindings
+            .iter()
+            .filter(|binding| {
+                !boundary.iter().any(|(name, _)| name == *binding)
+                    && pushed.as_ref().is_none_or(|(name, _)| name != *binding)
+            })
+            .cloned()
+            .collect();
+        reused_inputs::reused_inputs(
+            signature,
+            &bindings,
+            &open,
+            &boundary,
+            seam.byte_offset(),
+            scope,
+        )
+    })
+    .flatten();
+    let input_setup = reused.as_ref().map(|reused| {
+        let values = reused
+            .values
+            .iter()
+            .map(|(binding, value)| format!("{binding} = {value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{values}, as in the existing test `{}`", reused.test)
+    });
+
     let receiver = match (signature.receiver, self_type) {
         (Some(receiver), Some(self_type)) => {
             let label = format!(
-                "ripr: build the `{self_type}` that `{}` runs on",
-                signature.name
+                "ripr: build the `{self_type}` that `{}` runs on{}",
+                signature.name,
+                state_note.as_deref().unwrap_or_default()
             );
             let keyword = if receiver == OwnerReceiver::RefMut {
                 "let mut"
             } else {
                 "let"
             };
-            lines.push(format!(
-                "{keyword} {subject}: {self_type} = todo!(\"{label}\");"
-            ));
-            fill_ins.push(label);
+            // #8361: a constructor the impl declares (and, preferably, an
+            // existing test already calls with literals) builds the
+            // receiver; only the inline test module sees private items.
+            let construction = matches!(path_scope, PathScope::ChildModule)
+                .then(|| {
+                    receiver::receiver_construction(
+                        source,
+                        seam.byte_offset(),
+                        strip_generic_arguments(self_type),
+                        scope,
+                    )
+                })
+                .flatten();
+            match construction {
+                Some(construction) => {
+                    lines.push(format!(
+                        "// {}{}",
+                        construction.comment(),
+                        state_note.as_deref().unwrap_or_default()
+                    ));
+                    lines.push(format!(
+                        "{keyword} {subject}: {self_type} = {};",
+                        construction.expression
+                    ));
+                    receiver_setup = Some(format!(
+                        "{subject} = {}, {}{}",
+                        construction.expression,
+                        construction.origin_text(),
+                        state_note.as_deref().unwrap_or_default()
+                    ));
+                }
+                None => {
+                    lines.push(format!(
+                        "{keyword} {subject}: {self_type} = todo!(\"{}\");",
+                        escape(&label)
+                    ));
+                    fill_ins.push(label);
+                }
+            }
             Some(subject)
         }
         (Some(_), None) => return Err(TestStubRefusal::OwnerUnsupported),
         (None, _) => None,
     };
 
+    if let Some(reused) = &reused {
+        let names = reused
+            .values
+            .iter()
+            .map(|(binding, _)| format!("`{binding}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!(
+            "// ripr: {names} as in the existing test `{}`; change it if this case needs another value",
+            reused.test
+        ));
+    }
     let mut arguments = Vec::new();
-    for (index, param) in signature.params.iter().enumerate() {
-        let binding = param
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("arg{}", index + 1));
+    for (param, binding) in signature.params.iter().zip(bindings) {
         let declared = impl_stand_in(&param.ty).unwrap_or_else(|| param.ty.clone());
         let ty = rebase_paths(
             &concrete_type(&declared, owner_self, owner_trait),
@@ -936,6 +1080,9 @@ fn stub_body(
             .as_ref()
             .filter(|(name, _)| name == &binding)
             .map(|(_, empty)| empty);
+        let copied = reused
+            .as_ref()
+            .and_then(|reused| reused.values.iter().find(|(name, _)| name == &binding));
         match (empty, boundary.iter().find(|(name, _)| name == &binding)) {
             (Some(empty), _) => {
                 lines.push(format!("{keyword} {binding}: {binding_ty} = {empty};"));
@@ -943,6 +1090,12 @@ fn stub_body(
             (None, Some((_, value))) => {
                 lines.push(format!("{keyword} {binding}: {binding_ty} = {value};"));
                 derived_inputs.push(format!("{binding} = {value}"));
+                written_inputs.push((binding.clone(), value.clone()));
+            }
+            (None, None) if copied.is_some() => {
+                let value = copied.map(|(_, value)| value.as_str()).unwrap_or_default();
+                lines.push(format!("{keyword} {binding}: {binding_ty} = {value};"));
+                written_inputs.push((binding.clone(), value.to_string()));
             }
             (None, None) => {
                 let label = format!("ripr: choose `{binding}`{}", input_hint(seam, &binding));
@@ -1031,7 +1184,7 @@ fn stub_body(
             let hint = if derived_inputs.is_empty() {
                 discriminator_hint(seam)
             } else {
-                format!(" for {}", derived_inputs.join(", "))
+                format!(" for {}", inputs_text(&written_inputs))
             };
             let traits = value_traits(&return_type, source);
             let label = match traits {
@@ -1044,6 +1197,34 @@ fn stub_body(
                     signature.name
                 ),
             };
+            // #8361: when the written inputs decide the owner's path to a
+            // constant, the label names what the changed code (and, for a
+            // relational boundary, its neighbor operator) returns there. The
+            // value is never written as `expected`: the change may be the bug.
+            let hint = matches!(traits, ValueTraits::PartialEqAndDebug)
+                .then(|| {
+                    expected_value::expected_value(
+                        seam,
+                        signature,
+                        source,
+                        &written_inputs,
+                        matches!(path_scope, PathScope::ChildModule),
+                    )
+                })
+                .flatten();
+            let label = match hint {
+                Some(hint) => {
+                    let neighbor = hint
+                        .neighbor
+                        .map(|(op, value)| format!("; with `{op}` it returns {value}"))
+                        .unwrap_or_default();
+                    format!(
+                        "{label} (the changed code returns {}{neighbor}; keep the intended one)",
+                        hint.changed
+                    )
+                }
+                None => label,
+            };
             match traits {
                 ValueTraits::PartialEqAndDebug => {
                     lines.push(format!(
@@ -1052,17 +1233,14 @@ fn stub_body(
                     ));
                     let observed = if inline_call { call.as_str() } else { "actual" };
                     lines.push(format!("assert_eq!({observed}, expected);"));
+                    fill_ins.push(label);
                 }
-                // `PartialEq` or `Debug` is not visible for the return
-                // type, so no generated comparison is sure to compile (a
-                // Debug-text comparison also needs `format!`, which no_std
-                // crates lack): the assertion itself is the fill-in.
                 ValueTraits::Unknown => {
                     lines.push("let _ = &actual;".to_string());
                     lines.push(format!("todo!(\"{}\");", escape(&label)));
+                    fill_ins.push(label);
                 }
             }
-            fill_ins.push(label);
         }
     }
     if unit_return {
@@ -1090,7 +1268,7 @@ fn stub_body(
         let hint = if derived_inputs.is_empty() {
             discriminator_hint(seam)
         } else {
-            format!(" for {}", derived_inputs.join(", "))
+            format!(" for {}", inputs_text(&written_inputs))
         };
         for (binding, ty) in targets {
             let label = if pushed.as_ref().is_some_and(|(name, _)| name == &binding) {
@@ -1124,6 +1302,8 @@ fn stub_body(
         lines,
         fill_ins,
         derived_inputs,
+        receiver_setup,
+        input_setup,
     })
 }
 
@@ -1219,6 +1399,15 @@ fn pushed_buffer_parameter(
         "Vec::new()"
     };
     Some((receiver.to_string(), empty.to_string()))
+}
+
+/// `name = value` for each written input, for a fill-in label.
+fn inputs_text(inputs: &[(String, String)]) -> String {
+    inputs
+        .iter()
+        .map(|(binding, value)| format!("{binding} = {value}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Concrete boundary inputs from a single comparison over integer
@@ -1716,7 +1905,7 @@ fn input_hint(seam: &RepoSeam, binding: &str) -> String {
         RequiredDiscriminator::BoundaryValue { description }
             if description.contains(binding) && !description.trim().is_empty() =>
         {
-            match relational_boundary(seam) {
+            match relational_boundary(seam).or_else(|| logical_split(seam)) {
                 Some(boundary) => format!(" so that {boundary}"),
                 None => format!(" so that {}", one_line(description)),
             }
@@ -1823,13 +2012,101 @@ fn relational_boundary(seam: &RepoSeam) -> Option<String> {
     })
 }
 
+/// #15281: the receiver state a relational boundary over `self` needs,
+/// respelled on the stub's receiver binding (`subject.len == MAX`). `None`
+/// when the comparison does not read the receiver, or when it also reads a
+/// parameter: that parameter's own fill-in (`choose n so that self.tokens ==
+/// n`) already reaches the boundary without changing the receiver.
+fn receiver_boundary_state(
+    seam: &RepoSeam,
+    signature: &OwnerSignature,
+    subject: &str,
+) -> Option<String> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let comparison = single_comparison(seam.expression())?;
+    if !matches!(comparison.op.as_str(), "<" | "<=" | ">" | ">=") {
+        return None;
+    }
+    let state = format!(
+        "{} == {}",
+        one_line(comparison.lhs.trim()),
+        one_line(comparison.rhs.trim())
+    );
+    // A parameter is read only by an unqualified mention: `self.len` names a
+    // field, not a `len` parameter.
+    let reads_parameter = signature
+        .params
+        .iter()
+        .filter_map(|param| param.name.as_deref())
+        .any(|name| {
+            word_offsets(&state, name)
+                .into_iter()
+                .any(|at| !state[..at].ends_with(['.', ':']))
+        });
+    if reads_parameter {
+        return None;
+    }
+    // Only a receiver path (`self.len`) is respelled; `self::MAX` names the
+    // module and stays as written.
+    let receiver_reads = word_offsets(&state, "self")
+        .into_iter()
+        .filter(|&at| {
+            !state[..at].ends_with(['.', ':']) && state[at + "self".len()..].starts_with('.')
+        })
+        .collect::<Vec<_>>();
+    if receiver_reads.is_empty() {
+        return None;
+    }
+    let mut respelled = state.clone();
+    for at in receiver_reads.into_iter().rev() {
+        respelled.replace_range(at..at + "self".len(), subject);
+    }
+    Some(format!("`{respelled}`"))
+}
+
+/// Byte offsets where `word` occurs in `text` as a whole identifier (the
+/// boundary rule of [`replace_word`]).
+fn word_offsets(text: &str, word: &str) -> Vec<usize> {
+    if word.is_empty() {
+        return Vec::new();
+    }
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    text.match_indices(word)
+        .map(|(at, _)| at)
+        .filter(|&at| {
+            !text[..at].chars().next_back().is_some_and(ident)
+                && !text[at + word.len()..].chars().next().is_some_and(ident)
+        })
+        .collect()
+}
+
+/// #15281: the input condition that tells `a && b` from `a || b`. The two
+/// agree when both operands are true or both are false, so inputs that
+/// merely satisfy the changed predicate (`in_stock || paid` with both true)
+/// pass under either; the discriminating inputs make exactly one true.
+fn logical_split(seam: &RepoSeam) -> Option<String> {
+    if seam.kind() != SeamKind::PredicateBoundary {
+        return None;
+    }
+    let logical = single_logical(seam.expression())?;
+    let neighbor = if logical.op == "&&" { "||" } else { "&&" };
+    Some(format!(
+        "exactly one of `{}` and `{}` is true (where `{}` and `{neighbor}` differ)",
+        one_line(logical.lhs.trim()),
+        one_line(logical.rhs.trim()),
+        logical.op
+    ))
+}
+
 fn discriminator_hint(seam: &RepoSeam) -> String {
     match seam.required_discriminator() {
         RequiredDiscriminator::BoundaryValue { description }
         | RequiredDiscriminator::ReturnValue { description }
             if !description.trim().is_empty() =>
         {
-            match relational_boundary(seam) {
+            match relational_boundary(seam).or_else(|| logical_split(seam)) {
                 Some(boundary) => format!(" when {boundary}"),
                 None => format!(" when {}", one_line(description)),
             }
@@ -1937,6 +2214,12 @@ fn escape(text: &str) -> String {
         .replace('{', "{{")
         .replace('}', "}}")
 }
+
+mod expected_value;
+mod length_inputs;
+mod match_inputs;
+mod receiver;
+mod reused_inputs;
 
 #[cfg(test)]
 mod tests;

@@ -551,3 +551,59 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (34)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (35)
+
+Reason:
+RIPR-SPEC-0094: a literal-only assertion reads no value and supplies no oracle (#14968)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (36)
+
+Reason:
+RIPR-SPEC-0094: an unconditional literal-only assertion reads as absent, so the row names no oracle text (#14968)
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — observation_unverified_call_deletion (37)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — observation_unverified_call_deletion (38)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless observation_unverified_call_deletion --reason "..."`
+
+Updated:
+- `expected/human.txt`

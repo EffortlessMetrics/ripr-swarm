@@ -30,6 +30,7 @@ mod native_artifacts;
 mod panic_outcome;
 mod spec_0237;
 mod timeout_retry;
+mod unreadable;
 
 fn seam(file: &str, line: usize, expression: &str) -> RepoSeam {
     RepoSeam::new(
@@ -62,6 +63,7 @@ fn missing() -> MissingDiscriminatorFact {
 
 fn related_test() -> RelatedTestGrip {
     RelatedTestGrip {
+        assertion_targets_non_function: None,
         test_name: "below_threshold_has_no_discount".to_string(),
         file: PathBuf::from("tests/pricing.rs"),
         line: 12,
@@ -138,6 +140,7 @@ fn python_repair_card() -> PythonRepairCard {
         ),
         verify_command:
             "pytest tests/test_pricing.py::test_calculate_discount_above_threshold".to_string(),
+        verify_cwd: None,
         verify_command_confidence: "high".to_string(),
         receipt_command: None,
         receipt_status: "unavailable_until_python_gap_ledger".to_string(),
@@ -1002,7 +1005,7 @@ fn pilot_ranks_an_unreached_ungripped_seam_whose_activation_is_unknown() {
     let mut unresolved = classified_in_owner(SeamGripClass::Ungripped, "src/c.rs", "c::h", 12);
     unresolved.evidence.reach = stage(StageState::No);
     unresolved.evidence.activate = stage(StageState::Unknown);
-    unresolved.evidence.activate.summary = "Boundary activation operand is a local computed value for seam `x > limit`; add analyzer support before emitting an actionable repair packet".to_string();
+    unresolved.evidence.activate.summary = "activation_boundary_input_unresolved: Boundary activation operands are local or computed for seam `x > limit`; add analyzer support for local/computed boundary operand resolution before emitting an actionable repair packet".to_string();
     let entries = [unreached, quoting, limited, unresolved];
     let ranked = top_actionable_seams(&entries, 5, None);
     assert_eq!(
@@ -1136,11 +1139,12 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     ];
     let artifacts = pilot_artifacts();
     let context = pilot_context(&artifacts);
-    let ranked = "more are in target/ripr/pilot/pilot-summary.md; --max-seams N shows more";
+    let ranked =
+        "the ranked list is in target/ripr/pilot/pilot-summary.md; --max-seams N lists more there";
 
     let terminal = render_pilot_terminal(&entries, context);
     assert!(
-        terminal.contains(&format!("  3 gaps to fix; showing the top 1 ({ranked})\n")),
+        terminal.contains(&format!("  3 gaps to fix in the whole repo (`ripr check` counts only your change); showing the top 1 ({ranked})\n")),
         "{terminal}"
     );
 
@@ -1160,7 +1164,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     let terminal = render_pilot_terminal(&entries, limited);
     assert!(
         terminal.contains(&format!(
-            "  at least 3 gaps to fix; showing the top 1 ({ranked})\n"
+            "  at least 3 gaps to fix in the whole repo (`ripr check` counts only your change); showing the top 1 ({ranked})\n"
         )),
         "{terminal}"
     );
@@ -1172,7 +1176,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
         reason: "static limit rust_nesting_budget".to_string(),
     }];
     let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], false, &[])
             .with_declined_rust_files(declined);
     let declined_context = PilotSummaryContext {
         language_routes: Some(&routes),
@@ -1180,7 +1184,7 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
     };
     let terminal = render_pilot_terminal(&entries, declined_context);
     assert!(
-        terminal.contains("  at least 3 gaps to fix; showing the top 1"),
+        terminal.contains("  at least 3 gaps to fix in the whole repo (`ripr check` counts only your change); showing the top 1"),
         "{terminal}"
     );
 
@@ -1196,7 +1200,10 @@ fn pilot_terminal_discloses_actionable_total_and_max_seams_escape() {
         terminal.contains("  1 gap to fix; showing it\n"),
         "{terminal}"
     );
-    assert!(!terminal.contains("--max-seams N shows more"), "{terminal}");
+    assert!(
+        !terminal.contains("--max-seams N lists more there"),
+        "{terminal}"
+    );
 }
 
 #[test]
@@ -1515,7 +1522,7 @@ fn pilot_terminal_qualifies_empty_ranking_when_rust_files_were_declined() {
         reason: "static limit rust_nesting_budget".to_string(),
     }];
     let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], false, &[])
             .with_declined_rust_files(declined);
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
@@ -1543,9 +1550,14 @@ fn pilot_route_lines_say_no_gaps_only_about_the_rust_code_it_checked() {
         path: PathBuf::from("src/deep.rs"),
         reason: "static limit rust_nesting_budget".to_string(),
     }];
-    let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files)
-            .with_declined_rust_files(declined);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        false,
+        &files,
+    )
+    .with_declined_rust_files(declined);
     let limit = crate::analysis::SeamLimitInfo {
         analyzed: 2,
         total: 9,
@@ -2476,6 +2488,75 @@ fn pilot_offers_agent_repair_only_past_the_repair_packet_flip() -> Result<(), St
     Ok(())
 }
 
+/// #13624: a gap beside a skipped unreadable path may only be a test hidden
+/// there, so the same route-ready seam that is offered with no limitation is
+/// neither ranked nor offered a repair on any surface once a path was skipped.
+#[test]
+fn pilot_offers_no_gap_or_repair_while_an_unreadable_path_was_skipped() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let entries = [route_ready_entry(&["tests/pricing.rs"])];
+    let command = format!(
+        "ripr agent repair --root {} --seam-id {} --phase before",
+        crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(".")),
+        entries[0].seam.id().as_str()
+    );
+    // Positive control: with no limitation the repair is offered.
+    let control: serde_json::Value = serde_json::from_str(&render_pilot_summary_json(
+        &entries,
+        pilot_context(&artifacts),
+    ))
+    .map_err(|e| e.to_string())?;
+    assert_eq!(
+        control["next"]["repair_command"].as_str(),
+        Some(command.as_str())
+    );
+
+    let limitations = [AnalysisLimitation::new(
+        AnalysisLimitationKind::LanguageScopeUnsupported,
+        AnalysisStage::LanguageAdapter,
+        AnalysisRecovery::new(
+            AnalysisRecoveryKind::Retry,
+            "Restore read access, then re-run.",
+        )?,
+    )
+    .with_path("tests/locked")?
+    .with_affected_items(1)?
+    .with_detail("unchanged Rust path could not be read")?];
+    let mut context = pilot_context(&artifacts);
+    context.inventory_evidence_limitations = &limitations;
+    let json = render_pilot_summary_json(&entries, context);
+    let summary: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    assert_eq!(
+        summary["top_actionable_seams"],
+        serde_json::json!([]),
+        "{json}"
+    );
+    assert!(summary["next"]["repair_command"].is_null(), "{json}");
+    assert!(summary["next"]["outcome_command"].is_null(), "{json}");
+    let terminal = render_pilot_terminal(&entries, context);
+    let md = render_pilot_summary_md(&entries, context);
+    for (name, text) in [("terminal", &terminal), ("markdown", &md), ("json", &json)] {
+        assert!(!text.contains(&command), "{name} offered a repair\n{text}");
+    }
+    assert!(terminal.contains("tests/locked"), "{terminal}");
+    assert!(terminal.contains("no gap is ranked"), "{terminal}");
+    assert!(!terminal.contains("some changed files"), "{terminal}");
+    assert!(md.contains("no gap is ranked"), "{md}");
+    // The closing guidance must not offer the snapshot pair either (JSON nulls it).
+    for (name, text) in [("terminal", &terminal), ("markdown", &md)] {
+        assert!(
+            text.contains("Restore read access to the Rust path"),
+            "{name}\n{text}"
+        );
+        assert!(
+            !text.contains("ripr outcome"),
+            "{name} offered an outcome\n{text}"
+        );
+        assert!(!text.contains("--phase after"), "{name}\n{text}");
+    }
+    Ok(())
+}
+
 /// #11292: `has_repair_route` mirrors the two conjuncts of
 /// `repair_start_command_for`; this keeps the two from drifting.
 #[test]
@@ -2703,6 +2784,49 @@ fn pilot_repair_line_follows_the_canonical_pilot_decision() -> Result<(), String
     let terminal = render_pilot_terminal(&entries, pilot_context(&artifacts));
     assert!(!terminal.contains("agent repair --root"), "{terminal}");
     assert!(!terminal.contains("Next, in order:"), "{terminal}");
+    Ok(())
+}
+
+/// #16381 review: the CLI's dirty-premise probe runs only when the top seam's
+/// repair start will be printed. A seam with no start keeps its old (zero)
+/// spawn count with the probe enabled; a seam with a start pays for the
+/// probe once, though both surfaces render from it.
+#[test]
+fn pilot_premise_probe_runs_only_when_a_repair_start_is_printed() -> Result<(), String> {
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    let spawns = |entry: &ClassifiedSeam, observe: bool| {
+        let entries = std::slice::from_ref(entry);
+        let before = crate::git::test_process_spawns();
+        let _ = render_pilot_human_summaries_with_premise(entries, context, observe);
+        crate::git::test_process_spawns() - before
+    };
+    let ineligible = route_ready_entry(&["tests/pricing.rs", "tests/pricing.test.ts"]);
+    assert_eq!(
+        commands::repair_start_command(context.root, &ineligible),
+        None
+    );
+    assert_eq!(spawns(&ineligible, false), 0);
+    assert_eq!(spawns(&ineligible, true), 0, "no start, so no probe");
+
+    let eligible = route_ready_entry(&["tests/pricing.rs"]);
+    if commands::repair_start_command(context.root, &eligible).is_none() {
+        return Err("fixture seam must offer a repair start".to_string());
+    }
+    let without = spawns(&eligible, false);
+    let with = spawns(&eligible, true);
+    assert!(
+        with > without,
+        "a printed start is probed: {without} -> {with}"
+    );
+    // One observation: a second probe would at least double the delta.
+    let probe = with - without;
+    let single = {
+        let before = crate::git::test_process_spawns();
+        let _ = crate::app::seam_start_premise(context.root);
+        crate::git::test_process_spawns() - before
+    };
+    assert_eq!(probe, single, "both surfaces share one probe");
     Ok(())
 }
 
@@ -2990,11 +3114,17 @@ fn pilot_language_routes_split_real_discovery_javascript_files() {
     let root = Path::new(".");
     let enabled = [LanguageId::Rust, LanguageId::TypeScript];
     let routes_of = |entries: &[(LanguageId, &str)]| {
-        PilotLanguageRoutes::from_discovered(root, false, &enabled, &discovered_files(entries))
-            .routes
-            .iter()
-            .map(|route| (route.language, route.file_count))
-            .collect::<Vec<_>>()
+        PilotLanguageRoutes::from_discovered(
+            root,
+            false,
+            &enabled,
+            false,
+            &discovered_files(entries),
+        )
+        .routes
+        .iter()
+        .map(|route| (route.language, route.file_count))
+        .collect::<Vec<_>>()
     };
 
     assert_eq!(
@@ -3028,10 +3158,14 @@ fn pilot_language_routes_split_real_discovery_javascript_files() {
 fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     use super::language_routes::PilotLanguageRoutesState;
     use crate::domain::LanguageId;
-    use crate::output::repo_exposure::{PythonRepoExposureGuidance, TsFullRepoGuidance};
+    use crate::domain::language_availability::{
+        AvailabilityState, availability_report_for_detected,
+    };
+    use crate::output::repo_exposure::TsFullRepoGuidance;
 
     let root = Path::new(".");
-    let rust_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[]);
+    let rust_only =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], false, &[]);
     assert_eq!(rust_only.state, PilotLanguageRoutesState::NotDetected);
     assert!(rust_only.routes.is_empty());
     assert!(rust_only.required().is_none());
@@ -3044,17 +3178,20 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         (LanguageId::TypeScript, "web/d.ts"),
     ]);
     let enabled = [LanguageId::Rust, LanguageId::TypeScript];
-    let required = PilotLanguageRoutes::from_discovered(root, false, &enabled, &files);
+    let required = PilotLanguageRoutes::from_discovered(root, false, &enabled, false, &files);
     assert_eq!(required.state, PilotLanguageRoutesState::Required);
     assert_eq!(required.state.as_str(), "required");
     // A language this binary cannot analyze (#4252: TypeScript and Python
     // in a Rust-only build, Perl without `lang-perl`) gets the unavailable
     // route whatever ripr.toml enables: no command, the adapter notice.
-    let assert_unavailable = |route: &super::language_routes::PilotLanguageRoute| {
+    let assert_unavailable = |route: &super::language_routes::PilotLanguageRoute,
+                              guidance_expected: bool| {
         assert_eq!(route.language_status(), "unavailable");
         assert_eq!(route.route(), "unavailable_in_this_binary");
         assert_eq!(route.command, None);
-        assert_eq!(route.guidance, route.language.unavailable_adapter_notice());
+        if !guidance_expected {
+            assert_eq!(route.guidance, None);
+        }
     };
     let typescript_available = LanguageId::TypeScript.is_available();
     let summary = required
@@ -3074,7 +3211,18 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     );
     for route in &required.routes[..2] {
         if !typescript_available {
-            assert_unavailable(route);
+            let report = availability_report_for_detected(
+                route.language,
+                route.file_count,
+                Some(&enabled),
+                false,
+            );
+            assert_eq!(
+                report.state,
+                AvailabilityState::ConfiguredEnabledButUnavailable
+            );
+            assert_unavailable(route, true);
+            assert_eq!(route.guidance, route.language.unavailable_adapter_notice());
             continue;
         }
         assert_eq!(route.command.as_deref(), Some(route_command().as_str()));
@@ -3087,23 +3235,24 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
     let python = &required.routes[2];
     if LanguageId::Python.is_available() {
         assert_eq!(python.command.as_deref(), Some(route_command().as_str()));
-        assert_eq!(
-            python.guidance_category,
-            Some(PythonRepoExposureGuidance::CATEGORY)
-        );
-        assert_eq!(
-            python.guidance.as_deref(),
-            Some(PythonRepoExposureGuidance::REPAIR_ROUTE)
+        assert!(!python.enabled);
+        assert!(
+            python
+                .guidance
+                .as_deref()
+                .is_some_and(|text| text.contains("[languages]")),
+            "{:?}",
+            python.guidance
         );
     } else {
-        assert_unavailable(python);
+        assert_unavailable(python, false);
     }
     let perl = &required.routes[3];
     if LanguageId::Perl.is_available() {
         assert_eq!(perl.language_status(), "preview");
         assert_eq!(perl.command.as_deref(), Some(route_command().as_str()));
     } else {
-        assert_unavailable(perl);
+        assert_unavailable(perl, false);
     }
     let route = route_command();
     let expected_commands: Vec<&str> = if typescript_available || LanguageId::Python.is_available()
@@ -3130,7 +3279,7 @@ fn pilot_language_routes_state_follows_rust_seams_and_discovered_languages() {
         assert!(required.supported_headline_route().is_none());
     }
 
-    let supplementary = PilotLanguageRoutes::from_discovered(root, true, &enabled, &files);
+    let supplementary = PilotLanguageRoutes::from_discovered(root, true, &enabled, false, &files);
     assert_eq!(supplementary.state, PilotLanguageRoutesState::Supplementary);
     assert_eq!(supplementary.routes, required.routes);
     assert!(supplementary.required().is_none());
@@ -3156,7 +3305,8 @@ fn pilot_terminal_route_label_has_one_shape_for_every_language() {
         (LanguageId::Python, "src/pricing.py"),
     ]);
     let enabled = [LanguageId::Rust, LanguageId::TypeScript, LanguageId::Python];
-    let routes = PilotLanguageRoutes::from_discovered(Path::new("."), false, &enabled, &files);
+    let routes =
+        PilotLanguageRoutes::from_discovered(Path::new("."), false, &enabled, false, &files);
     let runnable: Vec<_> = routes
         .routes
         .iter()
@@ -3210,8 +3360,9 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
     // "complete", "none ranked", and offered a test-then-compare loop.
     let artifacts = pilot_artifacts();
     let root = Path::new(".");
-    let go_only = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
-        .with_unanalyzed(vec![("Go", 2)], false);
+    let go_only =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], false, &[])
+            .with_unanalyzed(vec![("Go", 2)], false);
     assert_eq!(go_only.state, PilotLanguageRoutesState::UnanalyzedOnly);
     let context = PilotSummaryContext {
         language_routes: Some(&go_only),
@@ -3258,8 +3409,9 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
 
     // Rust seams present: the ranking stands and the Go files stay a JSON
     // note, so Rust users' output is unchanged.
-    let with_rust = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
-        .with_unanalyzed(vec![("Go", 2)], true);
+    let with_rust =
+        PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], false, &[])
+            .with_unanalyzed(vec![("Go", 2)], true);
     assert_eq!(with_rust.state, PilotLanguageRoutesState::NotDetected);
     assert!(with_rust.unanalyzed_only().is_none());
     let json = render_pilot_summary_json(
@@ -3281,12 +3433,13 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
 
     // A Rust crate with no seams yet (a lone `pub const`) plus a CI script
     // is a Rust repository, not an unanalyzed one.
-    let seamless_rust = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &[])
-        .with_unanalyzed(vec![("Shell", 1)], true);
+    let seamless_rust =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], false, &[])
+            .with_unanalyzed(vec![("Shell", 1)], true);
     assert!(seamless_rust.unanalyzed_only().is_none());
 
     // Nothing unanalyzed: the JSON shape is unchanged for Rust users.
-    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[]);
+    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], false, &[]);
     let json = render_pilot_summary_json(
         &[],
         PilotSummaryContext {
@@ -3311,6 +3464,39 @@ fn pilot_names_unanalyzed_languages_instead_of_an_empty_complete_ranking() -> Re
     Ok(())
 }
 
+/// #13624: Rust disabled and the only Rust lives in an unreadable directory.
+/// The readable count is 0 and must render as unknown, never a made-up count
+/// and never as "no Rust files".
+#[test]
+fn pilot_rust_exclusion_of_an_unreadable_only_tree_has_no_invented_count() {
+    use crate::domain::LanguageId;
+
+    let artifacts = pilot_artifacts();
+    let excluded = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        false,
+        &[],
+    )
+    .with_unanalyzed(Vec::new(), true)
+    .with_rust_exclusion(Some(0));
+    let context = PilotSummaryContext {
+        language_routes: Some(&excluded),
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    let md = render_pilot_summary_md(&[], context);
+    for (name, text) in [("terminal", &terminal), ("markdown", &md)] {
+        assert!(
+            text.contains("an unreadable path (file count unknown)"),
+            "{name}\n{text}"
+        );
+        assert!(!text.contains("0 files"), "{name}\n{text}");
+        assert!(!text.contains("1 file"), "{name}\n{text}");
+    }
+}
+
 #[test]
 fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<(), String> {
     use crate::domain::LanguageId;
@@ -3319,9 +3505,10 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
     // config, not by merit, and all three surfaces say so.
     let artifacts = pilot_artifacts();
     let root = Path::new(".");
-    let excluded = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &[])
-        .with_unanalyzed(Vec::new(), true)
-        .with_rust_exclusion(Some(3));
+    let excluded =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], false, &[])
+            .with_unanalyzed(Vec::new(), true)
+            .with_rust_exclusion(Some(3));
     assert_eq!(excluded.rust_exclusion(), Some(3));
     let context = PilotSummaryContext {
         language_routes: Some(&excluded),
@@ -3362,7 +3549,7 @@ fn pilot_names_rust_exclusion_instead_of_silently_ranking_nothing() -> Result<()
     assert!(parsed["next"]["outcome_command"].is_null(), "{json}");
 
     // No exclusion: the JSON shape is unchanged for Rust users.
-    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &[])
+    let plain = PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], false, &[])
         .with_rust_exclusion(None);
     let json = render_pilot_summary_json(
         &[],
@@ -3395,7 +3582,7 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
         reason: "static limit rust_nesting_budget: estimated nesting depth 10001 exceeds the 256-level parse budget; parse refused to avoid a stack overflow".to_string(),
     }];
     let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[])
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], false, &[])
             .with_declined_rust_files(declined);
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
@@ -3433,7 +3620,7 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
 
     // Nothing declined: the JSON shape is unchanged.
     let plain =
-        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], &[]);
+        PilotLanguageRoutes::from_discovered(Path::new("."), true, &[LanguageId::Rust], false, &[]);
     let json = render_pilot_summary_json(
         &[],
         PilotSummaryContext {
@@ -3447,6 +3634,83 @@ fn pilot_names_declined_rust_files_in_every_surface() -> Result<(), String> {
     let parsed: serde_json::Value = serde_json::from_str(&json)
         .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
     assert!(parsed.get("declined_rust_files").is_none(), "{json}");
+    Ok(())
+}
+
+#[test]
+fn enabled_perl_keeps_fact_packet_prerequisites_in_all_renderers() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    if !LanguageId::Perl.is_available() {
+        return Ok(());
+    }
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::Perl, "lib/App.pm")]);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Rust, LanguageId::Perl],
+        false,
+        &files,
+    );
+    let prerequisite = LanguageId::Perl
+        .enable_prerequisite()
+        .ok_or("Perl must have an enable prerequisite")?;
+    assert_eq!(routes.routes[0].guidance, Some(prerequisite.clone()));
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        seam_limit: None,
+        repo_exposure_byte_bound: None,
+        ..pilot_context(&artifacts)
+    };
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(terminal.contains(&prerequisite), "{terminal}");
+    let md = render_pilot_summary_md(&[], context);
+    assert!(md.contains(&prerequisite), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert_eq!(
+        parsed["language_routes"]["routes"][0]["guidance"],
+        prerequisite
+    );
+    Ok(())
+}
+
+#[test]
+fn explicitly_disabled_typescript_invents_no_rebuild_step() -> Result<(), String> {
+    use crate::domain::LanguageId;
+
+    if LanguageId::TypeScript.is_available() {
+        return Ok(());
+    }
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::TypeScript, "web/c.ts")]);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Rust],
+        false,
+        &files,
+    );
+    assert_eq!(routes.routes[0].guidance, None);
+    let context = PilotSummaryContext {
+        language_routes: Some(&routes),
+        seam_limit: None,
+        repo_exposure_byte_bound: None,
+        ..pilot_context(&artifacts)
+    };
+    let notice = LanguageId::TypeScript
+        .unavailable_adapter_notice()
+        .ok_or("an unavailable adapter must have a notice")?;
+    let terminal = render_pilot_terminal(&[], context);
+    assert!(!terminal.contains(&notice), "{terminal}");
+    let md = render_pilot_summary_md(&[], context);
+    assert!(!md.contains(&notice), "{md}");
+    let json = render_pilot_summary_json(&[], context);
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|err| format!("pilot summary JSON must parse: {err}\n{json}"))?;
+    assert!(parsed["language_routes"]["routes"][0]["guidance"].is_null());
     Ok(())
 }
 
@@ -3471,7 +3735,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         vec![related_test()],
     )];
     let supplementary =
-        PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], &files);
+        PilotLanguageRoutes::from_discovered(root, true, &[LanguageId::Rust], false, &files);
     let with_routes = PilotSummaryContext {
         language_routes: Some(&supplementary),
         seam_limit: None,
@@ -3495,7 +3759,8 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     assert_eq!(parsed["language_routes"]["routes"][1]["language"], "perl");
 
     // No Rust seams: every surface names the routes and none reads as clean.
-    let required = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], &files);
+    let required =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Rust], false, &files);
     let context = PilotSummaryContext {
         language_routes: Some(&required),
         seam_limit: None,
@@ -3514,14 +3779,10 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
         "{md}"
     );
     if let Some(notice) = LanguageId::TypeScript.unavailable_adapter_notice() {
-        // #4252: a Rust-only build names the rebuild and invents no route.
-        assert!(
-            terminal.contains(&format!(
-                "typescript: 1 file (not available in this build)\n    {notice}\n"
-            )),
-            "{terminal}"
-        );
-        assert!(md.contains(&notice), "{md}");
+        // #4252: a Rust-only build discloses scope but invents no setup step
+        // after an explicit opt-out.
+        assert!(!terminal.contains(&notice), "{terminal}");
+        assert!(!md.contains(&notice), "{md}");
         if !LanguageId::Perl.is_available() {
             // Neither discovered language is analyzable: no command at all.
             assert!(!terminal.contains("route: ripr check"), "{terminal}");
@@ -3539,6 +3800,17 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             terminal.contains(&format!("typescript: 1 file (preview; turn it on in ripr.toml [languages] to check it)\n    route: {}\n", route_command())),
             "{terminal}"
         );
+        let disabled_guidance = required
+            .routes
+            .iter()
+            .find(|route| route.language == LanguageId::TypeScript)
+            .and_then(|route| route.guidance.clone());
+        if let Some(guidance) = disabled_guidance {
+            assert!(
+                terminal.contains(&format!("    {guidance}\n")),
+                "{terminal}"
+            );
+        }
         assert!(
             terminal.contains(
                 "none: pilot found no gaps in the Rust code it checked; see the other languages below"
@@ -3572,6 +3844,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             root,
             false,
             &[LanguageId::Rust, LanguageId::TypeScript],
+            false,
             &files,
         );
         let enabled_context = PilotSummaryContext {
@@ -3610,12 +3883,11 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
     assert!(json.contains("\"state\": \"required\""), "{json}");
     if let Some(notice) = LanguageId::Perl.unavailable_adapter_notice() {
         assert!(
-            terminal.contains(&format!(
-                "perl: 1 file (not available in this build)\n    {notice}\n"
-            )),
+            terminal.contains("perl: 1 file (not available in this build)\n"),
             "{terminal}"
         );
-        assert!(md.contains(&notice), "{md}");
+        assert!(!terminal.contains(&notice), "{terminal}");
+        assert!(!md.contains(&notice), "{md}");
     }
 
     // Only unavailable languages: no runnable command is invented.
@@ -3624,6 +3896,7 @@ fn pilot_renderers_show_language_routes_only_without_rust_seams() -> Result<(), 
             root,
             false,
             &[LanguageId::Rust],
+            false,
             &discovered_files(&[(LanguageId::Perl, "lib/App.pm")]),
         );
         let context = PilotSummaryContext {
@@ -3661,8 +3934,14 @@ fn pilot_omits_rust_gap_sentence_when_repo_has_no_rust() -> Result<(), String> {
     let artifacts = pilot_artifacts();
     let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
     let build = |rust_source_present: bool| {
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files)
-            .with_unanalyzed(Vec::new(), rust_source_present)
+        PilotLanguageRoutes::from_discovered(
+            Path::new("."),
+            false,
+            &[LanguageId::Python],
+            false,
+            &files,
+        )
+        .with_unanalyzed(Vec::new(), rust_source_present)
     };
     let render = |routes: &PilotLanguageRoutes| {
         render_pilot_terminal(
@@ -3717,8 +3996,13 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
 
     let artifacts = pilot_artifacts();
     let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
-    let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        false,
+        &files,
+    );
     let python = PilotPythonFirstUse {
         status: super::types::PilotPythonFirstUseStatus::NoPythonFindings,
         findings_total: 0,
@@ -3818,8 +4102,13 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
     // Disabled TypeScript still lists the check route below, but must not
     // headline "analyze the TypeScript diff": check skips it until enabled.
     let ts_files = discovered_files(&[(LanguageId::TypeScript, "web/c.ts")]);
-    let disabled_ts =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Rust], &ts_files);
+    let disabled_ts = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Rust],
+        false,
+        &ts_files,
+    );
     if LanguageId::TypeScript.is_available() {
         assert!(
             disabled_ts.supported_headline_route().is_none(),
@@ -3855,6 +4144,7 @@ fn pilot_headline_names_supported_language_check_route_when_no_rust_seams() -> R
         Path::new("."),
         false,
         &[LanguageId::Python],
+        false,
         &mixed_files,
     );
     let Some((headline_route, _)) = mixed.supported_headline_route() else {
@@ -3890,8 +4180,13 @@ fn pilot_markdown_python_preview_matches_terminal_unscanned_gate() -> Result<(),
 
     let artifacts = pilot_artifacts();
     let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
-    let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        false,
+        &files,
+    );
     let unscanned = PilotPythonFirstUse {
         status: PilotPythonFirstUseStatus::NoPythonFindings,
         findings_total: 0,
@@ -3953,8 +4248,13 @@ fn pilot_terminal_next_follows_the_python_repair_card_route() -> Result<(), Stri
     let artifacts = pilot_artifacts();
     let python = python_first_use();
     let files = discovered_files(&[(LanguageId::Python, "pricing/__init__.py")]);
-    let routes =
-        PilotLanguageRoutes::from_discovered(Path::new("."), false, &[LanguageId::Python], &files);
+    let routes = PilotLanguageRoutes::from_discovered(
+        Path::new("."),
+        false,
+        &[LanguageId::Python],
+        false,
+        &files,
+    );
     let first_pr = format!(
         "ripr first-pr --root {}",
         crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root("."))
@@ -4102,10 +4402,30 @@ fn changed(file: &str, line: usize) -> PilotCurrentChange {
 }
 
 fn changed_lines(lines: &[(&str, usize)]) -> PilotCurrentChange {
-    let diff = lines
-        .iter()
-        .map(|(file, line)| one_line_diff(file, *line))
-        .collect::<String>();
+    // One section per file, as git writes it: a path repeated across sections
+    // is a patch series whose coordinates the parser refuses (#15268).
+    let mut diff = String::new();
+    let mut seen: Vec<&str> = Vec::new();
+    for (file, _) in lines {
+        if seen.contains(file) {
+            continue;
+        }
+        seen.push(file);
+        let mut hunks = lines
+            .iter()
+            .filter(|(other, _)| other == file)
+            .map(|(_, line)| *line)
+            .collect::<Vec<_>>();
+        hunks.sort_unstable();
+        hunks.dedup();
+        let mut section = one_line_diff(file, hunks[0]);
+        for line in &hunks[1..] {
+            let full = one_line_diff(file, *line);
+            let hunk_start = full.find("@@").unwrap_or(0);
+            section.push_str(&full[hunk_start..]);
+        }
+        diff.push_str(&section);
+    }
     PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), &diff)
 }
 
@@ -5211,13 +5531,13 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let several = PilotCurrentChange::from_diff_text(
         Path::new("."),
         Some("origin/main".to_string()),
-        &diff(&["build.rs", "lib/odd.rs", "src/lib.rs"]),
+        &diff(&["build.rs", "xtask/src/main.rs", "src/lib.rs"]),
     )
     .with_diff_only_files(vec![
         (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
         (
-            PathBuf::from("lib/odd.rs"),
-            DiffOnlySource::DeclaredOutsideSrc,
+            PathBuf::from("xtask/src/main.rs"),
+            DiffOnlySource::RepoAutomation,
         ),
     ])
     .with_seams_counted(&[], None);
@@ -5230,13 +5550,13 @@ fn pilot_names_changed_files_its_ranking_leaves_out() {
     let only_several = PilotCurrentChange::from_diff_text(
         Path::new("."),
         Some("origin/main".to_string()),
-        &diff(&["build.rs", "lib/odd.rs"]),
+        &diff(&["build.rs", "xtask/src/main.rs"]),
     )
     .with_diff_only_files(vec![
         (PathBuf::from("build.rs"), DiffOnlySource::BuildScript),
         (
-            PathBuf::from("lib/odd.rs"),
-            DiffOnlySource::DeclaredOutsideSrc,
+            PathBuf::from("xtask/src/main.rs"),
+            DiffOnlySource::RepoAutomation,
         ),
     ])
     .with_seams_counted(&[], None);
@@ -5501,7 +5821,8 @@ fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
     let root = Path::new(".");
     let py = python_first_use();
     let files = discovered_files(&[(LanguageId::Python, "app/a.py")]);
-    let routes = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &files);
+    let routes =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], false, &files);
     let analyzed = PilotSummaryContext {
         language_routes: Some(&routes),
         ..pilot_context_with_python(&artifacts, &py)
@@ -5525,7 +5846,8 @@ fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
         (LanguageId::Python, "app/a.py"),
         (LanguageId::Perl, "lib/App.pm"),
     ]);
-    let routes = PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], &mixed);
+    let routes =
+        PilotLanguageRoutes::from_discovered(root, false, &[LanguageId::Python], false, &mixed);
     let context = PilotSummaryContext {
         language_routes: Some(&routes),
         ..pilot_context_with_python(&artifacts, &py)
@@ -5534,4 +5856,299 @@ fn pilot_not_scanned_block_omits_python_pilot_analyzed() {
     assert!(terminal.contains("Not scanned by pilot"), "{terminal}");
     assert!(terminal.contains("perl:"), "{terminal}");
     assert!(!terminal.contains("  python:"), "{terminal}");
+}
+
+/// #15297: every blocker withholds the check command, so no rendered route
+/// sends the reader into a `ripr check` that refuses at this root, and each
+/// names the route that does work there.
+#[test]
+fn check_blockers_withhold_the_refused_check_and_name_a_working_route() {
+    use crate::domain::LanguageId;
+    let artifacts = pilot_artifacts();
+    let files = discovered_files(&[(LanguageId::Python, "src/pricing.py")]);
+    for (blocker, expected) in [
+        (
+            CheckBlocker::NotWorkTree,
+            ["git -C", "commit the files there", "--diff PATH"],
+        ),
+        // #15297 review: the bare-repository route names the repository's own
+        // path, so it runs from any directory.
+        (
+            CheckBlocker::BareRepository,
+            ["--git-dir=", "worktree add", "--root <path>"],
+        ),
+        (
+            CheckBlocker::GitMissing,
+            ["install Git", "saved patch", "--diff PATH"],
+        ),
+    ] {
+        let routes = PilotLanguageRoutes::from_discovered(
+            Path::new("."),
+            false,
+            &[LanguageId::Python],
+            false,
+            &files,
+        )
+        .with_check_blocker(Path::new("."), blocker);
+        assert!(
+            PilotLanguageRoutes::commands(&routes.routes).is_empty(),
+            "{blocker:?}"
+        );
+        let python = routes
+            .routes
+            .iter()
+            .find(|route| route.language == LanguageId::Python);
+        assert!(
+            python.is_some_and(|route| route.route() == "needs_git_work_tree"),
+            "{blocker:?}"
+        );
+        let context = PilotSummaryContext {
+            language_routes: Some(&routes),
+            ..pilot_context(&artifacts)
+        };
+        let terminal = render_pilot_terminal(&[], context);
+        for needle in expected {
+            assert!(
+                terminal.contains(needle),
+                "{blocker:?} lacks {needle}: {terminal}"
+            );
+        }
+        assert!(
+            !terminal.contains("run the command below to check the diff"),
+            "{blocker:?}: {terminal}"
+        );
+    }
+}
+
+/// #15302: a nested Python project's project-relative verify command is shown
+/// with its directory on every pilot surface, so it runs from the root.
+#[cfg(not(windows))]
+#[test]
+fn pilot_surfaces_run_a_nested_python_verify_command_from_its_project() {
+    let artifacts = pilot_artifacts();
+    let mut python = python_first_use();
+    if let Some(card) = python.top_repair_card.as_mut() {
+        card.verify_command = "python -m pytest tests/test_price.py::test_discount".to_string();
+        card.verify_cwd = Some("py".to_string());
+    }
+    let context = pilot_context_with_python(&artifacts, &python);
+    let json = render_pilot_summary_json(&[], context);
+    let md = render_pilot_summary_md(&[], context);
+    let terminal = render_pilot_terminal(&[], context);
+    let rooted = "(cd -- py && python -m pytest tests/test_price.py::test_discount)";
+    assert!(json.contains(r#""verify_cwd": "py""#), "{json}");
+    assert!(
+        json.contains(r#""verify_command": "python -m pytest tests/test_price.py::test_discount""#),
+        "{json}"
+    );
+    assert!(md.contains(&format!("Verify: `{rooted}`")), "{md}");
+    assert!(
+        terminal.contains(&format!("verify: {rooted}")),
+        "{terminal}"
+    );
+    let root_level = python_first_use();
+    let root_context = pilot_context_with_python(&artifacts, &root_level);
+    for text in [
+        render_pilot_summary_json(&[], root_context),
+        render_pilot_summary_md(&[], root_context),
+        render_pilot_terminal(&[], root_context),
+    ] {
+        assert!(
+            !text.contains("verify_cwd") && !text.contains("cd -- "),
+            "{text}"
+        );
+    }
+    for (surface, text) in [("markdown", &md), ("terminal", &terminal)] {
+        for line in text
+            .lines()
+            .filter(|line| line.contains("pytest tests/test_price.py"))
+        {
+            assert!(
+                line.contains("cd -- py &&"),
+                "{surface} line without the project directory: {line}"
+            );
+        }
+    }
+}
+
+fn raw_terminal_controls(text: &str) -> Vec<char> {
+    text.chars()
+        .filter(|ch| {
+            (ch.is_control() && *ch != '\n' && *ch != '\t')
+                || matches!(
+                    *ch,
+                    '\u{061c}' | '\u{200e}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                )
+        })
+        .collect()
+}
+
+/// #14285: the gap row and the "Next, by hand" line carry the repository
+/// path verbatim, so the finished terminal summary escapes control and bidi
+/// characters with the `ripr check` spelling; the Markdown file is a written
+/// artifact and keeps the raw path.
+#[test]
+fn pilot_terminal_escapes_terminal_controls_from_a_hostile_file_name() {
+    let hostile = "src/e\u{1b}]0;PWNED\u{07}\u{1b}[31mx\u{1b}[2J\u{202e}.rs";
+    let entry = classified_in_owner(SeamGripClass::Ungripped, hostile, "f", 1);
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    assert_eq!(
+        entry.seam.file().to_string_lossy(),
+        hostile,
+        "precondition: the ranked seam carries the raw hostile path"
+    );
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), context);
+    let raw = raw_terminal_controls(&terminal);
+    assert!(
+        raw.is_empty(),
+        "raw control/bidi chars {raw:?} in: {terminal}"
+    );
+    let spelled = r"src/e\u{1b}]0;PWNED\u{07}\u{1b}[31mx\u{1b}[2J\u{202e}.rs";
+    assert!(
+        terminal
+            .lines()
+            .any(|line| line.starts_with("  gap ") && line.contains(spelled)),
+        "gap row must carry the escaped path: {terminal}"
+    );
+    assert!(
+        terminal
+            .lines()
+            .any(|line| line.starts_with("Next, by hand:") && line.contains(spelled)),
+        "next-by-hand line must carry the escaped path: {terminal}"
+    );
+}
+
+#[test]
+fn pilot_terminal_for_a_plain_file_name_is_unchanged_by_the_escape() {
+    let entry = classified_in_owner(SeamGripClass::Ungripped, "src/pricing.rs", "f", 1);
+    let artifacts = pilot_artifacts();
+    let context = pilot_context(&artifacts);
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), context);
+    // No `\u{..}` spelling appears for plain text, and the path is literal on
+    // both the gap row and the "Next, by hand" line.
+    assert!(!terminal.contains(r"\u{"), "{terminal}");
+    assert!(
+        terminal
+            .lines()
+            .any(|line| line.starts_with("  gap ") && line.contains("src/pricing.rs:1")),
+        "{terminal}"
+    );
+    assert!(
+        terminal
+            .lines()
+            .any(|line| line.starts_with("Next, by hand:") && line.contains("src/pricing.rs")),
+        "{terminal}"
+    );
+}
+
+/// #15278 item 4: a gap no test reaches says which function a test must
+/// call, instead of describing oracles that never run it or blaming a
+/// missing test file.
+#[test]
+fn pilot_terminal_names_the_function_a_test_must_call_for_an_unreached_gap() {
+    let entry = classified_in_owner(
+        SeamGripClass::Ungripped,
+        "src/lib.rs",
+        "impl Counter::bump",
+        11,
+    );
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), pilot_context(&artifacts));
+    assert!(
+        terminal.contains(
+            "  why it matters: no test is seen calling `bump`, so no assertion can notice a change here\n"
+        ),
+        "{terminal}"
+    );
+    assert!(
+        terminal.contains("  test to add: one that calls `bump` and asserts the exact value"),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("has no test file to use"), "{terminal}");
+}
+
+/// The control: a gap tests do reach keeps its own reason and the
+/// no-test-file wording.
+#[test]
+fn pilot_terminal_keeps_the_reached_gap_wording() {
+    let entry = classified_in_owner(
+        SeamGripClass::ReachableUnrevealed,
+        "src/lib.rs",
+        "impl Counter::bump",
+        11,
+    );
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), pilot_context(&artifacts));
+    assert!(!terminal.contains("no test is seen calling"), "{terminal}");
+    assert!(terminal.contains("has no test file to use"), "{terminal}");
+}
+
+/// #15278 review: an unreached effect-only gap (a call that may or may not
+/// run) leaves no value to assert, so the test to add observes the effect.
+#[test]
+fn pilot_terminal_asks_an_unreached_effect_gap_to_observe_the_effect() {
+    let mut entry = classified_in_owner(SeamGripClass::Ungripped, "src/lib.rs", "run", 11);
+    entry.seam = RepoSeam::new(
+        "src/lib.rs",
+        "run",
+        SeamKind::CallPresence,
+        110,
+        11,
+        "notify()",
+        RequiredDiscriminator::CallSite {
+            target: "notify()".to_string(),
+        },
+        ExpectedSink::SideEffect,
+    );
+    entry.evidence.seam_id = entry.seam.id().clone();
+    let artifacts = pilot_artifacts();
+    let terminal = render_pilot_terminal(std::slice::from_ref(&entry), pilot_context(&artifacts));
+    assert!(
+        terminal.contains(
+            "  test to add: one that calls `run` and observes the effect this line changes"
+        ),
+        "{terminal}"
+    );
+    assert!(!terminal.contains("asserts the exact value"), "{terminal}");
+}
+
+/// #15278 review: with nothing ranked, pilot's closing line follows what
+/// `ripr check` read on a gripped changed spot, binds the printed command to
+/// pilot's root, and never reads a check that could not run as agreement.
+#[test]
+fn pilot_empty_ranking_follows_the_check_reading_of_a_gripped_change() {
+    let entries = [classified_with(
+        SeamGripClass::StronglyGripped,
+        "src/lib.rs",
+        10,
+        vec![],
+        vec![],
+    )];
+    let artifacts = pilot_artifacts();
+    let cases = [
+        (
+            Some(1),
+            "Pilot ranked no gap, but `ripr check` reads your changed code as a gap or cannot tell: run `ripr check --root ",
+        ),
+        (
+            None,
+            "Pilot ranked no gap, but ripr could not confirm what `ripr check` reads for your changed code: run `ripr check --root ",
+        ),
+        (Some(0), "No gap was found, so there is no test to add;"),
+    ];
+    for (reading, expected) in cases {
+        let change = changed("src/lib.rs", 10)
+            .with_seams_counted(&entries, None)
+            .with_check_reads_open(reading);
+        let mut context = pilot_context(&artifacts);
+        context.current_change = Some(&change);
+        let terminal = render_pilot_terminal(&entries, context);
+        assert!(terminal.contains(expected), "{reading:?}:\n{terminal}");
+        assert_eq!(
+            terminal.contains("so there is no test to add"),
+            reading == Some(0),
+            "{reading:?}:\n{terminal}"
+        );
+    }
 }

@@ -33,7 +33,7 @@ pub(crate) fn returned_ledger(
     let hop = chain
         .hops
         .first()
-        .filter(|hop| !hop.through_macro && hop.receiver.is_none())?;
+        .filter(|hop| !hop.reach_only() && hop.receiver.is_none())?;
     let owner_parse = parse_clean_source_file(&owner.body)?;
     let function = owner_parse
         .tree()
@@ -410,6 +410,7 @@ mod tests {
             "fn record(errors: &mut Vec<PolicyError>) {\n    errors.push(PolicyError {\n        detail: format!(\"diagnostic\"),\n    });\n}",
         );
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:ledger".to_string()),
             location: SourceLocation::new("src/lib.rs", 3, 1),
             owner: Some(owner.id.clone()),
@@ -428,9 +429,11 @@ mod tests {
                 arguments: vec!["&mut errors".to_string()],
                 receiver: None,
                 through_macro: false,
+                multi_site: false,
                 module_qualified: false,
                 crate_qualifier: None,
                 transparent_macros_rebound: false,
+                verified_macro_roots: Vec::new(),
                 diverging_handlers: Vec::new(),
             }],
             stop_above: None,

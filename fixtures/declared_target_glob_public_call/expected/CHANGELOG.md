@@ -107,3 +107,49 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — declared_target_glob_public_call (10)
+
+Reason:
+RIPR-SPEC-0122: the all-clear Start here says no test gap was found and that nothing is needed (#14080); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless declared_target_glob_public_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — declared_target_glob_public_call (11)
+
+Reason:
+RIPR-SPEC-0001: #7807 a removed line read as static_unknown only for lack of context is not reported again when its block replacement's modeled probe carries the whole removed text as before
+
+Command:
+`cargo xtask goldens bless declared_target_glob_public_call --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — declared_target_glob_public_call (12)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless declared_target_glob_public_call --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — declared_target_glob_public_call (13)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless declared_target_glob_public_call --reason "..."`
+
+Updated:
+- `expected/human.txt`

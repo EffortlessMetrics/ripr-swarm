@@ -21,7 +21,10 @@ fn ripr() -> Command {
 /// The binary exactly as a script runs it: no progress switches set.
 fn ripr_default() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
-    command.env_remove("RIPR_PROGRESS").env_remove("RIPR_QUIET");
+    command
+        .env_remove("RIPR_PROGRESS")
+        .env_remove("RIPR_QUIET")
+        .env_remove("RIPR_VERBOSE");
     command
 }
 
@@ -459,6 +462,227 @@ fn machine_format_stdout_is_unchanged(format: &str) -> Result<(), String> {
                 && line.contains("title=ripr ")
         }),
         "GitHub must emit a finding annotation, not an empty-result notice: {stdout}"
+    );
+    Ok(())
+}
+
+/// The `-v` diagnostics line that names the run's effort profile and scope.
+fn verbose_mode_lines(output: &Output) -> Vec<String> {
+    stderr_text(output)
+        .lines()
+        .filter(|line| line.starts_with("ripr: mode = "))
+        .map(str::to_string)
+        .collect()
+}
+
+/// `-v` used to print `ripr: mode = Diff`: the scope under the word the report
+/// header uses for the effort profile (`mode: draft`), spelled as a Rust enum
+/// variant. The line now carries both values under their own names, with the
+/// same tokens the report and the progress lines print.
+#[test]
+fn verbose_check_names_the_effort_mode_and_the_scope_separately() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let default_mode = run_check(&fixture, &["-v", "--format", "json"])?;
+    assert!(
+        default_mode.status.success(),
+        "{}",
+        stderr_text(&default_mode)
+    );
+    assert_eq!(
+        verbose_mode_lines(&default_mode),
+        ["ripr: mode = draft; scope = diff"],
+        "{}",
+        stderr_text(&default_mode)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&default_mode.stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    assert_eq!(
+        report["mode"], "draft",
+        "the stderr line and the report must agree on the mode"
+    );
+
+    let ready = run_check(&fixture, &["-v", "--mode", "ready", "--format", "json"])?;
+    assert!(ready.status.success(), "{}", stderr_text(&ready));
+    assert_eq!(
+        verbose_mode_lines(&ready),
+        ["ripr: mode = ready; scope = diff"],
+        "{}",
+        stderr_text(&ready)
+    );
+
+    let plain = run_check(&fixture, &["--format", "json"])?;
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    assert!(
+        verbose_mode_lines(&plain).is_empty(),
+        "the line is verbose-only: {}",
+        stderr_text(&plain)
+    );
+    Ok(())
+}
+
+/// `RIPR_VERBOSE` turns on the stderr diagnostics only: phase timings and
+/// per-finding verdict lines appear on stderr, no notice is printed, and the
+/// JSON stdout stays byte-identical to a plain run (the `-v` flag's stdout
+/// widenings never ride on an ambient variable).
+#[test]
+fn ripr_verbose_env_adds_stderr_diagnostics_and_keeps_json_stdout_identical() -> Result<(), String>
+{
+    let fixture = DiffFixture::new()?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("change.diff").display().to_string();
+    let args = [
+        "check",
+        "--root",
+        root.as_str(),
+        "--diff",
+        diff.as_str(),
+        "--format",
+        "json",
+    ];
+    let traced = ripr()
+        .env("RIPR_VERBOSE", "1")
+        .args(args)
+        .output()
+        .map_err(|error| format!("run traced check: {error}"))?;
+    let plain = run_check(&fixture, &["--format", "json"])?;
+    assert!(traced.status.success(), "{}", stderr_text(&traced));
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    assert_eq!(
+        traced.stdout, plain.stdout,
+        "RIPR_VERBOSE must not change machine stdout"
+    );
+    let err = stderr_text(&traced);
+    for needle in [
+        "ripr: mode = draft; scope = diff",
+        "ripr: timing [diff] analyzing took ",
+        "ripr: timing [diff] completed after ",
+        "ripr: verdict ",
+    ] {
+        assert!(err.contains(needle), "missing {needle:?} in:\n{err}");
+    }
+    assert!(
+        !err.contains("verbose mode enabled"),
+        "the variable prints no notice: {err}"
+    );
+    let plain_err = stderr_text(&plain);
+    assert!(
+        !plain_err.contains("ripr: timing") && !plain_err.contains("ripr: verdict"),
+        "diagnostics are off by default: {plain_err}"
+    );
+
+    let off = ripr()
+        .env("RIPR_VERBOSE", "0")
+        .args(args)
+        .output()
+        .map_err(|error| format!("run check with RIPR_VERBOSE=0: {error}"))?;
+    assert!(
+        !stderr_text(&off).contains("ripr: verdict"),
+        "RIPR_VERBOSE=0 leaves diagnostics off: {}",
+        stderr_text(&off)
+    );
+    Ok(())
+}
+
+/// Suppressed findings stay in the check output with their ids recorded, so
+/// the verdict trace must filter them: with a policy that suppresses the
+/// fixture's finding, stderr names the withheld count and prints no verdict
+/// line; without the policy the same run prints the verdict line.
+#[test]
+fn ripr_verbose_env_verdict_lines_skip_suppressed_findings() -> Result<(), String> {
+    let fixture = DiffFixture::new()?;
+    let policy = fixture.0.join("ripr-suppressions.toml");
+    std::fs::write(
+        &policy,
+        "schema_version = 1\n\n[[suppressions]]\nkind = \"exposure_gap\"\npath = \"**\"\nreason = \"accepted for this test\"\nowner = \"repo-owner\"\n",
+    )
+    .map_err(|error| format!("write suppression policy: {error}"))?;
+    let policy_arg = policy.display().to_string();
+    let mut suppressed = ripr();
+    suppressed.env("RIPR_VERBOSE", "1");
+    let suppressed = run_check_as(
+        suppressed,
+        &fixture,
+        &[
+            "--format",
+            "json",
+            "--suppression-policy",
+            policy_arg.as_str(),
+        ],
+    )?;
+    let mut plain = ripr();
+    plain.env("RIPR_VERBOSE", "1");
+    let plain = run_check_as(plain, &fixture, &["--format", "json"])?;
+    assert!(plain.status.success(), "{}", stderr_text(&plain));
+    let plain_err = stderr_text(&plain);
+    assert!(
+        plain_err.contains("ripr: verdict "),
+        "control run traces its finding: {plain_err}"
+    );
+    let err = stderr_text(&suppressed);
+    assert!(
+        err.contains(
+            "withheld by suppressions or owner opt-outs; verdict lines cover the 0 reported"
+        ),
+        "the withheld count is named: {err}"
+    );
+    assert!(
+        !err.contains("ripr: verdict "),
+        "a suppressed finding gets no verdict line: {err}"
+    );
+    Ok(())
+}
+
+/// The machine-discovery route and version queries keep a silent stderr
+/// under an exported `RIPR_VERBOSE`.
+#[test]
+fn ripr_verbose_env_leaves_help_json_and_version_stderr_silent() -> Result<(), String> {
+    for args in [
+        ["help", "--json"].as_slice(),
+        ["--version"].as_slice(),
+        ["lsp", "--version"].as_slice(),
+    ] {
+        let output = ripr_default()
+            .env("RIPR_VERBOSE", "1")
+            .args(args)
+            .output()
+            .map_err(|error| format!("run ripr {args:?}: {error}"))?;
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            stderr_text(&output)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "{args:?} must keep stderr silent: {}",
+            stderr_text(&output)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn verbose_worktree_check_names_the_worktree_scope() -> Result<(), String> {
+    let root = sample_crate_root();
+    let output = ripr()
+        .args(["-v", "check", "--root", root.as_str(), "--worktree"])
+        .args(["--format", "json"])
+        .output()
+        .map_err(|error| format!("run verbose worktree check: {error}"))?;
+    // Same tolerance as the worktree progress test below: a checkout where
+    // the worktree read fails stops before the line, and says so.
+    if !output.status.success() {
+        assert!(
+            stderr_text(&output).contains("ripr progress: failed [worktree]"),
+            "{}",
+            stderr_text(&output)
+        );
+        return Ok(());
+    }
+    assert_eq!(
+        verbose_mode_lines(&output),
+        ["ripr: mode = draft; scope = worktree"],
+        "{}",
+        stderr_text(&output)
     );
     Ok(())
 }
@@ -1277,17 +1501,34 @@ fn machine_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
     Ok(())
 }
 
-/// #11598 negative: the default flips only for machine formats. A human
-/// format on the same piped stderr keeps its progress.
+/// A human format on a piped stderr holds its progress for the first 2s: a
+/// fast run (an agent's shell tool, a CI log) prints no `ripr progress:` line
+/// at all, `RIPR_PROGRESS=1` restores the immediate stream, and `--quiet` /
+/// `RIPR_QUIET` still win over it (supersedes the #11598 "human keeps
+/// progress on a pipe" negative, which only the machine-format default flipped).
 #[test]
-fn human_format_on_a_pipe_keeps_progress_by_default() -> Result<(), String> {
+fn human_format_on_a_pipe_is_silent_when_the_run_finishes_fast() -> Result<(), String> {
     let fixture = DiffFixture::new()?;
     let human = run_check_as(ripr_default(), &fixture, &[])?;
     assert!(human.status.success(), "{}", stderr_text(&human));
     assert!(
-        stderr_text(&human).contains("ripr progress: completed [diff]"),
-        "the human format keeps progress on a pipe: {}",
+        !stderr_text(&human).contains("ripr progress:"),
+        "a fast human run on a pipe prints no progress: {}",
         stderr_text(&human)
+    );
+    let forced = run_check_as(ripr(), &fixture, &[])?;
+    assert!(
+        stderr_text(&forced).contains("ripr progress: completed [diff]"),
+        "RIPR_PROGRESS=1 forces the stream (control): {}",
+        stderr_text(&forced)
+    );
+    let mut quiet = ripr();
+    quiet.env("RIPR_QUIET", "1");
+    let quiet = run_check_as(quiet, &fixture, &[])?;
+    assert!(
+        !stderr_text(&quiet).contains("ripr progress:"),
+        "RIPR_QUIET beats RIPR_PROGRESS: {}",
+        stderr_text(&quiet)
     );
     Ok(())
 }
@@ -1399,8 +1640,8 @@ fn explain_agent_format_on_a_pipe_is_silent_by_default() -> Result<(), String> {
         .output()
         .map_err(|error| format!("run ripr explain: {error}"))?;
     assert!(
-        stderr_text(&human_default).contains("ripr progress: loading_input [diff]"),
-        "the human explain keeps progress on a pipe: {}",
+        !stderr_text(&human_default).contains("ripr progress:"),
+        "a fast human explain on a pipe prints no progress: {}",
         stderr_text(&human_default)
     );
     Ok(())
@@ -1572,6 +1813,51 @@ fn strip_narration(stderr: &str) -> String {
     stderr
         .lines()
         .filter(|line| !is_narration_line(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Where a command's narration and refusal prose land. `reports ci-packet`
+/// replays each child's stderr on its own stdout, inside a
+/// `::stop-commands::` window, so both are read from the two streams together.
+/// A window's token differs on every run and is spelled `TOKEN` here.
+fn narration_log(path: &str, output: &Output) -> String {
+    let stderr = stderr_text(output);
+    if path != "reports ci-packet" {
+        return stderr;
+    }
+    let mut log = String::new();
+    let mut open: Option<String> = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        match (&open, line.strip_prefix("::stop-commands::")) {
+            (None, Some(token)) => {
+                open = Some(format!("::{token}::"));
+                log.push_str("::stop-commands::TOKEN\n");
+            }
+            (Some(resume), _) if line == resume => {
+                open = None;
+                log.push_str("::TOKEN::\n");
+            }
+            _ => {
+                log.push_str(line);
+                log.push('\n');
+            }
+        }
+    }
+    log + &stderr
+}
+
+/// Everything in a command's log that is not narration. For `reports
+/// ci-packet` the log holds its children's reports too, and quiet changes one
+/// later `Next:` line there, which is not narration (#11955).
+fn refusal_prose(path: &str, log: &str) -> String {
+    let prose = strip_narration(log);
+    if path != "reports ci-packet" {
+        return prose;
+    }
+    prose
+        .lines()
+        .filter(|line| !line.starts_with("Next: "))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -1767,7 +2053,7 @@ fn silent_catalog_argv(path: &str, root: &str) -> Option<Vec<String>> {
 
 /// #12103: every catalog command is classified, and each progress/`wrote`
 /// path stays silent under `RIPR_QUIET=1` without changing stdout, exit, or
-/// refusal prose.
+/// refusal prose. Each such leaf also accepts `--quiet` with the same effect.
 #[test]
 fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result<(), String> {
     let catalog = catalog_paths()?;
@@ -1841,23 +2127,64 @@ fn catalog_commands_with_narration_paths_stay_quiet_under_ripr_quiet() -> Result
             continue;
         }
         let quiet_err = stderr_text(&quiet);
-        let loud_err = stderr_text(&loud);
-        let leaked = narration_lines(&quiet_err);
+        let leaked = narration_lines(&narration_log(&path, &quiet));
         if !leaked.is_empty() {
             failures.push(format!(
                 "{path}: RIPR_QUIET=1 still printed narration: {leaked:?}\nstderr={quiet_err}"
             ));
             continue;
         }
-        if MUST_EMIT_NARRATION.contains(&path.as_str()) && narration_lines(&loud_err).is_empty() {
+        let loud_log = narration_log(&path, &loud);
+        if MUST_EMIT_NARRATION.contains(&path.as_str()) && narration_lines(&loud_log).is_empty() {
             failures.push(format!(
-                "{path} loud run emitted no progress, so RIPR_QUIET has nothing to drop: {loud_err}"
+                "{path} loud run emitted no progress, so RIPR_QUIET has nothing to drop: {loud_log}"
             ));
             continue;
         }
-        if strip_narration(&loud_err) != strip_narration(&quiet_err) {
+        let quiet_log = narration_log(&path, &quiet);
+        if refusal_prose(&path, &loud_log) != refusal_prose(&path, &quiet_log) {
             failures.push(format!(
-                "{path}: RIPR_QUIET changed refusal prose\nloud={loud_err}\nquiet={quiet_err}"
+                "{path}: RIPR_QUIET changed refusal prose\nloud={loud_log}\nquiet={quiet_log}"
+            ));
+            continue;
+        }
+        // The flag twin: every command `RIPR_QUIET` silences also takes
+        // `--quiet` and means the same thing, so a harness that passes the
+        // flag instead of exporting the variable gets the same run. The bare
+        // `agent` family only prints its help.
+        if path == "agent" {
+            continue;
+        }
+        let mut flagged = args.clone();
+        flagged.push("--quiet".to_string());
+        let flag = run_catalog_command(&flagged, None)?;
+        let flag_err = stderr_text(&flag);
+        if flag.status.code() != quiet.status.code() {
+            failures.push(format!(
+                "{path}: --quiet exits {:?} but RIPR_QUIET=1 exits {:?}\nstderr={flag_err}",
+                flag.status.code(),
+                quiet.status.code()
+            ));
+            continue;
+        }
+        let leaked = narration_lines(&narration_log(&path, &flag));
+        if !leaked.is_empty() {
+            failures.push(format!(
+                "{path}: --quiet still printed narration: {leaked:?}\nstderr={flag_err}"
+            ));
+            continue;
+        }
+        if path != "reports ci-packet" && flag.stdout != quiet.stdout {
+            failures.push(format!(
+                "{path}: --quiet and RIPR_QUIET=1 print different stdout\nflag={:?}\nenv={:?}",
+                String::from_utf8_lossy(&flag.stdout),
+                String::from_utf8_lossy(&quiet.stdout)
+            ));
+            continue;
+        }
+        if strip_narration(&flag_err) != strip_narration(&quiet_err) {
+            failures.push(format!(
+                "{path}: --quiet and RIPR_QUIET=1 print different stderr\nflag={flag_err}\nenv={quiet_err}"
             ));
         }
     }

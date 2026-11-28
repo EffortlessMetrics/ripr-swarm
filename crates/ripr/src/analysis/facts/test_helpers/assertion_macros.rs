@@ -33,8 +33,8 @@ use crate::analysis::extract::{
     retain_reached_oracles,
 };
 use crate::analysis::syntax::{
-    ImportedMacros, LocalMacroCall, MacroArm, SPLICED_LINES, local_macro_calls, macro_scope,
-    splice_imported_macros,
+    ImportedMacros, LocalMacroCall, MacroArm, SPLICED_LINES, local_macro_calls,
+    local_macro_calls_many, macro_scope, splice_imported_macros,
 };
 use crate::domain::{OracleKind, OracleStrength};
 use rayon::prelude::*;
@@ -43,6 +43,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub(crate) fn credit_same_file_assertion_macros(index: &mut RustIndex) {
+    // As for the helper pass: a run scope when the caller has none (#12947).
+    let _pass_memo = crate::analysis::syntax::run_memo::enter();
     let candidate_files = index
         .tests()
         .iter()
@@ -57,9 +59,25 @@ pub(crate) fn credit_same_file_assertion_macros(index: &mut RustIndex) {
                 && facts.source.contains("macro_rules")
         })
         .collect::<Vec<_>>();
+    let sources = files
+        .iter()
+        .map(|(_, facts)| facts.source.as_ref())
+        .collect::<Vec<&str>>();
+    // Each overlapping index of one diff run reads the same test files, so
+    // the full-file parse is memoized per run (#12947). A pool worker keeps
+    // the nested fan-out it had, since the batch computes serially there.
+    let parsed = if rayon::current_thread_index().is_none() {
+        local_macro_calls_many(&sources)
+    } else {
+        sources
+            .par_iter()
+            .map(|source| local_macro_calls(source))
+            .collect()
+    };
     let calls_by_file: BTreeMap<PathBuf, Vec<LocalMacroCall>> = files
-        .par_iter()
-        .map(|(file, facts)| ((*file).clone(), local_macro_calls(&facts.source)))
+        .iter()
+        .zip(parsed)
+        .map(|((file, _), calls)| ((*file).clone(), calls))
         .filter(|(_, calls)| !calls.is_empty())
         .collect();
     if calls_by_file.is_empty() {

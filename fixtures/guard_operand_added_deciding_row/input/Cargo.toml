@@ -1,0 +1,4 @@
+[package]
+name = "guard_operand_added_deciding_row"
+version = "0.1.0"
+edition = "2024"

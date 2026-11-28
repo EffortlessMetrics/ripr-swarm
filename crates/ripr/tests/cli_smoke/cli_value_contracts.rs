@@ -31,16 +31,29 @@ fn diff_format_errors_preserve_exit_and_suggestions() {
 }
 
 #[test]
-fn diff_format_aliases_reach_revision_validation() {
+fn diff_format_aliases_reach_revision_validation() -> Result<(), String> {
     // A later, deterministic argv refusal proves each value reached the
     // parser without requiring a repository or doing analysis. `--help`
     // would bypass diff's parser and could falsely accept every spelling.
-    for value in ["human", "text", "md", "markdown", "json"] {
+    for value in ["human", "text", "md", "markdown"] {
         assert_usage_error(
             run_ripr(&["diff", "--format", value, "--head", ""]),
             "diff --head requires a non-empty revision",
         );
     }
+    // #14859: the JSON format reaches the same refusal, which then writes
+    // the typed `cli_refusal` document beside the unchanged stderr.
+    let json = run_ripr(&["diff", "--format", "json", "--head", ""]);
+    assert_eq!(json.status.code(), Some(2), "{json:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&json.stderr),
+        "ripr: diff --head requires a non-empty revision\n"
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|err| format!("{err}: {json:?}"))?;
+    assert_eq!(document["error"]["code"], "missing_value", "{document}");
+    assert_eq!(document["error"]["token"], "--head", "{document}");
+    Ok(())
 }
 
 #[test]
@@ -102,7 +115,7 @@ fn explain_format_help_names_the_existing_text_alias() {
 }
 
 #[test]
-fn pilot_format_help_agrees_with_accepted_values() {
+fn pilot_format_help_agrees_with_accepted_values() -> Result<(), String> {
     let output = run_ripr(&["pilot", "--help"]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
@@ -118,16 +131,29 @@ fn pilot_format_help_agrees_with_accepted_values() {
         }),
         "{help}"
     );
-    for value in ["human", "json"] {
-        assert_usage_error(
-            run_ripr(&["pilot", "--format", value, "--max-seams", "0"]),
-            "--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"",
-        );
-    }
+    let max_seams =
+        "--max-seams requires a positive integer; pass a whole number of 1 or more, got \"0\"";
+    assert_usage_error(
+        run_ripr(&["pilot", "--format", "human", "--max-seams", "0"]),
+        max_seams,
+    );
+    // #11979: the JSON format is accepted and reaches the numeric parser,
+    // whose refusal then writes the typed `cli_refusal` document.
+    let json = run_ripr(&["pilot", "--format", "json", "--max-seams", "0"]);
+    assert_eq!(json.status.code(), Some(2), "{json:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&json.stderr),
+        format!("ripr: {max_seams}\n")
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|err| format!("{err}: {json:?}"))?;
+    assert_eq!(document["error"]["code"], "invalid_value", "{document}");
+    assert_eq!(document["error"]["token"], "0", "{document}");
     assert_usage_error(
         run_ripr(&["pilot", "--format", "jsonn"]),
         "unknown format \"jsonn\". Did you mean `json`? Accepted: human, json.",
     );
+    Ok(())
 }
 
 #[test]

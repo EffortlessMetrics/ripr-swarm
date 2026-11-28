@@ -1,0 +1,46 @@
+# Golden Output Changes
+
+## Pending — python_round_tie_input_control (1)
+
+Reason:
+RIPR-SPEC-0028: #16203 round controls, a count past the leading digit and a float spelling on a decimal tie
+
+Command:
+`cargo xtask goldens bless python_round_tie_input_control --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_round_tie_input_control (2)
+
+Reason:
+RIPR-SPEC-0108: #16203 round controls, the human-full golden the honesty corpus reads
+
+Command:
+`cargo xtask goldens bless python_round_tie_input_control --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — python_round_tie_input_control (3)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_round_tie_input_control --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_round_tie_input_control (4)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless python_round_tie_input_control --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

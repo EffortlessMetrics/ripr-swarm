@@ -9,6 +9,13 @@ build-lld = [
 xtask = "run -p xtask --"
 policy = "run --locked -p repo-policy --"
 
+# Windows MSVC dev/test links use the toolchain-bundled LLD: MSVC link.exe
+# plus PDB generation is the slow tail on ~100-400 MB debug artifacts.
+# rust-lld ships with rustup toolchains, so no extra install is needed on
+# dev machines or windows-latest runners. Other targets are unaffected.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
 [env]
 TEMP = { value = "target", relative = true, force = true }
 TMP = { value = "target", relative = true, force = true }

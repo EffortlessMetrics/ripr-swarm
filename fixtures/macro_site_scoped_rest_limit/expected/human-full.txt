@@ -3,11 +3,12 @@ mode: fast
 root: fixtures/macro_site_scoped_rest_limit/input
 
 Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 2 static_unknown; 2 of 2 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -18,10 +19,10 @@ Shared evidence and guidance
   E3 [findings 1, 2]: discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   E4 [findings 1, 2]: local flow reaches returned value: 10 <= value (line 4)
   E5 [findings 1, 2]: related test tests/buf_tests.rs:10 pins uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
-  E6 [findings 1, 2]: source assertion argument value true at line 11
-  E7 [findings 1, 2]: source function argument value value = 10 at line 11
-  E8 [findings 1, 2]: source function argument value value == 10 at line 11
-  E9 [findings 1, 2]: assertion not credited: `assert_eq!` in pins at tests/buf_tests.rs:11: `pub use alloc::vec::*;` at src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different `assert_eq!`
+  E6 [findings 1, 2]: source assertion argument value true at line 12
+  E7 [findings 1, 2]: source function argument value value = 10 at line 12
+  E8 [findings 1, 2]: source function argument value value == 10 at line 12
+  E9 [findings 1, 2]: assertion not credited: `assert_eq!` in pins at tests/buf_tests.rs:12: `pub use alloc::vec::*;` at src/globs.rs:1 glob-imports from outside the workspace, which may bring in a different `vec!`
   N1 [findings 1, 2]: ripr could not read whether the assertions in `pins` (tests/buf_tests.rs:10) run as the standard `assert_eq!`, so it does not report a gap. Check that one of them compares the changed value; add a test only if none does
 
 Finding 1: NOTE ./src/lib.rs:4

@@ -3,7 +3,7 @@ use crate::domain::*;
 /// A generator changes the test stimulus, not an observed product return.
 /// Keep the subject visible without inventing reach, an oracle, or a gap.
 pub(super) fn finding(probe: &Probe) -> Finding {
-    let reason = "QuickCheck test-input generator changes test stimulus; static product exposure is not established";
+    let reason = "Arbitrary test-input generator changes test stimulus; static product exposure is not established";
     let stage = StageEvidence::new(StageState::Unknown, Confidence::Low, reason);
     Finding {
         analysis_scope: AnalysisScope::Diff,

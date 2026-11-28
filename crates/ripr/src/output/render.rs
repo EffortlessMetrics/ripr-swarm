@@ -10,6 +10,7 @@ use crate::app::{
     repo_inventory_with_progress,
 };
 use crate::config::RiprConfig;
+use crate::output::path::CheckoutAnchor;
 use crate::output::repo_exposure::TsFullRepoGuidance;
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -93,7 +94,13 @@ pub(crate) fn render_check_with_config_and_progress(
             )?;
             super::check_findings::render_check_findings_json_with_context(output, config, &context)
         }
-        OutputFormat::Github => Ok(github::render_with_config(output, config)),
+        // GitHub resolves `file=` and code scanning resolves SARIF uris from
+        // the checkout top level, so both anchor paths there.
+        OutputFormat::Github => Ok(github::render_with_config_anchored(
+            output,
+            config,
+            &CheckoutAnchor::discover(&output.root),
+        )),
         OutputFormat::MissedTxt => Ok(super::missed_txt::render_with_config(output, config)),
         OutputFormat::Agent => Ok(human::terminal_safe(
             human::render_agent_with_config_and_navigation(
@@ -107,17 +114,25 @@ pub(crate) fn render_check_with_config_and_progress(
             // Fail-closed budget resolution: an unparseable
             // `RIPR_SARIF_RESULTS_BYTES` aborts the run, never rendering.
             let results_budget = sarif::sarif_results_byte_budget()?;
-            let suppressions = load_suppressions(output, config)?;
-            Ok(sarif::render_findings_sarif_with_budget(
+            let suppressions = sarif_suppressions(output, config)?;
+            Ok(sarif::render_findings_sarif_anchored(
                 output,
                 config,
                 &suppressions,
                 results_budget,
+                &CheckoutAnchor::discover(&output.root),
             ))
         }
         OutputFormat::SarifCompact => {
-            let suppressions = load_suppressions(output, config)?;
-            sarif::render_findings_sarif_compact(output, config, &suppressions)
+            let results_budget = sarif::sarif_results_byte_budget()?;
+            let suppressions = sarif_suppressions(output, config)?;
+            Ok(sarif::render_findings_sarif_compact_anchored(
+                output,
+                config,
+                &suppressions,
+                results_budget,
+                &CheckoutAnchor::discover(&output.root),
+            ))
         }
         OutputFormat::BadgeJson => {
             let summary = ripr_summary_with_suppressions(output, config)?;
@@ -186,25 +201,38 @@ pub(crate) fn render_check_with_config_and_progress(
         OutputFormat::RepoSeamsJson => repo_inventory_with_progress(
             progress,
             || analysis::inventory_seams_at_with_config(&output.root, config),
-            |seams| {
+            |mut seams| {
+                let owner_opt_outs = withhold_repo_seam_owner_opt_outs(&mut seams);
                 let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_seams(
                     output.root.clone(),
                     output.mode.as_str().to_string(),
                     output.base.clone(),
                     config,
                 )?;
-                repo_seams::render_repo_seams_json_with_context(&seams, &context)
+                repo_seams::render_repo_seams_json_with_owner_opt_outs(
+                    &seams,
+                    owner_opt_outs,
+                    &context,
+                )
             },
         ),
         OutputFormat::RepoSeamsMd => repo_inventory_with_progress(
             progress,
             || analysis::inventory_seams_at_with_config(&output.root, config),
-            |seams| Ok(repo_seams::render_repo_seams_md(&seams)),
+            |mut seams| {
+                let owner_opt_outs = withhold_repo_seam_owner_opt_outs(&mut seams);
+                Ok(repo_seams::render_repo_seams_md_with_owner_opt_outs(
+                    &seams,
+                    owner_opt_outs,
+                ))
+            },
         ),
         OutputFormat::RepoExposureJson => repo_inventory_with_progress(
             progress,
             || analysis::inventory_classified_seams_report_at_with_config(&output.root, config),
-            |report| {
+            |mut report| {
+                let owner_opt_outs =
+                    withhold_repo_classified_owner_opt_outs(&mut report.classified);
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
@@ -231,6 +259,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
                     &report.evidence_limitations,
+                    owner_opt_outs,
                     &artifact_context,
                 )
             },
@@ -238,19 +267,25 @@ pub(crate) fn render_check_with_config_and_progress(
         OutputFormat::RepoExposureSummaryJson => repo_inventory_with_progress(
             progress,
             || analysis::inventory_compact_classified_seams_at_with_config(&output.root, config),
-            |classified| {
-                Ok(repo_exposure::render_repo_exposure_summary_json(
-                    &classified,
-                    &output.root,
-                    output.base.as_deref(),
-                    output.mode.as_str(),
-                ))
+            |mut classified| {
+                let owner_opt_outs = withhold_repo_classified_owner_opt_outs(&mut classified);
+                Ok(
+                    repo_exposure::render_repo_exposure_summary_json_with_owner_opt_outs(
+                        &classified,
+                        &output.root,
+                        output.base.as_deref(),
+                        output.mode.as_str(),
+                        owner_opt_outs,
+                    ),
+                )
             },
         ),
         OutputFormat::RepoExposureMd => repo_inventory_with_progress(
             progress,
             || analysis::inventory_classified_seams_report_at_with_config(&output.root, config),
-            |report| {
+            |mut report| {
+                let owner_opt_outs =
+                    withhold_repo_classified_owner_opt_outs(&mut report.classified);
                 let ts_guidance = detect_ts_full_repo_guidance(&output.root, &report.classified);
                 let python_guidance =
                     detect_python_repo_exposure_guidance(&output.root, &report.classified);
@@ -259,13 +294,17 @@ pub(crate) fn render_check_with_config_and_progress(
                     report.naming_only_skips,
                     report.declined_rust_files,
                 );
-                Ok(repo_exposure::render_repo_exposure_md_with_generated_skip(
+                Ok(repo_exposure::render_repo_exposure_md_with_owner_opt_outs(
                     &report.classified,
-                    report.limit_info.as_ref(),
+                    report
+                        .limit_info
+                        .as_ref()
+                        .map(repo_exposure::RepoExposureLimit::Inventory),
                     ts_guidance.as_ref(),
                     python_guidance.as_ref(),
                     generated_skip.as_ref(),
                     &report.evidence_limitations,
+                    owner_opt_outs,
                 ))
             },
         ),
@@ -280,6 +319,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     &report.evidence_limitations,
                     config,
                     results_budget,
+                    &CheckoutAnchor::discover(&output.root),
                 ))
             },
         ),
@@ -292,6 +332,7 @@ pub(crate) fn render_check_with_config_and_progress(
                     report.limit_info.as_ref(),
                     &report.evidence_limitations,
                     config,
+                    &CheckoutAnchor::discover(&output.root),
                 )
             },
         ),
@@ -513,8 +554,7 @@ fn detect_ts_full_repo_guidance(
     // Guard: if there are Rust files, the empty-seam result is a legitimate
     // Rust analysis outcome (e.g. a workspace with no production shapes), not
     // a TS-first scan gap. Only fire when Rust is absent.
-    let rust_files = analysis::workspace_rust_files(root);
-    if !rust_files.is_empty() {
+    if analysis::workspace_has_rust_source(root) {
         return None;
     }
 
@@ -549,11 +589,34 @@ fn detect_python_repo_exposure_guidance(
     if python_file_count == 0 {
         return None;
     }
-    if !analysis::workspace_rust_files(root).is_empty() {
+    if analysis::workspace_has_rust_source(root) {
         return None;
     }
 
     Some(repo_exposure::PythonRepoExposureGuidance { python_file_count })
+}
+
+/// The entries SARIF marks results with (#15377). An explicit
+/// `--suppression-policy` file replaces the implicit `[suppressions] path`
+/// manifest for the run, so a workflow passing the same flag to its findings
+/// and SARIF runs gets one decision; it was already loaded fail-closed when
+/// the check applied it, and a read failure here still refuses the render.
+fn sarif_suppressions(
+    output: &CheckOutput,
+    config: &RiprConfig,
+) -> Result<Vec<suppressions::SuppressionEntry>, String> {
+    match &output.suppression {
+        Some(applied) => {
+            let policy = std::path::Path::new(&applied.policy_path);
+            let resolved = if policy.is_absolute() {
+                policy.to_path_buf()
+            } else {
+                output.root.join(policy)
+            };
+            suppressions::load_check_suppression_policy(&resolved)
+        }
+        None => load_suppressions(output, config),
+    }
 }
 
 fn load_suppressions(
@@ -659,10 +722,14 @@ fn ripr_repo_canonical_actionable_summary(
     output: &CheckOutput,
     config: &RiprConfig,
 ) -> Result<(badge::BadgeSummary, Option<analysis::SeamLimitInfo>), String> {
-    let report = analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
+    let mut report =
+        analysis::inventory_classified_seams_report_at_with_config(&output.root, config)?;
     // #13340: a failed seam-evidence warm leaves every seam an opaque
     // stand-in; refuse rather than project a clean-looking zero badge.
     report.require_complete_evidence("repo badge")?;
+    // #14139: an opted-out owner's seams are not unsuppressed gaps, exactly
+    // as `repo-exposure-json` withholds them; the badge carries no count.
+    let _withheld = withhold_repo_classified_owner_opt_outs(&mut report.classified);
     let policy = badge::BadgePolicy {
         suppressions_path: config.suppressions().display_path(),
         ..badge::BadgePolicy::default()
@@ -672,6 +739,24 @@ fn ripr_repo_canonical_actionable_summary(
     // full-run badge (review round 1, #5261): the limit travels with the
     // summary so the public projection resolves to the limited state.
     Ok((summary, report.limit_info))
+}
+
+/// The repo-scope owner opt-out withholding for a classified inventory
+/// (#14139): the repo-exposure (json, summary, md) and repo badge arms run
+/// their owned inventory through this one call. `repo-sarif`,
+/// `repo-sarif-compact` and `agent-seam-packets-json` do not, and keep every
+/// seam (documented in `docs/OUTPUT_SCHEMA.md`).
+pub(crate) fn withhold_repo_classified_owner_opt_outs(
+    classified: &mut Vec<analysis::ClassifiedSeam>,
+) -> crate::analysis::owner_opt_out::RepoOwnerOptOuts {
+    crate::analysis::owner_opt_out::withhold_repo_owner_opt_outs(classified, |entry| &entry.seam)
+}
+
+/// The same withholding for the raw `repo-seams-*` inventory.
+fn withhold_repo_seam_owner_opt_outs(
+    seams: &mut Vec<analysis::RepoSeam>,
+) -> crate::analysis::owner_opt_out::RepoOwnerOptOuts {
+    crate::analysis::owner_opt_out::withhold_repo_owner_opt_outs(seams, |seam| seam)
 }
 
 /// The seam-native repo badge's public projection, honoring the producing
@@ -1166,6 +1251,7 @@ mod tests {
             finding_id: finding.id.clone(),
             seam_id: "seam-abc".to_string(),
             uncommitted_target: uncommitted.map(str::to_string),
+            uncommitted_files: Vec::new(),
         })
     }
 
@@ -1285,6 +1371,26 @@ mod tests {
         {
             return Err(format!(
                 "blocked seam repair must carry no command: {repair}"
+            ));
+        }
+        // #13636: a held inline target and a dirty production premise
+        // together name both blockers and still carry no command.
+        let both = crate::app::CheckRepairRoute::Route(crate::app::RepairRoute {
+            finding_id: finding.id.clone(),
+            seam_id: "seam-abc".to_string(),
+            uncommitted_target: Some("src/lib.rs".to_string()),
+            uncommitted_files: vec!["src/other.rs".to_string(), "../shared.rs".to_string()],
+        });
+        let seam = FindingNavigation::legacy().with_repair_route_outcome(both);
+        let (routes, _) = routes_for(vec![finding.clone()], seam)?;
+        let repair = &routes[0]["repair"];
+        if repair["status"] != "blocked_uncommitted"
+            || repair["uncommitted_file"] != "src/lib.rs"
+            || repair["uncommitted_files"] != serde_json::json!(["src/other.rs", "../shared.rs"])
+            || repair.get("command").is_some()
+        {
+            return Err(format!(
+                "a seam repair blocked twice must name both blockers: {repair}"
             ));
         }
         let gap = FindingNavigation::legacy()
@@ -2730,6 +2836,7 @@ fn happy_path_passes() {
             id: "probe:src_lib_rs:42:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:42:error_path".to_string()),
                 family: ProbeFamily::ErrorPath,
                 location: SourceLocation::new(file, line, 1),

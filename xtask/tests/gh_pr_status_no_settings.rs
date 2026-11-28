@@ -206,7 +206,11 @@ fn request_guidance_preserves_inflight_runs_and_denied_source_boundaries() -> Re
         ".agents/skills/finish-pr/SKILL.md",
         ".claude/skills/finish-pr/SKILL.md",
     ] {
-        let guidance = fs::read_to_string(root.join(path)).map_err(|e| e.to_string())?;
+        // Compare case-insensitively: these are sentence fragments whose
+        // capitalization follows prose position, not policy (#14981).
+        let guidance = fs::read_to_string(root.join(path))
+            .map_err(|e| e.to_string())?
+            .to_lowercase();
         assert!(
             guidance.contains("inspect the existing request and run state"),
             "{path}"

@@ -1,0 +1,57 @@
+# Golden Output Changes
+
+## Pending — rust_deleted_guard_same_value (1)
+
+Reason:
+RIPR-SPEC-0197 (#14936): a deleted early return that gives the remaining tail value is not exposed; a differing tail stays exposed
+
+Command:
+`cargo xtask goldens bless rust_deleted_guard_same_value --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — rust_deleted_guard_same_value (2)
+
+Reason:
+RIPR-SPEC-0122: removed-code-only runs name the static evidence on the removed code in Safe next action (#15335)
+
+Command:
+`cargo xtask goldens bless rust_deleted_guard_same_value --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_deleted_guard_same_value (3)
+
+Reason:
+RIPR-SPEC-0122: removal-only runs name why nothing is selected in the State line (#15335)
+
+Command:
+`cargo xtask goldens bless rust_deleted_guard_same_value --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_deleted_guard_same_value (4)
+
+Reason:
+RIPR-SPEC-0122: a removal-only run lists the removed lines, their kind and what the static evidence on each shows (#15617)
+
+Command:
+`cargo xtask goldens bless rust_deleted_guard_same_value --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_deleted_guard_same_value (5)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_deleted_guard_same_value --reason "..."`
+
+Updated:
+- `expected/human.txt`

@@ -9,14 +9,14 @@ Analysis outcome: findings below (analysis complete)
 
 Start here:
   State: a test gap to inspect or repair
-  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only
+  Safe next action: follow the Next step below; this is static advisory evidence only
   File: ./src/lib.rs:18
   Static exposure: weak (severity: warning, confidence 0.92)
   Why weak: a related test reaches this change, but no assertion tells the old and new behavior apart
   Gap ID (for scripts): gap:rust:src/lib.rs:mean_latency:predicate_boundary:predicate:samples.len==0
   Changed behavior: samples.len() == 0
   Missing check: samples.len() == 0
-  Related test (1 of 6 matched rows): src/lib.rs:43 average_of_nothing_is_zero (no established call path to the changed code; linked by file location only)
+  Related test (1 of 7 matched rows): src/lib.rs:83 mean_latency_smoke (has no assertion)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions
   Evidence: reach yes · infection weak · propagation yes · observation yes · assertion missing
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
@@ -25,11 +25,12 @@ Start here:
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
-      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;
+      both can rest on a test link ripr could not confirm; the reach stage says which;
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
-    - reach yes: Related tests appear to reach mean_latency: mean_lies_between_min_and_max
+    - reach yes: Related tests appear to reach mean_latency: mean_latency_smoke, mean_lies_between_min_and_max
     - infection weak: Related tests contain input values, but the equality-boundary check is missing
     - 19 more detail line(s) in --format human-full
 

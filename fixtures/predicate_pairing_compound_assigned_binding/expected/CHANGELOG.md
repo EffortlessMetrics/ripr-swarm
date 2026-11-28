@@ -298,3 +298,60 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — predicate_pairing_compound_assigned_binding (24)
+
+Reason:
+RIPR-SPEC-0122: the check digest states each fact once (no Why hint the Analyzer limit line repeats; no stage detail that repeats the missing-evidence line)
+
+Command:
+`cargo xtask goldens bless predicate_pairing_compound_assigned_binding --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — predicate_pairing_compound_assigned_binding (25)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless predicate_pairing_compound_assigned_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — predicate_pairing_compound_assigned_binding (26)
+
+Reason:
+RIPR-SPEC-0186: the repair explanation identifies the missing exact boundary assertion when the fixture has no paired oracle (#15664).
+
+Command:
+`cargo xtask goldens bless predicate_pairing_compound_assigned_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — predicate_pairing_compound_assigned_binding (27)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless predicate_pairing_compound_assigned_binding --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — predicate_pairing_compound_assigned_binding (28)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless predicate_pairing_compound_assigned_binding --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

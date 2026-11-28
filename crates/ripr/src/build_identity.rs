@@ -172,15 +172,26 @@ mod tests {
         let identity = cache_identity();
         assert!(identity.starts_with(concat!(env!("CARGO_PKG_VERSION"), "+")));
         assert_eq!(identity, cache_identity());
-        // build.rs records a digest exactly when no clean commit describes
-        // this build.
+        // build.rs records a digest on release builds when no clean commit
+        // describes this build; non-release profiles skip the 58+ MB digest
+        // and fall back to a per-process identity.
         let described_by_commit = commit().is_some() && !commit_dirty();
-        assert_eq!(SOURCE_DIGEST.is_empty(), described_by_commit);
-        if !described_by_commit {
+        if described_by_commit {
+            assert!(
+                SOURCE_DIGEST.is_empty(),
+                "clean commit build should not set source digest: {SOURCE_DIGEST:?}"
+            );
+        } else if SOURCE_DIGEST.is_empty() {
+            assert!(identity.contains("+process:"), "{identity}");
+        } else {
             assert!(
                 SOURCE_DIGEST.len() == 16
                     && SOURCE_DIGEST.bytes().all(|byte| byte.is_ascii_hexdigit()),
                 "malformed source digest {SOURCE_DIGEST:?}"
+            );
+            assert!(
+                identity.contains(&format!("+src:{SOURCE_DIGEST}")),
+                "{identity}"
             );
         }
     }

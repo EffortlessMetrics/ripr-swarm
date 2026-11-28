@@ -1,3 +1,10 @@
+//! Exposure classes and the shared guidance literals attached to findings.
+//!
+//! [`ExposureClass`] is the conservative static verdict for one finding. The
+//! constants are the exact next-step and limitation strings that the
+//! analyzer attaches to findings, defined once so producers and tests share
+//! one literal.
+
 /// RIPR-SPEC-0113: honest per-finding guidance for `no_static_path` findings.
 ///
 /// Defined once here in `domain/` so both `analysis::classify::decision` (production path)
@@ -38,15 +45,22 @@ assertions, or exercise it indirectly through the code it checks.";
 /// input (#10622); the advisory keys off this exact Next step.
 pub const BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP: &str = "A related test already reaches the boundary input, but ripr grades its assertion as a weak check; write it as an exact-value assertion ripr can credit, for example assert_eq!(result, expected), so the old and changed behavior differ.";
 
+/// Next step for a `weakly_exposed` finding whose changed owner is an
+/// assertion-shaped helper.
 pub const ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP: &str = "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing \
 outside tests calls it), so exact-equality advice for code under test may not apply — boolean invariants \
 have no exact equality. Tighten the loosest assertion in this helper: a sharper predicate, an exact \
 expected value where one exists, or a case the current assertions would not flag.";
 
+/// Next step for a `reachable_unrevealed` finding whose changed owner is an
+/// assertion-shaped helper.
 pub const ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP: &str = "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing \
 outside tests calls it); it is the observation, not the code under observation. Ensure at least one test \
 calls this helper over inputs that exercise the changed check.";
 
+/// Leading next step for an `infection_unknown`, `propagation_unknown` or
+/// `static_unknown` finding whose changed owner is an assertion-shaped
+/// helper. The classifier may append stop-reason guidance after it.
 pub const ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP: &str = "The changed owner is an assertion helper (its body is dominated by assert*/expect calls and nothing \
 outside tests calls it); inspect the inputs and behavior this helper checks, including any existing \
 boundary or negative-path assertions.";
@@ -83,9 +97,16 @@ pub const CALLEE_ONLY_REACH_PREFIX: &str = "Related tests exercise the wrapper s
 /// detail. Producers append these lines to `Finding.evidence`; renderers and
 /// corpus checks consume the same prefixes so the unresolved edge stays visible
 /// across JSON and human projections.
+/// Prefix of the evidence line naming the last edge the analysis
+/// established.
 pub const LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX: &str = "limitation_last_established_edge: ";
+/// Prefix of the evidence line naming the first edge the analysis could not
+/// resolve.
 pub const LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX: &str = "limitation_first_unresolved_edge: ";
+/// Prefix of the evidence line naming the analyzer route the limitation
+/// belongs to, such as `analysis/rust-macro-aware-reach`.
 pub const LIMITATION_ANALYZER_ROUTE_PREFIX: &str = "limitation_analyzer_route: ";
+/// Prefix of the evidence line stating what the limitation does not claim.
 pub const LIMITATION_NON_CLAIM_PREFIX: &str = "limitation_non_claim: ";
 /// Additive declaration context, kept separate from the canonical edge text.
 pub const LIMITATION_HELPER_BOUNDARY_PREFIX: &str = "limitation_helper_boundary: ";
@@ -385,5 +406,74 @@ mod tests {
                 class.as_str()
             );
         }
+    }
+
+    /// The bounded digest names each class with one plain word; the three
+    /// unknown classes share `unknown` there and are told apart only by the
+    /// stage label, which every other class leaves as its plain word.
+    #[test]
+    fn plain_labels_share_unknown_and_the_stage_label_separates_it() {
+        let cases = [
+            (ExposureClass::Exposed, "exposed", "exposed"),
+            (ExposureClass::WeaklyExposed, "weak", "weak"),
+            (
+                ExposureClass::ReachableUnrevealed,
+                "unrevealed",
+                "unrevealed",
+            ),
+            (ExposureClass::NoStaticPath, "no path", "no path"),
+            (
+                ExposureClass::InfectionUnknown,
+                "unknown",
+                "unknown: infection unclear",
+            ),
+            (
+                ExposureClass::PropagationUnknown,
+                "unknown",
+                "unknown: propagation unclear",
+            ),
+            (
+                ExposureClass::StaticUnknown,
+                "unknown",
+                "unknown: static analysis limited",
+            ),
+        ];
+        for (class, plain, staged) in cases {
+            assert_eq!(class.plain_label(), plain, "{}", class.as_str());
+            assert_eq!(class.plain_label_with_stage(), staged, "{}", class.as_str());
+            assert_eq!(class.human_lead(), format!("{plain} ("));
+        }
+        let staged: HashSet<&str> = all_exposure_classes()
+            .iter()
+            .map(|class| class.plain_label_with_stage())
+            .collect();
+        assert_eq!(staged.len(), 7, "every class has a distinct staged label");
+    }
+
+    /// Glosses are prose: distinct per class, never a schema token, and the
+    /// static-unknown gloss says it is not a verdict.
+    #[test]
+    fn plain_glosses_are_distinct_prose_without_schema_tokens() {
+        let glosses: HashSet<&str> = all_exposure_classes()
+            .iter()
+            .map(|class| class.plain_gloss())
+            .collect();
+        assert_eq!(glosses.len(), 7);
+        for class in all_exposure_classes() {
+            let gloss = class.plain_gloss();
+            assert!(gloss.contains(' '), "{gloss}");
+            for other in all_exposure_classes() {
+                assert!(!gloss.contains(other.as_str()), "{gloss}");
+            }
+        }
+        assert_eq!(
+            ExposureClass::Exposed.plain_gloss(),
+            "tests appear to notice the change"
+        );
+        assert!(
+            ExposureClass::StaticUnknown
+                .plain_gloss()
+                .ends_with("(analysis limited, not a verdict)")
+        );
     }
 }

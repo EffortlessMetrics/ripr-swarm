@@ -20,7 +20,9 @@
 //! - a star re-export never carries a `_private` name, and when the source
 //!   module binds `__all__` at top level, the name must be listed in it (a
 //!   binding that is not a literal list/tuple of strings fails closed);
-//! - methods and module owners are never re-exported;
+//! - methods and module owners are never re-exported; a method of a
+//!   top-level class instead records the packages that re-export its class
+//!   (`class_reexport_modules`), which only identify the class in an import;
 //! - the chain stops after [`MAX_REEXPORT_HOPS`] packages.
 //!
 //! The result only widens *which module path* identifies the owner. The
@@ -177,6 +179,94 @@ fn apply_with<'s>(
         owner.reexport_modules =
             package_reexport_modules(owner, &candidates, definitions, &mut star_exports);
     }
+    apply_class_reexports(owners, &star_exports.source_of);
+}
+
+/// Sets `class_reexport_modules` on each method of a top-level class to that
+/// class owner's `reexport_modules`: a method is reached through its class,
+/// so the package paths that re-export the class are the ones a `from M
+/// import Class` may name. Fails closed (stays empty) for a nested class, a
+/// class name the file defines more than once, and a method outside the one
+/// definition's lines, and a file that binds the class name again outside the
+/// definition (an import or assignment replaces the class the package
+/// exports) or whose source is not at hand.
+fn apply_class_reexports<'s>(
+    owners: &mut [PythonOwner],
+    source_of: &impl Fn(&Path) -> Option<&'s str>,
+) {
+    // (file, class name) -> (definitions seen, index of the first).
+    let mut classes: HashMap<(&Path, &str), (usize, usize)> = HashMap::new();
+    for (index, owner) in owners.iter().enumerate() {
+        if owner.owner_kind.is_none()
+            && !owner.is_module_owner()
+            && !owner.name.is_empty()
+            && owner.qualified_name == owner.name
+        {
+            classes
+                .entry((owner.file.as_path(), owner.name.as_str()))
+                .or_insert((0, index))
+                .0 += 1;
+        }
+    }
+    let assignments: Vec<(usize, Vec<String>)> = owners
+        .iter()
+        .enumerate()
+        .filter_map(|(index, owner)| {
+            if !matches!(
+                owner.owner_kind,
+                Some(OwnerKind::Method | OwnerKind::ClassMethod)
+            ) || owner.class_path.is_empty()
+                || owner.class_path.contains('.')
+            {
+                return None;
+            }
+            let &(count, class_index) =
+                classes.get(&(owner.file.as_path(), owner.class_path.as_str()))?;
+            let class = &owners[class_index];
+            (count == 1
+                && !class.reexport_modules.is_empty()
+                && class.start_line <= owner.start_line
+                && owner.end_line <= class.end_line
+                && !rebound_outside_definition(class, source_of(&class.file)))
+            .then(|| (index, class.reexport_modules.clone()))
+        })
+        .collect();
+    for (index, modules) in assignments {
+        owners[index].class_reexport_modules = modules;
+    }
+}
+
+/// Whether the file binds the class's name anywhere outside its one
+/// definition. A top-level `Name = wrap(Name)` keeps the class (attrs'
+/// `Converter = _add_hash(_add_eq(Converter))`), like a class decorator.
+/// Unknown source counts as rebound.
+fn rebound_outside_definition(class: &PythonOwner, source: Option<&str>) -> bool {
+    let Some(source) = source else {
+        return true;
+    };
+    // Top-level statements outside the definition: a line at column 0 opens
+    // one, indented and blank lines continue it.
+    let mut statements: Vec<String> = Vec::new();
+    for (index, line) in source.lines().enumerate() {
+        if index + 1 >= class.start_line && index < class.end_line {
+            continue;
+        }
+        let continues = line.is_empty() || line.starts_with([' ', '\t', ')', ']', '}']);
+        match statements.last_mut() {
+            Some(statement) if continues => {
+                statement.push('\n');
+                statement.push_str(line);
+            }
+            _ => statements.push(line.to_string()),
+        }
+    }
+    let rewrap = format!("{} = ", class.name);
+    statements.iter().any(|statement| {
+        super::related_tests::text_binds_name(statement, &class.name)
+            && !statement.strip_prefix(&rewrap).is_some_and(|value| {
+                super::module_constants::mentions_identifier(value, &class.name)
+            })
+    })
 }
 
 /// Module paths of every file defining a top-level function or class, by name.
@@ -567,7 +657,7 @@ fn all_declaration_of(body: &[Stmt]) -> AllDeclaration {
 /// and class bodies are not. Top-level imports count only when `imports` is
 /// set (the initializer reader already weighs its own top-level imports);
 /// imports inside a block always count.
-fn stmt_binds(stmt: &Stmt, name: &str, imports: bool) -> bool {
+pub(super) fn stmt_binds(stmt: &Stmt, name: &str, imports: bool) -> bool {
     let target = |expr: &Expr| target_binds(expr, name);
     let block = |body: &[Stmt]| body.iter().any(|stmt| stmt_binds(stmt, name, true));
     match stmt {
@@ -622,7 +712,7 @@ fn stmt_binds(stmt: &Stmt, name: &str, imports: bool) -> bool {
 /// A module-level `from other import *` may bind any public name, so a
 /// star import cannot vouch for a single binding. Searches every compound
 /// statement, including `except` handlers.
-fn is_star_import(stmt: &Stmt) -> bool {
+pub(super) fn is_star_import(stmt: &Stmt) -> bool {
     let block = |body: &[Stmt]| body.iter().any(is_star_import);
     match stmt {
         Stmt::ImportFrom(s) => s.names.iter().any(|alias| alias.name.as_str() == "*"),
@@ -661,7 +751,7 @@ fn handlers_have_star_import(handlers: &[ast::ExceptHandler]) -> bool {
 /// `__dict__`, `setattr`, `sys.modules`). Scans identifier tokens, so
 /// whitespace between the name and its call (`globals ()`) cannot hide a
 /// mention; any mention, even in a comment, fails closed.
-fn writes_namespace_dynamically(source: &str) -> bool {
+pub(super) fn writes_namespace_dynamically(source: &str) -> bool {
     let mut previous = "";
     for token in source
         .split(|c: char| !(c.is_alphanumeric() || c == '_'))
@@ -689,7 +779,7 @@ fn handlers_bind(handlers: &[ast::ExceptHandler], name: &str) -> bool {
 }
 
 /// The name `import a.b` or `import a.b as c` binds (`a` or `c`).
-fn import_binding(alias: &ast::Alias) -> &str {
+pub(super) fn import_binding(alias: &ast::Alias) -> &str {
     match &alias.asname {
         Some(asname) => asname.as_str(),
         None => alias.name.as_str().split('.').next().unwrap_or_default(),

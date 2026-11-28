@@ -5,9 +5,9 @@
 //! one result block per discovered `#[kani::proof]` harness:
 //!
 //! - `VERIFIED` (within the harness's documented bounds), or
-//! - `FAILED` (counterexample, or a `cover!` that is unreachable and so makes
-//!   the proof vacuous), or
-//! - `NOT-ESTABLISHED` (tool missing, timed out, no verdict in the output).
+//! - `FAILED` (native verification failure or an unsatisfied required cover), or
+//! - `NOT-ESTABLISHED` (tool missing, timed out, no verdict or no complete
+//!   positive cover evidence in the output).
 //!
 //! Absence never passes: a missing tool, zero harnesses (unless the operator
 //! passes `--allow-empty`) and every `NOT-ESTABLISHED` harness exit nonzero.
@@ -17,13 +17,15 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::run;
+use serde::{Deserialize, Serialize};
+
+mod machine;
 
 const HARNESS_PACKAGES: [(&str, &str); 2] = [
     ("ripr", "crates/ripr/src"),
     ("ripr-contract", "crates/ripr-contract/src"),
 ];
 const REPORT_DIR: &str = "target/ripr/reports";
-const REPORT_FILE: &str = "kani.md";
 /// Whole-run wall-clock deadline; a wedged solver is `NOT-ESTABLISHED`.
 const DEFAULT_TIMEOUT_SECS: u64 = 3600;
 /// Per-harness deadline handed to Kani, so one non-terminating harness is
@@ -32,7 +34,8 @@ const DEFAULT_TIMEOUT_SECS: u64 = 3600;
 /// without letting one wedge consume the whole-run deadline.
 const DEFAULT_HARNESS_TIMEOUT_SECS: u64 = 900;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct KaniArgs {
     pub(crate) allow_empty: bool,
     pub(crate) harness: Option<String>,
@@ -95,7 +98,8 @@ fn parse_positive(value: &str, flag: &str) -> Result<u32, String> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Harness {
     pub(crate) file: String,
     pub(crate) name: String,
@@ -157,10 +161,17 @@ fn function_name(line: &str) -> Option<String> {
     if name.is_empty() { None } else { Some(name) }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    deny_unknown_fields,
+    tag = "status",
+    content = "detail",
+    rename_all = "SCREAMING_SNAKE_CASE"
+)]
 pub(crate) enum HarnessStatus {
     Verified,
     Failed(String),
+    #[serde(rename = "NOT-ESTABLISHED")]
     NotEstablished(String),
 }
 
@@ -182,8 +193,8 @@ impl HarnessStatus {
 }
 
 /// Classifies one harness result block from Kani's output.
-/// Only an explicit success verdict with every `cover!` satisfied is
-/// `Verified`; a missing verdict is never a pass.
+/// Only an explicit success verdict with positive evidence that every required
+/// `cover!` was satisfied is `Verified`; missing evidence is never a pass.
 pub(crate) fn classify_output(output: &str) -> HarnessStatus {
     // Kani prints `VERIFICATION:- FAILED` for a solver timeout too; that is no
     // counterexample, so it is checked first and stays `NOT-ESTABLISHED`.
@@ -193,7 +204,9 @@ pub(crate) fn classify_output(output: &str) -> HarnessStatus {
         );
     }
     if output.contains("VERIFICATION:- FAILED") {
-        return HarnessStatus::Failed("verification failed (counterexample)".to_string());
+        return HarnessStatus::Failed(
+            "native verification failed; inspect the reported properties".to_string(),
+        );
     }
     if output.contains("No proof harnesses") {
         return HarnessStatus::NotEstablished(
@@ -201,40 +214,149 @@ pub(crate) fn classify_output(output: &str) -> HarnessStatus {
         );
     }
     if output.contains("VERIFICATION:- SUCCESSFUL") {
-        if output.contains("Status: UNSATISFIABLE") || cover_shortfall(output) {
-            return HarnessStatus::Failed(
-                "a cover! property is unreachable, so the proof is vacuous".to_string(),
-            );
-        }
-        return HarnessStatus::Verified;
+        return classify_cover_evidence(output);
     }
     HarnessStatus::NotEstablished(
         "no successful verification verdict in the kani output".to_string(),
     )
 }
 
-/// True when kani's summary reports fewer satisfied covers than declared
-/// (`** 1 of 2 cover properties satisfied`).
-fn cover_shortfall(output: &str) -> bool {
-    output.lines().any(|line| {
-        let Some((head, _)) = line.split_once(" cover properties satisfied") else {
-            return false;
-        };
-        let words: Vec<&str> = head.split_whitespace().collect();
-        let Some(split) = words.iter().position(|word| *word == "of") else {
-            return false;
-        };
-        let satisfied = split
-            .checked_sub(1)
-            .and_then(|index| words.get(index))
-            .and_then(|word| word.parse::<u32>().ok());
-        let declared = words
-            .get(split + 1)
-            .and_then(|word| word.parse::<u32>().ok());
-        matches!((satisfied, declared), (Some(done), Some(total)) if done < total)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CoverSummary {
+    satisfied: u64,
+    total: u64,
+    undetermined: u64,
+    unreachable: u64,
+}
+
+/// Kani 0.68.0 emits one positive-total summary per harness. Its optional
+/// suffix lists undetermined then unreachable counts; unsatisfiable covers
+/// contribute to the total without a suffix. Parse that format fail-closed.
+fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
+    fn count(text: &str) -> Option<u64> {
+        if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        text.parse().ok()
+    }
+
+    let body = line.trim().strip_prefix("** ")?;
+    let (counts, suffix) = body.split_once(" cover properties satisfied")?;
+    let mut words = counts.split_whitespace();
+    let satisfied = count(words.next()?)?;
+    if words.next()? != "of" {
+        return None;
+    }
+    let total = count(words.next()?)?;
+    if words.next().is_some() || total == 0 || satisfied > total {
+        return None;
+    }
+
+    let mut undetermined = 0;
+    let mut unreachable = 0;
+    if !suffix.is_empty() {
+        let details = suffix.strip_prefix(" (")?.strip_suffix(')')?;
+        for detail in details.split(',') {
+            if let Some(value) = detail.strip_suffix(" undetermined") {
+                // The native renderer emits each nonzero count at most once,
+                // and emits undetermined before unreachable.
+                if undetermined != 0 || unreachable != 0 {
+                    return None;
+                }
+                undetermined = count(value)?;
+                if undetermined == 0 {
+                    return None;
+                }
+            } else if let Some(value) = detail.strip_suffix(" unreachable") {
+                if unreachable != 0 {
+                    return None;
+                }
+                unreachable = count(value)?;
+                if unreachable == 0 {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+    if undetermined.checked_add(unreachable)? > total - satisfied {
+        return None;
+    }
+    Some(CoverSummary {
+        satisfied,
+        total,
+        undetermined,
+        unreachable,
     })
 }
 
+fn classify_cover_evidence(output: &str) -> HarnessStatus {
+    let missing = |reason: &str| HarnessStatus::NotEstablished(reason.to_string());
+    let mut summaries = output
+        .lines()
+        .filter(|line| line.contains("cover properties satisfied"));
+    let Some(line) = summaries.next() else {
+        return missing("kani reported no positive cover summary for this harness");
+    };
+    if summaries.next().is_some() {
+        return missing("kani printed multiple cover summaries for this harness");
+    }
+    let Some(summary) = parse_cover_summary(line) else {
+        return missing("kani cover summary is malformed, inconsistent or has zero properties");
+    };
+
+    // The regular renderer's total omits raw Unknown/Error properties. Unknown
+    // is printed as UNDETERMINED, so even an N-of-N summary cannot override it.
+    // An ordinary assertion can legitimately be UNREACHABLE. Associate each
+    // status with its regular Check header so a complete summary cannot hide
+    // an explicitly unreachable cover; match the final property class only.
+    let mut is_cover_property = false;
+    for line in output.lines() {
+        let text = line.trim();
+        if let Some(check) = text.strip_prefix("Check ") {
+            is_cover_property = check
+                .split_once(": ")
+                .is_some_and(|(_, property)| property.rsplit('.').nth(1) == Some("cover"));
+            continue;
+        }
+        let Some(status) = text
+            .strip_prefix("- Status:")
+            .or_else(|| text.strip_prefix("Status:"))
+        else {
+            continue;
+        };
+        match status.trim() {
+            "UNDETERMINED" | "ERROR" => {
+                return missing("kani reported an undetermined or erroneous property");
+            }
+            "UNSATISFIABLE" if summary.satisfied == summary.total => {
+                return missing("kani property status contradicts its complete cover summary");
+            }
+            "UNREACHABLE" if is_cover_property && summary.satisfied == summary.total => {
+                return missing("kani property status contradicts its complete cover summary");
+            }
+            "SUCCESS" | "FAILURE" | "COVERED" | "UNCOVERED" if is_cover_property => {
+                return missing("kani reported an unsupported cover property status");
+            }
+            // FAILURE can accompany SUCCESSFUL for an expected-panic harness.
+            "SUCCESS" | "FAILURE" | "SATISFIED" | "UNSATISFIABLE" | "UNREACHABLE" | "COVERED"
+            | "UNCOVERED" => {}
+            _ => return missing("kani reported an unrecognized property status"),
+        }
+    }
+    if summary.undetermined > 0 {
+        return missing("kani did not determine every required cover property");
+    }
+    if summary.satisfied < summary.total {
+        return HarnessStatus::Failed("a required cover property was not satisfied".to_string());
+    }
+    HarnessStatus::Verified
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct HarnessResult {
     pub(crate) harness: Harness,
     pub(crate) status: HarnessStatus,
@@ -289,11 +411,11 @@ pub(crate) fn render_report(results: &[HarnessResult], note: &str) -> String {
     for result in results {
         out.push_str(&format!(
             "| `{}` | `{}` | {} | {} | {} |\n",
-            result.harness.name,
-            result.harness.file,
+            machine::escape(&result.harness.name),
+            machine::escape(&result.harness.file),
             result.status.label(),
-            result.status.detail(),
-            result.time
+            machine::escape(result.status.detail()),
+            machine::escape(&result.time)
         ));
     }
     out
@@ -319,10 +441,54 @@ fn collect_sources(root: &Path, files: &mut Vec<(String, String)>) -> Result<(),
     Ok(())
 }
 
-fn tool_available() -> bool {
-    run::capture_output("cargo", &["kani", "--version"], "cargo kani --version")
-        .map(|captured| captured.status.success())
-        .unwrap_or(false)
+fn tool_available(report: &mut machine::Report) -> bool {
+    let started = Instant::now();
+    let argv = vec!["kani".to_string(), "--version".to_string()];
+    // Keep the existing preflight executor. #12581 owns its bounded successor;
+    // timeout_ms=null explicitly discloses this precursor's missing deadline.
+    match run::capture_output("cargo", &["kani", "--version"], "cargo kani --version") {
+        Ok(captured) => {
+            let available = captured.status.success();
+            report.capture(
+                machine::InvocationContext {
+                    package: "@preflight",
+                    argv: &argv,
+                    budget: None,
+                    elapsed: started.elapsed(),
+                    harnesses: &[],
+                },
+                machine::CaptureOutcome {
+                    exit_code: captured.status.code(),
+                    exit_success: Some(available),
+                    timed_out: false,
+                    stdout: Some(&captured.stdout),
+                    stderr: Some(&captured.stderr),
+                    error: None,
+                },
+            );
+            available
+        }
+        Err(error) => {
+            report.capture(
+                machine::InvocationContext {
+                    package: "@preflight",
+                    argv: &argv,
+                    budget: None,
+                    elapsed: started.elapsed(),
+                    harnesses: &[],
+                },
+                machine::CaptureOutcome {
+                    exit_code: None,
+                    exit_success: None,
+                    timed_out: false,
+                    stdout: None,
+                    stderr: None,
+                    error: Some(&error),
+                },
+            );
+            false
+        }
+    }
 }
 
 /// Splits Kani's output into `(qualified harness name, block text)` pairs at
@@ -488,11 +654,35 @@ fn complete_lane_verdict(
     }
 }
 
-fn run_kani(harnesses: &[Harness], args: &KaniArgs, package: &str, timeout: Duration) -> KaniRun {
+fn run_kani(
+    harnesses: &[Harness],
+    args: &KaniArgs,
+    package: &str,
+    timeout: Duration,
+    report: &mut machine::Report,
+) -> KaniRun {
     let command = kani_command(args, package);
+    let started = Instant::now();
     let output =
         match run::capture_output_with_timeout("cargo", &command, &[], timeout, "cargo kani") {
             Err(error) => {
+                report.capture(
+                    machine::InvocationContext {
+                        package,
+                        argv: &command,
+                        budget: Some(timeout),
+                        elapsed: started.elapsed(),
+                        harnesses,
+                    },
+                    machine::CaptureOutcome {
+                        exit_code: None,
+                        exit_success: None,
+                        timed_out: false,
+                        stdout: None,
+                        stderr: None,
+                        error: Some(&error),
+                    },
+                );
                 return KaniRun {
                     results: all_not_established(harnesses, &error),
                     process_problem: Some(error),
@@ -512,12 +702,47 @@ fn run_kani(harnesses: &[Harness], args: &KaniArgs, package: &str, timeout: Dura
         // The budget this invocation actually received, not the whole-run total.
         timeout.as_secs(),
     );
+    report.capture(
+        machine::InvocationContext {
+            package,
+            argv: &command,
+            budget: Some(timeout),
+            elapsed: started.elapsed(),
+            harnesses,
+        },
+        machine::CaptureOutcome {
+            exit_code: output.status.as_ref().and_then(|status| status.code()),
+            exit_success,
+            timed_out: output.timed_out,
+            stdout: Some(&output.stdout),
+            stderr: Some(&output.stderr),
+            error: None,
+        },
+    );
     let combined = format!("{}\n{}", output.stdout, output.stderr);
     reconcile_kani_output(harnesses, &combined, problem)
 }
 
 pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
+    // Publish a non-success marker before discovery or any child process. A
+    // subsequent interruption cannot leave the previous run as this run's result.
+    let (mut journal, mut report) = machine::Journal::start(Path::new(REPORT_DIR))?;
+    eprintln!("kani: run ID {}", report.run_id());
+    let lane = run_lane_observed(args, &mut report, &mut journal);
+    report.recheck_sources();
+    let verdict = report.finish(lane);
+    let markdown = journal.publish(&report)?;
+    println!("{markdown}");
+    verdict
+}
+
+fn run_lane_observed(
+    args: &[String],
+    report: &mut machine::Report,
+    journal: &mut machine::Journal,
+) -> Result<(), String> {
     let args = parse_args(args)?;
+    report.request(&args);
     let mut packages = Vec::new();
     for (package, root) in HARNESS_PACKAGES {
         let mut files = Vec::new();
@@ -526,10 +751,14 @@ pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
         if let Some(wanted) = &args.harness {
             harnesses.retain(|harness| harness.name.contains(wanted.as_str()));
         }
+        report.select(package, &files, &harnesses)?;
         packages.push((package, harnesses));
     }
+    journal.publish(report)?;
     let count: usize = packages.iter().map(|(_, harnesses)| harnesses.len()).sum();
-    let available = tool_available();
+    let available = tool_available(report);
+    report.availability(available);
+    journal.publish(report)?;
     let run = if available && count > 0 {
         eprintln!("kani: checking {count} harness(es)");
         let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
@@ -546,8 +775,10 @@ pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
                     process_problem: Some("whole-run deadline exhausted".to_string()),
                 }
             } else {
-                run_kani(harnesses, &args, package, remaining)
+                run_kani(harnesses, &args, package, remaining, report)
             };
+            report.rows(package, &run.results);
+            journal.publish(report)?;
             results.extend(run.results);
             if let Some(problem) = run.process_problem {
                 problems.push(format!("{package}: {problem}"));
@@ -562,27 +793,18 @@ pub(crate) fn run_lane(args: &[String]) -> Result<(), String> {
             },
         }
     } else {
+        let mut results = Vec::new();
+        for (package, harnesses) in &packages {
+            let rows =
+                all_not_established(harnesses, "tool unavailable; verification did not start");
+            report.rows(package, &rows);
+            results.extend(rows);
+        }
         KaniRun {
-            results: Vec::new(),
+            results,
             process_problem: None,
         }
     };
-    let note = if !available {
-        "NOT-ESTABLISHED: cargo-kani is not installed; no harness was run.".to_string()
-    } else if let Some(problem) = &run.process_problem {
-        format!("NOT-ESTABLISHED: {problem}")
-    } else if run.results.is_empty() {
-        "NOT-ESTABLISHED: zero harnesses found.".to_string()
-    } else {
-        String::new()
-    };
-    let report = render_report(&run.results, &note);
-    fs::create_dir_all(REPORT_DIR)
-        .map_err(|err| format!("failed to create {REPORT_DIR}: {err}"))?;
-    let report_path = Path::new(REPORT_DIR).join(REPORT_FILE);
-    fs::write(&report_path, &report)
-        .map_err(|err| format!("failed to write {}: {err}", report_path.display()))?;
-    println!("{report}");
     complete_lane_verdict(
         &run.results,
         available,
@@ -691,6 +913,151 @@ mod tests {
     }
 
     #[test]
+    fn classification_requires_positive_complete_cover_evidence() {
+        for summary in [
+            "",
+            " ** 0 of 0 cover properties satisfied\n",
+            " ** invalid of 1 cover properties satisfied\n",
+            " ** 1 of invalid cover properties satisfied\n",
+            " ** 2 of 1 cover properties satisfied\n",
+            " ** 1 / 1 cover properties satisfied\n",
+            " ** +1 of 1 cover properties satisfied\n",
+            " ** 18446744073709551616 of 18446744073709551616 cover properties satisfied\n",
+            " ** 1 of 1 cover properties satisfied (1 undetermined)\n",
+            " ** 1 of 1 cover properties satisfied (1 unreachable)\n",
+            " ** 1 of 1 cover properties satisfied (0 undetermined)\n",
+            " ** 1 of 1 cover properties satisfied (unknown)\n",
+            " ** 1 of 1 cover properties satisfied unexpectedly\n",
+            " ** 0 of 2 cover properties satisfied (1 unreachable,1 undetermined)\n",
+            " ** 0 of 2 cover properties satisfied (1 unreachable,1 unreachable)\n",
+            " ** 0 of 2 cover properties satisfied (1 undetermined,1 undetermined)\n",
+            " ** 0 of 18446744073709551615 cover properties satisfied (18446744073709551615 undetermined,1 unreachable)\n",
+            " ** 1 of 1 cover properties satisfied\n ** 1 of 1 cover properties satisfied\n",
+            " ** 1 of 1 cover properties satisfied\n ** 0 of 1 cover properties satisfied\n",
+            " ** invalid of 1 cover properties satisfied\n ** 1 of 1 cover properties satisfied\n",
+        ] {
+            let output = format!("{summary}VERIFICATION:- SUCCESSFUL\n");
+            assert!(
+                matches!(classify_output(&output), HarnessStatus::NotEstablished(_)),
+                "missing or ambiguous cover evidence was accepted: {output:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn undetermined_properties_never_become_verified() {
+        for evidence in [
+            " ** 1 of 2 cover properties satisfied (1 undetermined)\n",
+            " ** 1 of 3 cover properties satisfied (1 undetermined,1 unreachable)\n",
+            "Check 1: proof.cover.1\n\t - Status: UNDETERMINED\n ** 1 of 1 cover properties satisfied\n",
+            "Check 1: proof.cover.1\n\t - Status: ERROR\n ** 1 of 1 cover properties satisfied\n",
+            "Check 1: proof.cover.1\n\t - Status: UNRECOGNIZED\n ** 1 of 1 cover properties satisfied\n",
+        ] {
+            let output = format!("{evidence}VERIFICATION:- SUCCESSFUL\n");
+            assert!(
+                matches!(classify_output(&output), HarnessStatus::NotEstablished(_)),
+                "undetermined property evidence was accepted: {output:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn complete_cover_evidence_allows_unreachable_ordinary_assertions() {
+        for properties in [
+            "Check 1: proof.assertion.1\n\t - Status: UNREACHABLE\nCheck 2: proof.cover.1\n\t - Status: SATISFIED\n",
+            "Check 1: proof.cover.1\n\t - Status: SATISFIED\nCheck 2: proof.assertion.1\n\t - Status: UNREACHABLE\n",
+            "Check 1: proof.cover.1\n\t - Status: SATISFIED\nCheck 2: proof.cover.1.assertion.2\n\t - Status: UNREACHABLE\n",
+        ] {
+            let output = format!(
+                "{properties} ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n"
+            );
+            assert_eq!(classify_output(&output), HarnessStatus::Verified);
+        }
+    }
+
+    #[test]
+    fn complete_cover_evidence_preserves_expected_panic_success() {
+        let output = "Check 1: proof.assertion.1\n\t - Status: FAILURE\nCheck 2: proof.cover.1\n\t - Status: SATISFIED\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL (encountered one or more panics as expected)\n";
+        assert_eq!(classify_output(output), HarnessStatus::Verified);
+    }
+
+    #[test]
+    fn cover_property_and_summary_must_not_contradict() {
+        for property in ["proof.cover.1", "module::proof.cover.2", "cover.1"] {
+            for status in [
+                "UNSATISFIABLE",
+                "UNREACHABLE",
+                "SUCCESS",
+                "FAILURE",
+                "COVERED",
+                "UNCOVERED",
+            ] {
+                let output = format!(
+                    "Check 1: {property}\n\t - Status: {status}\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n"
+                );
+                assert!(
+                    matches!(classify_output(&output), HarnessStatus::NotEstablished(_)),
+                    "a cover status cannot be overridden by a complete summary: {output:?}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pinned_native_cover_captures_keep_distinct_lane_dispositions() {
+        // Unmodified output captured from the pinned native Kani 0.68.0. This
+        // test replays bytes, not the verifier; see the fixture provenance.
+        for (name, stdout, stderr, expected) in [
+            (
+                "cover_pass_compact",
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-pass-compact.stdout.txt"),
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-pass-compact.stderr.txt"),
+                "VERIFIED",
+            ),
+            (
+                "cover_overconstrained",
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-fail.stdout.txt"),
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-fail.stderr.txt"),
+                "FAILED",
+            ),
+            (
+                "cover_unreachable",
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-unreachable.stdout.txt"),
+                include_str!("../tests/fixtures/kani-cover-evidence/cover-unreachable.stderr.txt"),
+                "FAILED",
+            ),
+            (
+                "cover_undetermined_compact",
+                include_str!(
+                    "../tests/fixtures/kani-cover-evidence/cover-undetermined-compact.stdout.txt"
+                ),
+                include_str!(
+                    "../tests/fixtures/kani-cover-evidence/cover-undetermined-compact.stderr.txt"
+                ),
+                // This native run fails verification before cover admission;
+                // success-looking undetermined output has separate controls.
+                "FAILED",
+            ),
+            (
+                "no_cover_control",
+                include_str!("../tests/fixtures/kani-cover-evidence/no-cover.stdout.txt"),
+                include_str!("../tests/fixtures/kani-cover-evidence/no-cover.stderr.txt"),
+                "NOT-ESTABLISHED",
+            ),
+        ] {
+            let output = format!("{stdout}\n{stderr}");
+            let harnesses = [Harness {
+                file: "native-fixture.rs".to_string(),
+                name: name.to_string(),
+            }];
+            assert_eq!(split_harness_blocks(&output).len(), 1, "{name}");
+            let rows = results_from_output(&harnesses, &output);
+            assert_eq!(rows.len(), 1, "{name}");
+            assert_eq!(rows[0].status.label(), expected, "{name}");
+        }
+    }
+
+    #[test]
     fn a_solver_timeout_is_not_a_counterexample() {
         // Kani reports a timed-out harness as FAILED; it has no verdict.
         let timed_out = "CBMC failed\nVERIFICATION:- FAILED\nCBMC timed out. You may want to rerun your proof with a larger timeout\n";
@@ -735,12 +1102,17 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_cover_makes_the_proof_vacuous() {
-        let vacuous =
-            "** 1 of 2 cover properties satisfied (1 unreachable)\nVERIFICATION:- SUCCESSFUL\n";
-        assert!(matches!(classify_output(vacuous), HarnessStatus::Failed(_)));
-        let unsat = "Status: UNSATISFIABLE\nVERIFICATION:- SUCCESSFUL\n";
-        assert!(matches!(classify_output(unsat), HarnessStatus::Failed(_)));
+    fn unsatisfied_cover_fails_the_reachability_policy() {
+        for output in [
+            " ** 1 of 2 cover properties satisfied (1 unreachable)\nVERIFICATION:- SUCCESSFUL\n",
+            "Check 1: proof.cover.1\n\t - Status: UNSATISFIABLE\n ** 0 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n",
+            " ** 1 of 2 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n",
+        ] {
+            assert_eq!(
+                classify_output(output),
+                HarnessStatus::Failed("a required cover property was not satisfied".to_string()),
+            );
+        }
     }
 
     #[test]
@@ -782,7 +1154,7 @@ mod tests {
 
     #[test]
     fn blocks_join_to_harnesses_and_a_missing_block_is_not_established() {
-        let output = "Checking harness m::one...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\nChecking harness m::two...\nVERIFICATION:- FAILED\n";
+        let output = "Checking harness m::one...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\nChecking harness m::two...\nVERIFICATION:- FAILED\n";
         let harness = |name: &str| Harness {
             file: "f.rs".to_string(),
             name: name.to_string(),
@@ -801,10 +1173,9 @@ mod tests {
 
     #[test]
     fn duplicate_source_names_never_share_a_native_result() {
-        let success =
-            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let success = "Checking harness a::same...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
         let failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
-        let unique = "Checking harness m::unique...\nVERIFICATION:- SUCCESSFUL\n";
+        let unique = "Checking harness m::unique...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
         // Duplicate names in separate files and in one file are both ambiguous:
         // the current discovery model does not carry native module identities.
         for second_file in ["a.rs", "b.rs"] {
@@ -864,8 +1235,7 @@ mod tests {
             file: "one.rs".to_string(),
             name: "same".to_string(),
         }];
-        let success =
-            "Checking harness a::same...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
+        let success = "Checking harness a::same...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n";
         let other_failure = "Checking harness b::same...\nVERIFICATION:- FAILED\n";
         let repeated_failure = "Checking harness a::same...\nVERIFICATION:- FAILED\n";
         for output in [
@@ -897,7 +1267,7 @@ mod tests {
         }];
         for selector in ["same", "m::same"] {
             let output = format!(
-                "Checking harness {selector}...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n"
+                "Checking harness {selector}...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 0.5s\n"
             );
             let results = results_from_output(&harnesses, &output);
             assert_eq!(results.len(), 1);
@@ -909,7 +1279,9 @@ mod tests {
             assert_eq!(lane_verdict(&results, true, false).err(), None);
         }
         for selector in ["not_same", "m::notsame", "same::nested"] {
-            let output = format!("Checking harness {selector}...\nVERIFICATION:- SUCCESSFUL\n");
+            let output = format!(
+                "Checking harness {selector}...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n"
+            );
             let results = results_from_output(&harnesses, &output);
             assert!(matches!(
                 results.first().map(|row| &row.status),
@@ -932,8 +1304,7 @@ mod tests {
             file: "proof.rs".to_string(),
             name: "proof".to_string(),
         }];
-        let output =
-            "Checking harness m::proof...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 1s\n";
+        let output = "Checking harness m::proof...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 1s\n";
         let success = reconcile_kani_output(&harnesses, output, None);
         assert_eq!(
             complete_lane_verdict(&success.results, true, false, None).err(),
@@ -985,7 +1356,7 @@ mod tests {
                 name: "second".to_string(),
             },
         ];
-        let text = "Checking harness a::first...\nVERIFICATION:- SUCCESSFUL\nVerification Time: 2s\nChecking harness b::second...\nCompiling\n";
+        let text = "Checking harness a::first...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\nVerification Time: 2s\nChecking harness b::second...\nCompiling\n";
         let problem = process_completion_problem(true, None, "", 10);
         let run = reconcile_kani_output(&harnesses, text, problem);
         assert_eq!(run.results.len(), 2);
@@ -1021,7 +1392,7 @@ mod tests {
         ];
         let mixed = reconcile_kani_output(
             &harnesses,
-            "Checking harness a::first...\nVERIFICATION:- FAILED\nChecking harness b::second...\nVERIFICATION:- SUCCESSFUL\n",
+            "Checking harness a::first...\nVERIFICATION:- FAILED\nChecking harness b::second...\n ** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n",
             Some("cargo kani exited with exit status: 1".to_string()),
         );
         assert!(matches!(&mixed.results[0].status, HarnessStatus::Failed(_)));
