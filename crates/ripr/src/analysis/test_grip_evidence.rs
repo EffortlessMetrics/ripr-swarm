@@ -74,7 +74,7 @@ use crate::analysis::cancellation;
 use crate::{
     domain::{
         Confidence, DiscriminatorShape, MissingDiscriminatorFact, OracleKind, OracleStrength,
-        StageEvidence, StageState, SymbolId, ValueContext,
+        StageEvidence, StageState, StaticLimitKind, SymbolId, ValueContext,
     },
     value_origins::LocatedValueFact as ValueFact,
 };
@@ -97,6 +97,10 @@ pub(crate) struct TestGripEvidence {
     /// Shared records: equal grips across seams are one allocation (#5341).
     pub(crate) related_tests: Vec<Arc<RelatedTestGrip>>,
     pub(crate) reach: StageEvidence,
+    /// Producer-owned unresolved-reach category when reach is `opaque` with a
+    /// named witness (#5492). The reach summary remains a projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) unresolved_reach_limit: Option<crate::domain::StaticLimitKind>,
     pub(crate) activate: StageEvidence,
     pub(crate) propagate: StageEvidence,
     pub(crate) observe: StageEvidence,
@@ -125,6 +129,9 @@ impl TestGripEvidence {
     /// Panic and framework uncertainty have a reserved discriminator prefix:
     /// a source identifier mentioned by another stage is not that marker.
     pub(crate) fn names_static_limit(&self, limit: crate::domain::StaticLimitKind) -> bool {
+        if self.unresolved_reach_limit == Some(limit) {
+            return true;
+        }
         if matches!(
             limit,
             crate::domain::StaticLimitKind::RustFrameworkOracleUnresolved
@@ -766,6 +773,7 @@ impl<'index> EvidencePass<'index> {
                     missing_discriminators: Vec::new(),
                     statically_contradicted_related_tests: 0,
                     new_test_target: None,
+                    unresolved_reach_limit: None,
                 }
             })
             .collect();
@@ -1210,6 +1218,8 @@ fn evidence_for_seam_with_context<'a>(
         .map(|(indexed, reason)| (indexed.test, *reason))
         .collect();
     let reach = reach_evidence(seam, &related_reasons, owner_fn, context);
+    let unresolved_reach_limit =
+        unresolved_reach_limit_for_owner(reach.state.clone(), owner_fn, context, &reach.summary);
     let (mut activate, observed_values, mut missing_discriminators) =
         activate_evidence(seam, &related_indexed, context, owner_fn);
     weaken_unselected_arm(
@@ -1329,6 +1339,7 @@ fn evidence_for_seam_with_context<'a>(
         seam_id: seam.id().clone(),
         related_tests,
         reach,
+        unresolved_reach_limit,
         activate,
         propagate,
         observe,
@@ -3155,11 +3166,14 @@ pub(crate) fn compact_evidence_for_seam(
         .iter()
         .filter(|test| test_has_contradicted_assertion(test, owner_fn, context.index))
         .count();
+    let unresolved_reach_limit =
+        unresolved_reach_limit_for_owner(reach.state.clone(), owner_fn, context, &reach.summary);
 
     let mut evidence = TestGripEvidence {
         seam_id: seam.id().clone(),
         related_tests: Vec::new(),
         reach,
+        unresolved_reach_limit,
         activate,
         propagate,
         observe,
@@ -3204,6 +3218,28 @@ pub(crate) fn compact_evidence_for_seam(
     evidence
 }
 
+/// The producer-owned limit kind behind an `opaque` or `weak` reach stage
+/// (#5492). The kind is the reach producer's own answer for the owner, taken
+/// only when the stage summary carries that witness's summary: an `opaque`
+/// reach with another cause (a file outside every module tree, #7426) must not
+/// borrow a witness the stage never named. The summary token is the fallback
+/// when no producer witness exists.
+fn unresolved_reach_limit_for_owner(
+    reach_state: StageState,
+    owner_fn: Option<&FunctionSummary>,
+    context: &CompactGripContext<'_>,
+    reach_summary: &str,
+) -> Option<StaticLimitKind> {
+    match reach_state {
+        StageState::Opaque | StageState::Weak => owner_fn
+            .and_then(|owner| reach_limit::unresolved_reach_evidence(owner, context))
+            .filter(|(summary, _kind)| reach_summary.contains(summary.as_str()))
+            .map(|(_summary, kind)| kind)
+            .or_else(|| reach_limit::summary_limit_kind(reach_summary)),
+        _ => None,
+    }
+}
+
 /// Failed property registration is unknown owner reach, not a missing test.
 /// Ordinary established owner paths remain authoritative independently of the
 /// unsupported property invocation. Both full and compact paths call this.
@@ -3235,6 +3271,9 @@ fn withhold_unverified_property_provider(
         return;
     };
     evidence.reach = StageEvidence::new(StageState::Opaque, Confidence::Low, summary.clone());
+    // The replaced reach names the provider failure, not an earlier witness:
+    // a typed reach limit read from the old summary must not survive (#5492).
+    evidence.unresolved_reach_limit = None;
     for stage in [
         &mut evidence.activate,
         &mut evidence.propagate,

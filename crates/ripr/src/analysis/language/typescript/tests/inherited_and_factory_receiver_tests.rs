@@ -8,9 +8,10 @@
 //!   unchanged, in the owner's file or another module.
 //!
 //! Every case runs `TypeScriptAdapter::analyze_diff` over a real workspace.
-//! A positive row must read exactly as the `new Cart()` form of the same
-//! test does (same class, same relation), so the new receivers can lend
-//! nothing a constructed receiver does not. Every shape that could make the
+//! A positive row must read as the `new Cart()` form of the same test does
+//! (same relation, and the same class or `weakly_exposed` where only the
+//! constructed form earns the exact boundary witness of #16482), so the new
+//! receivers can lend nothing a constructed receiver does not. Every shape that could make the
 //! receiver or the method something else must stay `no_static_path`.
 
 use super::*;
@@ -126,7 +127,23 @@ fn assert_reads_like_constructed(
 ) -> Result<(), String> {
     let expected = constructed_reading()?;
     let finding = finding(label, files, test)?;
-    assert_eq!(reading(&finding), expected, "{label}");
+    let actual = reading(&finding);
+    assert_eq!(
+        actual.1, expected.1,
+        "{label}: same relation as `new Cart()`"
+    );
+    // The exact boundary witness reads a literal `new Cart()` receiver
+    // (#16482), not a factory-built one, so a factory row may stay
+    // `weakly_exposed` where `new Cart()` reads `exposed`. It never reads
+    // stronger than the constructed form.
+    let witness_only_gap =
+        expected.0 == ExposureClass::Exposed && actual.0 == ExposureClass::WeaklyExposed;
+    assert!(
+        actual.0 == expected.0 || witness_only_gap,
+        "{label}: read {:?}, `new Cart()` reads {:?}",
+        actual.0,
+        expected.0
+    );
     Ok(())
 }
 

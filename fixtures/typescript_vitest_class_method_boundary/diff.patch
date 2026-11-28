@@ -1,0 +1,11 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -1,6 +1,6 @@
+ export class Cart {
+   discount(total: number): number {
+-    if (total > 100) {
++    if (total >= 100) {
+       return total * 0.9;
+     }
+     return total;

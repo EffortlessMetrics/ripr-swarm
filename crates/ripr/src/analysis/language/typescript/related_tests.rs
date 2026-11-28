@@ -3800,22 +3800,7 @@ pub(crate) fn receiver_owner_call_relation(
     {
         return false;
     }
-    let mut receiver_names = unrebound_constructed_receivers(&test.body_text, &constructor_names);
-    // A receiver built in the enclosing scope (`const cart = new Cart()` in a
-    // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
-    // body calls, unless the body declares or reassigns that name itself.
-    for binding in test.scope_bindings.iter() {
-        let body = binding_scan_body(test, binding);
-        if binding
-            .constructed_by
-            .as_ref()
-            .is_some_and(|constructor| constructor_names.contains(constructor))
-            && !local_identifier_declared_in_test_body(body, &binding.name)
-            && !super::tests_extract::identifier_written_in(body, &binding.name)
-        {
-            push_unique_string(&mut receiver_names, binding.name.clone());
-        }
-    }
+    let receiver_names = constructed_method_receivers(test, &constructor_names);
     // A spied, mocked or replaced accessor (`vi.spyOn(Url.prototype,
     // "origin", "get").mockReturnValue(...)`) is not the getter as written,
     // so neither reading nor calling through it can notice a mutation of the
@@ -3851,6 +3836,195 @@ pub(crate) fn receiver_owner_call_relation(
             || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
     factory_built_method_call(test, owner, alias_map, workspace_root)
+}
+
+/// Locals that hold an instance built by one of `constructor_names`: a
+/// body `const cart = new Cart()` that is never rebound, or a receiver built
+/// in the enclosing scope (`const cart = new Cart()` in a `describe`, `cart =
+/// new Cart()` in a `beforeEach`) that the body neither declares nor
+/// reassigns.
+fn constructed_method_receivers(
+    test: &TypeScriptTest,
+    constructor_names: &[String],
+) -> Vec<String> {
+    let mut receiver_names = unrebound_constructed_receivers(&test.body_text, constructor_names);
+    for binding in test.scope_bindings.iter() {
+        let body = binding_scan_body(test, binding);
+        if binding
+            .constructed_by
+            .as_ref()
+            .is_some_and(|constructor| constructor_names.contains(constructor))
+            && !local_identifier_declared_in_test_body(body, &binding.name)
+            && !super::tests_extract::identifier_written_in(body, &binding.name)
+        {
+            push_unique_string(&mut receiver_names, binding.name.clone());
+        }
+    }
+    receiver_names
+}
+
+/// Receivers through which a test calls a changed method (#16482).
+pub(crate) struct MethodCallReceivers {
+    /// Names a call `name.method(...)` goes through: a local bound to `new
+    /// C()` for an instance method, the class binding for a static method.
+    pub(crate) bound: Vec<String>,
+    /// Class bindings an inline `new C(...).method(...)` constructs.
+    pub(crate) constructors: Vec<String>,
+}
+
+/// The receivers by which `test` calls the ordinary instance or static
+/// method `owner`, read by the same identity, shadow, rebinding, mock and
+/// replacement gates that give the test its `ReceiverOwnerCall` or
+/// `ClassMethodCall` relation. `None` for any other owner, and for a test
+/// that mocks the owner's module or replaces the method: those relations
+/// credit no call, so no receiver may witness one.
+pub(crate) fn method_call_receivers(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<MethodCallReceivers> {
+    if owner.method_kind != TypeScriptMethodKind::Ordinary
+        || test_mocks_owner_module(test, owner, alias_map, workspace_root)
+        || super::method_replacement_guard::method_replaced_in_test(test, &owner.name)
+    {
+        return None;
+    }
+    match owner.owner_kind {
+        OwnerKind::Method => {
+            let constructors =
+                constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+            // A name declared more than once in the body (`const cart = new
+            // Cart()`, then `{ const cart = new Other(); ... }`) may name a
+            // different object at the asserted call, so it witnesses nothing.
+            // A body declaration witnesses only when its whole initializer is
+            // one `new C(...)`: `(new Cart(), new Other())` holds an `Other`.
+            // A receiver bound outside the body keeps the relation's reading.
+            let mut bound = constructed_method_receivers(test, &constructors);
+            bound.retain(|name| match body_declaration_count(&test.body_text, name) {
+                0 => true,
+                1 => declared_by_direct_construction(&test.body_text, name, &constructors),
+                _ => false,
+            });
+            Some(MethodCallReceivers {
+                bound,
+                constructors,
+            })
+        }
+        OwnerKind::ClassMethod => Some(MethodCallReceivers {
+            bound: class_names_for_class_method_owner(test, owner, alias_map, workspace_root),
+            constructors: Vec::new(),
+        }),
+        _ => None,
+    }
+}
+
+/// `true` when the body's one declaration of `name` (`const name = ...`,
+/// also with a type annotation) has an initializer that is exactly one
+/// `new C(<args>)` for a constructor in `constructors`, followed by the end of
+/// the statement. Anything else, such as a comma expression, a conditional or
+/// a chained call, withholds the witness.
+fn declared_by_direct_construction(body: &str, name: &str, constructors: &[String]) -> bool {
+    ["const", "let", "var"].iter().any(|keyword| {
+        body.match_indices(keyword).any(|(at, _)| {
+            let rest = &body[at + keyword.len()..];
+            let Some(after_name) = rest.trim_start().strip_prefix(name) else {
+                return false;
+            };
+            if body[..at]
+                .chars()
+                .next_back()
+                .is_some_and(is_javascript_identifier_char)
+                || after_name
+                    .chars()
+                    .next()
+                    .is_some_and(is_javascript_identifier_char)
+            {
+                return false;
+            }
+            let Some((_, initializer)) = after_name.split_once('=') else {
+                return false;
+            };
+            let Some(after_new) = initializer.trim_start().strip_prefix("new") else {
+                return false;
+            };
+            let after_new_trimmed = after_new.trim_start();
+            if after_new_trimmed.len() == after_new.len() {
+                return false;
+            }
+            constructors.iter().any(|constructor| {
+                let Some(arguments) = after_new_trimmed
+                    .strip_prefix(constructor.as_str())
+                    .and_then(|rest| rest.trim_start().strip_prefix('('))
+                else {
+                    return false;
+                };
+                super::classifier::balanced_close_offset(arguments).is_some_and(|close| {
+                    let tail = arguments[close + 1..].trim_start_matches([' ', '\t']);
+                    if tail.is_empty() || tail.starts_with(';') {
+                        return true;
+                    }
+                    if !(tail.starts_with('\n') || tail.starts_with("\r\n")) {
+                        return false;
+                    }
+                    // A newline ends the statement only when the next line
+                    // cannot continue the expression (`new Cart()\n  .other`).
+                    next_line_starts_a_statement(tail.trim_start())
+                })
+            })
+        })
+    })
+}
+
+/// `true` when `rest`, the text after a line break that follows a complete
+/// initializer, starts a new statement rather than continuing the expression:
+/// the end of the body, a `;` or `}`, or a word that is not an infix keyword.
+/// A member access, call, index, operator, template or anything else on the
+/// next line reads as a continuation, which can only withhold a witness.
+fn next_line_starts_a_statement(rest: &str) -> bool {
+    let Some(first) = rest.chars().next() else {
+        return true;
+    };
+    if first == ';' || first == '}' {
+        return true;
+    }
+    if !(first.is_alphabetic() || first == '_' || first == '$') {
+        return false;
+    }
+    let word: String = rest
+        .chars()
+        .take_while(|ch| is_javascript_identifier_char(*ch))
+        .collect();
+    !matches!(word.as_str(), "instanceof" | "in" | "as" | "satisfies")
+}
+
+/// How many `const`, `let` or `var` declarations of `name` the body text
+/// spells. Comments and strings are not masked, so a spelling there only
+/// raises the count, which can only withhold a witness.
+fn body_declaration_count(body: &str, name: &str) -> usize {
+    ["const", "let", "var"]
+        .iter()
+        .map(|keyword| {
+            body.match_indices(keyword)
+                .filter(|(at, _)| {
+                    let starts_word = body[..*at]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|ch| !is_javascript_identifier_char(ch));
+                    let rest = &body[at + keyword.len()..];
+                    let declared = rest.trim_start();
+                    starts_word
+                        && declared.len() < rest.len()
+                        && declared.strip_prefix(name).is_some_and(|after| {
+                            after
+                                .chars()
+                                .next()
+                                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                        })
+                })
+                .count()
+        })
+        .sum()
 }
 
 /// Getter owner (#13592-B4) observed only as a literal key of a property
