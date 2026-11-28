@@ -726,8 +726,9 @@ fn parsed_nested_owner_callee(
     observed: &oxc_ast::ast::Expression<'_>,
     owner_name: Option<&str>,
 ) -> Option<String> {
-    use oxc_ast::ast::{CallExpression, Expression};
+    use oxc_ast::ast::{ArrowFunctionExpression, CallExpression, Expression, Function};
     use oxc_ast_visit::{Visit, walk};
+    use oxc_syntax::scope::ScopeFlags;
 
     fn callee_spelling(expression: &Expression<'_>) -> Option<String> {
         match expression.get_inner_expression() {
@@ -749,40 +750,73 @@ fn parsed_nested_owner_callee(
     impl<'a> Visit<'a> for NestedCall<'_> {
         fn visit_call_expression(&mut self, call: &CallExpression<'a>) {
             self.found |= callee_spelling(&call.callee).as_deref() == Some(self.callee);
+            if self.found {
+                return;
+            }
+            // A function expression used directly as a callee runs now.
+            // Merely constructing a function value (also inside an object or
+            // array) leaves its body and parameter initializers deferred.
+            match call.callee.get_inner_expression() {
+                Expression::ArrowFunctionExpression(arrow) => {
+                    walk::walk_arrow_function_expression(self, arrow);
+                }
+                Expression::FunctionExpression(function) if !function.generator => {
+                    walk::walk_function(self, function, ScopeFlags::Function);
+                }
+                _ => {}
+            }
             if !self.found {
                 walk::walk_call_expression(self, call);
             }
         }
+
+        fn visit_arrow_function_expression(&mut self, _: &ArrowFunctionExpression<'a>) {}
+
+        fn visit_function(&mut self, _: &Function<'a>, _: ScopeFlags) {}
+    }
+
+    fn repeats_callee(call: &CallExpression<'_>, callee: &str) -> bool {
+        let mut nested = NestedCall {
+            callee,
+            found: false,
+        };
+        for argument in &call.arguments {
+            nested.visit_argument(argument);
+            if nested.found {
+                return true;
+            }
+        }
+        false
     }
 
     let Expression::CallExpression(outer) = observed.get_inner_expression() else {
         return None;
     };
     let callee = callee_spelling(&outer.callee)?;
-    if !call_callee_is_owner(&callee, owner_name) {
+    let outer_matches_owner = call_callee_is_owner(&callee, owner_name);
+    // A repeated bare spelling also makes a borrowed alias shape unsafe.
+    // This refusal does not establish what the bare name resolves to.
+    if (outer_matches_owner || !callee.contains('.')) && repeats_callee(outer, &callee) {
+        return Some(callee);
+    }
+    if outer_matches_owner {
         return None;
     }
-    let mut nested = NestedCall {
-        callee: &callee,
-        found: false,
-    };
-    for argument in &outer.arguments {
-        // A direct callback literal is passed as a value. Keep inspecting
-        // call expressions, including immediately invoked function literals.
-        if argument.as_expression().is_some_and(|expression| {
-            matches!(
-                expression.get_inner_expression(),
-                Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
-            )
-        }) {
-            continue;
-        }
-        nested.visit_argument(argument);
-        if nested.found {
-            return Some(callee);
-        }
-    }
-    None
+    // Follow the existing one-direct-argument wrapper boundary. For a
+    // qualified wrapper, also withhold a repeated bare spelling without
+    // claiming it resolves to the owner. Do not treat an ordinary bare
+    // alias call's nested helper as a borrowed wrapper argument.
+    let qualified_wrapper = callee.contains('.');
+    outer.arguments.iter().find_map(|argument| {
+        let Expression::CallExpression(inner) = argument.as_expression()?.get_inner_expression()
+        else {
+            return None;
+        };
+        let callee = callee_spelling(&inner.callee)?;
+        let borrowed_callee = call_callee_is_owner(&callee, owner_name)
+            || (qualified_wrapper && !callee.contains('.'));
+        (borrowed_callee && repeats_callee(inner, &callee)).then_some(callee)
+    })
 }
 
 /// Look for same-spelled calls inside arguments when syntax is unavailable.
@@ -3133,6 +3167,12 @@ pub(crate) mod tests {
             "(discount(90, discount(100)))",
             #[cfg(feature = "lang-typescript")]
             "discount(90, (() => discount(100))())",
+            #[cfg(feature = "lang-typescript")]
+            "price(90, price(100))",
+            #[cfg(feature = "lang-typescript")]
+            "Math.max(discount<number>(90, discount(100)), 90)",
+            #[cfg(feature = "lang-typescript")]
+            "discount(90, { immediate: (function () { return discount(100); })() })",
         ] {
             let mut finding = boundary_finding(call, "90", "total == 100");
             finding.probe.owner = Some(SymbolId("typescript:src/price.ts::discount".to_string()));
@@ -3141,12 +3181,19 @@ pub(crate) mod tests {
                 .push(boundary_input_fact("total", 0, "100", 100));
             let record = typescript_gap_record_for(&finding)
                 .ok_or_else(|| "preview record must project".to_string())?;
+            let callee = if call.starts_with("price(") {
+                "price"
+            } else {
+                "discount"
+            };
+            let placeholder =
+                format!("expect({callee}(/* boundary input for total == 100 */)).toBe(expected)");
             assert_eq!(
                 record
                     .repair_route
                     .as_ref()
                     .and_then(|route| route.assertion_shape.as_deref()),
-                Some("expect(discount(/* boundary input for total == 100 */)).toBe(expected)"),
+                Some(placeholder.as_str()),
                 "{call}"
             );
             let error = validate_agent_gap_record_packet(&record)
@@ -3174,6 +3221,16 @@ pub(crate) mod tests {
             (
                 "discount(90, () => discount(100))",
                 "discount(100, () => discount(100))",
+            ),
+            #[cfg(feature = "lang-typescript")]
+            (
+                "discount(90, { deferred: () => discount(100) })",
+                "discount(100, { deferred: () => discount(100) })",
+            ),
+            #[cfg(feature = "lang-typescript")]
+            (
+                "discount(90, [() => discount(100)])",
+                "discount(100, [() => discount(100)])",
             ),
             (
                 "discount(90, other.discount(100))",

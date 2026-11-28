@@ -13,6 +13,44 @@ fn nested_owner_packet_refuses_unverified_calls() -> Result<(), Box<dyn std::err
     let original = "discount(90, discount(100))";
     assert_eq!(tests.matches(original).count(), 1);
     for (observed, signature, helper, ready_shape) in [
+        (original, "discount(total: number)", "", None),
+        ("price(90, price(100))", "discount(total: number)", "", None),
+        (
+            "Math.max(discount<number>(90, discount(100)), 90)",
+            "discount<T = number>(total: number)",
+            "",
+            None,
+        ),
+        (
+            "Math.max(price<number>(90, price(100)), 90)",
+            "discount<T = number>(total: number)",
+            "",
+            None,
+        ),
+        (
+            "discount(90, { deferred: () => discount(100) })",
+            "discount(total: number, options?: { deferred: () => number })",
+            "",
+            Some("expect(discount(100, { deferred: () => discount(100) })).toBe(expected)"),
+        ),
+        (
+            "discount(90, { immediate: (() => discount(100))() })",
+            "discount(total: number, options?: { immediate: number })",
+            "",
+            None,
+        ),
+        (
+            "price(90)",
+            "discount(total: number)",
+            "",
+            Some("expect(price(90)).toBe(expected)"),
+        ),
+        (
+            "Math.max(discount(90), 90)",
+            "discount(total: number)",
+            "",
+            Some("expect(discount(100)).toBe(expected)"),
+        ),
         (
             "discount(90, discount /* note */ (100))",
             "discount(total: number)",
@@ -72,12 +110,17 @@ fn nested_owner_packet_refuses_unverified_calls() -> Result<(), Box<dyn std::err
             root.path().join("src/price.ts"),
             source.replace("discount(total: number)", signature),
         )?;
-        fs::write(
-            root.path().join("test/price.test.ts"),
-            tests
-                .replace(original, observed)
-                .replace("describe(", &format!("{helper}describe(")),
-        )?;
+        let test_source = tests
+            .replace(original, observed)
+            .replace("describe(", &format!("{helper}describe("));
+        let test_source = if observed.contains("price(") {
+            test_source
+                .replace("import { discount }", "import { discount as price }")
+                .replace("Math.max(discount(100), 100)", "Math.max(price(100), 100)")
+        } else {
+            test_source
+        };
+        fs::write(root.path().join("test/price.test.ts"), test_source)?;
         fs::write(
             root.path().join("diff.patch"),
             diff.replace("discount(total: number)", signature),
@@ -131,6 +174,35 @@ fn nested_owner_packet_refuses_unverified_calls() -> Result<(), Box<dyn std::err
             assert_eq!(packet["assertion_shape"], shape, "{observed}: {finding}");
         } else {
             assert!(packet.is_null(), "{observed}: {packet}");
+            if observed == original {
+                for format in [&["--legend"][..], &["--format", "human-full"][..]] {
+                    let scope = [
+                        "check",
+                        "--root",
+                        ".",
+                        "--diff",
+                        "diff.patch",
+                        "--mode",
+                        "fast",
+                    ];
+                    let output = run_command(
+                        env!("CARGO_BIN_EXE_ripr"),
+                        Some(root.path()),
+                        &[&scope[..], format].concat(),
+                    )?;
+                    assert!(
+                        output.status.success(),
+                        "{observed}: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    let stdout = String::from_utf8(output.stdout)?;
+                    assert!(stdout.contains("do not replay the nested call"), "{stdout}");
+                    assert!(
+                        !stdout.contains("expect(discount(100, discount(100))).toBe(expected)"),
+                        "{stdout}"
+                    );
+                }
+            }
             assert!(
                 action["why_not_actionable"].as_str().is_some_and(|reason| {
                     reason.contains("do not replay the nested call")
