@@ -2194,12 +2194,8 @@ fn not_exact_top_level_message(requested: &Path, top: &Path) -> String {
 /// so check never withholds a start the cage would accept, for example under
 /// an exported `GIT_DIR`.
 pub(crate) fn enclosing_git_top_level_above(root: &Path) -> Option<PathBuf> {
+    let top = exact_git_top_level_above(root)?;
     let requested = fs::canonicalize(root).ok()?;
-    let top = git_text(&requested, &["rev-parse", "--show-toplevel"]).ok()?;
-    let top = fs::canonicalize(&top).ok()?;
-    if requested == top {
-        return None;
-    }
     // A root that is its own Cargo project nested inside another Cargo
     // project is a standalone repository for repair-start purposes, not a
     // subdirectory of the enclosing work tree (#15488). Requiring the
@@ -2220,6 +2216,17 @@ pub(crate) fn enclosing_git_top_level_above(root: &Path) -> Option<PathBuf> {
         return None;
     }
     Some(top)
+}
+
+/// The Git top-level above `root` when `root` is not exactly it, asked as
+/// [`canonical_repository_root`] asks (the attempt's own refusal, with no
+/// standalone-Cargo-project exception). `None` at the top-level, or when Git
+/// cannot say.
+pub(crate) fn exact_git_top_level_above(root: &Path) -> Option<PathBuf> {
+    let requested = fs::canonicalize(root).ok()?;
+    let top = git_text(&requested, &["rev-parse", "--show-toplevel"]).ok()?;
+    let top = fs::canonicalize(&top).ok()?;
+    (requested != top).then_some(top)
 }
 
 /// Whether the Cargo workspace rooted at `top` claims `root` as one of its

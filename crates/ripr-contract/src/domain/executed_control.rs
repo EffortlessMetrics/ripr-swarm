@@ -1261,9 +1261,9 @@ fn validate_sha256(field: &'static str, value: &str) -> Result<(), ExecutedContr
 #[path = "executed_control_kani.rs"]
 mod kani_proofs;
 
-// Shared test fixtures: facade tests import them across the crate boundary
-// (ADR 0027), so they compile under `test` or the `test-fixtures` feature
-// rather than in production builds.
+/// Shared test fixtures: facade tests import them across the crate boundary
+/// (ADR 0027), so they compile under `test` or the `test-fixtures` feature
+/// rather than in production builds.
 #[cfg(any(test, feature = "test-fixtures"))]
 pub mod tests {
     use super::*;
@@ -1281,14 +1281,21 @@ pub mod tests {
         }
     }
 
+    /// Fixture head after the repair.
     pub const HEAD_AFTER: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    /// Fixture head before the repair.
     pub const HEAD_BEFORE: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    /// A fixture head that is neither before nor after.
     pub const HEAD_OTHER: &str = "cccccccccccccccccccccccccccccccccccccccc";
+    /// Fixture artifact digest.
     pub const ARTIFACT_DIGEST: &str =
         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    /// Fixture control command.
     pub const COMMAND: &str = "cargo test -p example -- removed_guard_control";
+    /// Fixture obligation id.
     pub const OBLIGATION_ID: &str = "claim:example:removed-guard";
 
+    /// A valid removed-guard obligation built from the fixture constants.
     pub fn sample_obligation() -> ExecutedControlObligationV1 {
         ExecutedControlObligationV1 {
             schema_version: EXECUTED_CONTROL_SCHEMA_VERSION.to_string(),
@@ -1325,6 +1332,7 @@ pub mod tests {
         }
     }
 
+    /// A passed result for `obligation` at [`HEAD_AFTER`].
     pub fn passing_result(obligation: &ExecutedControlObligationV1) -> ExecutedControlResultV1 {
         ExecutedControlResultV1 {
             schema_version: EXECUTED_CONTROL_SCHEMA_VERSION.to_string(),
@@ -1347,6 +1355,8 @@ pub mod tests {
         }
     }
 
+    /// A failed result for `obligation` at [`HEAD_BEFORE`] that rejected the
+    /// wrong implementation.
     pub fn failed_before_result(
         obligation: &ExecutedControlObligationV1,
     ) -> ExecutedControlResultV1 {
@@ -1359,6 +1369,7 @@ pub mod tests {
         }
     }
 
+    /// A packet holding `obligations` and `results`.
     pub fn packet(
         obligations: Vec<ExecutedControlObligationV1>,
         results: Vec<ExecutedControlResultV1>,
@@ -1372,12 +1383,15 @@ pub mod tests {
         }
     }
 
+    /// Validates `packet`, turning a validation error into a message.
     pub fn require_valid(packet: ExecutedControlPacketV1) -> Result<PacketEvaluation, String> {
         packet
             .validate()
             .map_err(|error| format!("unexpected validation error: {error}"))
     }
 
+    /// Validates `packet` and returns the expected validation error, or a
+    /// message when it unexpectedly validates.
     pub fn require_invalid(
         packet: ExecutedControlPacketV1,
     ) -> Result<ExecutedControlValidationError, String> {
@@ -1387,6 +1401,8 @@ pub mod tests {
         }
     }
 
+    /// The #3858 eager file-count removal obligation, derived from
+    /// [`sample_obligation`].
     pub fn issue_3858_obligation() -> ExecutedControlObligationV1 {
         ExecutedControlObligationV1 {
             obligation_id: "issue:3858:eager-file-count-removal-control".to_string(),

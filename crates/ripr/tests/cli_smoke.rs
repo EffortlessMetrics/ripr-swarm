@@ -10835,7 +10835,7 @@ fn agent_repair_accepts_empty_effectively_ignored_build_tree_and_actual_cargo_te
     let manifest_path = root.join("Cargo.toml");
     let mut manifest = std::fs::read_to_string(&manifest_path)?;
     manifest.push_str("\n[workspace]\n");
-    std::fs::write(manifest_path, manifest)?;
+    std::fs::write(&manifest_path, manifest)?;
     run_git(root, &["add", "Cargo.toml"])?;
     commit_repair_fixture(root, &["-qm", "standalone adopter workspace"])?;
     if root.join(".gitignore").exists() || root.join("target").exists() {
@@ -10849,28 +10849,68 @@ fn agent_repair_accepts_empty_effectively_ignored_build_tree_and_actual_cargo_te
     }
     let (attempt_id, _) = sole_repair_attempt(root)?;
     add_boundary_test(root)?;
-    // Explicitly anchor the child build here even when the parent Cargo
-    // invocation shares a CARGO_TARGET_DIR with another verification lane.
-    let target = root.join("target").display().to_string();
+    // Keep final and intermediate Cargo output inside the fixture's ignored tree.
+    let target_dir = root.join("target");
+    let target = target_dir.display().to_string();
+    let test_target = "pricing";
     let test = run_command_with_env(
         "cargo",
         root,
         &[
             "test",
             "--offline",
+            "--test",
+            test_target,
+            "--message-format=json",
             "equality_boundary_discounts",
             "--",
             "--exact",
         ],
-        &[("CARGO_TARGET_DIR", &target)],
+        &[
+            ("CARGO_TARGET_DIR", &target),
+            ("CARGO_BUILD_BUILD_DIR", &target),
+            // Exercise the optional-cache case even under default Cargo settings.
+            ("CARGO_CACHE_RUSTC_INFO", "0"),
+        ],
     )?;
-    if !test.status.success()
-        || !String::from_utf8_lossy(&test.stdout)
-            .contains("test equality_boundary_discounts ... ok")
-        || !root.join("target/.rustc_info.json").exists()
+    if !test.status.success() {
+        return Err(format!("focused Cargo test command failed: {test:?}").into());
+    }
+    let stdout = String::from_utf8_lossy(&test.stdout);
+    if !stdout
+        .lines()
+        .any(|line| line == "test equality_boundary_discounts ... ok")
     {
+        return Err(format!("focused Cargo run did not pass the named test: {test:?}").into());
+    }
+
+    let manifest_path = manifest_path.canonicalize()?;
+    let target_dir = target_dir.canonicalize()?;
+    let canonical_path = |value: &serde_json::Value| {
+        value
+            .as_str()
+            .map(Path::new)
+            .filter(|path| path.is_absolute())
+            .and_then(|path| path.canonicalize().ok())
+    };
+    let built_test = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .take_while(|message| message["reason"] != "build-finished")
+        .any(|artifact| {
+            artifact["reason"] == "compiler-artifact"
+                && artifact["target"]["name"] == test_target
+                && artifact["target"]["kind"][0] == "test"
+                && artifact["profile"]["test"] == true
+                && artifact["fresh"] == false
+                && canonical_path(&artifact["manifest_path"]).as_ref() == Some(&manifest_path)
+                && canonical_path(&artifact["executable"])
+                    .is_some_and(|path| path.starts_with(&target_dir) && path.is_file())
+        });
+    if !built_test {
         return Err(format!(
-            "focused Cargo test must run and write actual build output here: {test:?}"
+            "focused Cargo test did not produce a fresh {test_target} test executable under {}: {test:?}",
+            target_dir.display()
         )
         .into());
     }
@@ -21173,9 +21213,59 @@ fn pilot_inline_only_stdout(label: &str, extra_source: &str) -> Result<String, S
     Ok(stdout)
 }
 
+/// A copy of the tracked files under `fixture` (relative to the workspace
+/// root) as the single commit of a fresh Git repository, so a pilot or check
+/// run there sees a clean premise at the exact Git top-level whatever the
+/// enclosing checkout holds. Returns the canonical root.
+fn clean_fixture_repo(label: &str, fixture: &str) -> Result<PathBuf, String> {
+    let source = workspace_root().join(fixture);
+    let root = unique_temp_workspace(label);
+    std::fs::create_dir_all(&root).map_err(|e| format!("create {}: {e}", root.display()))?;
+    let tracked = common::fixture_git::fixture_git_output(
+        &workspace_root(),
+        &["ls-files", "-z", "--", fixture],
+    )?;
+    for path in tracked.split('\0').filter(|path| !path.is_empty()) {
+        let relative = Path::new(path)
+            .strip_prefix(fixture)
+            .map_err(|e| format!("{path} is not under {fixture}: {e}"))?;
+        let target = root.join(relative);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("create {}: {e}", parent.display()))?;
+        }
+        std::fs::copy(source.join(relative), &target).map_err(|e| format!("copy {path}: {e}"))?;
+    }
+    run_git(&root, &["-c", "init.templateDir=", "init", "-q"])?;
+    std::fs::create_dir_all(root.join(".git/info"))
+        .map_err(|e| format!("create .git/info: {e}"))?;
+    std::fs::write(root.join(".git/info/exclude"), "/target/\n")
+        .map_err(|e| format!("write exclude: {e}"))?;
+    run_git(&root, &["add", "-A"])?;
+    run_git(
+        &root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "-c",
+            "commit.gpgSign=false",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+    )?;
+    std::fs::canonicalize(&root).map_err(|e| format!("canonicalize {}: {e}", root.display()))
+}
+
 #[test]
 fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), String> {
-    let root = workspace_root().join("fixtures/boundary_gap/input");
+    // A clean repository of its own (#16381): inside this checkout the
+    // fixture's repair start depends on the developer's uncommitted edits,
+    // which pilot names as a dirty premise below a subdirectory root.
+    let root = clean_fixture_repo("pilot-boundary-gap", "fixtures/boundary_gap/input")?;
     let out_dir = unique_temp_workspace("pilot");
     let output = run_ripr(&[
         "pilot",
@@ -21286,7 +21376,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     );
     assert_eq!(
         flag_value("--root").map(|value| value.replace('\\', "/")),
-        Some(root.display().to_string().replace('\\', "/")),
+        Some(printed_path(&root).replace('\\', "/")),
         "the repair command must name the analyzed root: {repair_line}"
     );
 
@@ -21321,6 +21411,7 @@ fn pilot_writes_default_packet_outputs_for_boundary_gap_fixture() -> Result<(), 
     );
 
     ignore_remove_dir_all(&out_dir);
+    ignore_remove_dir_all(&root);
     Ok(())
 }
 
