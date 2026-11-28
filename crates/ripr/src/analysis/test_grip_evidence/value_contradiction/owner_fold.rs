@@ -236,6 +236,7 @@ fn apply_edits(text: &str, mut edits: Vec<(TextRange, String)>) -> Option<String
 }
 
 /// One component of a tuple tail as its own function.
+#[derive(Debug, PartialEq, Eq)]
 struct TupleComponent {
     text: String,
     /// For a `bool` component, the parameters' shared declared width its
@@ -457,9 +458,22 @@ mod tests {
         assert_eq!(
             tuple_tail_components(text),
             Some(vec![
-                "fn pair(a: i32) -> i32 { a }".to_string(),
-                "fn pair(a: i32) -> bool { a >= 0 }".to_string(),
+                TupleComponent {
+                    text: "fn pair(a: i32) -> i32 { a }".to_string(),
+                    operand_range: None,
+                },
+                // A `bool` component is held to the shared `i32` width.
+                TupleComponent {
+                    text: "fn pair(a: i32) -> bool { a >= 0 }".to_string(),
+                    operand_range: Some((i128::from(i32::MIN), i128::from(i32::MAX))),
+                },
             ])
+        );
+        // No shared parameter width: the `bool` component, and so the
+        // tuple, is not read (#16400).
+        assert_eq!(
+            tuple_tail_components("fn pair(a: i32, b: i64) -> (i64, bool) { (b, a >= 0) }"),
+            None
         );
         // The component keeps its declared width: 200 + 100 is no `u8`.
         let narrow = OwnerFold::read("fn wide(a: u8) -> (u8, u8) { (a, a + 100) }")
