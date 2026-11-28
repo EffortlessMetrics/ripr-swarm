@@ -3955,10 +3955,13 @@ fn workspace_index_spans_workspace(
 /// Bounds a path to `max_chars` for a recovery sentence, whose length is
 /// capped: a long path shortens the sentence, never fails the analysis.
 fn bounded_path_display(path: &Path, max_chars: usize) -> String {
-    let display = path.to_string_lossy().replace('\\', "/");
+    // Recovery prose stays on one line for a name with a line break (#16455).
+    let display = crate::terminal_text::prose_path_text(&path.to_string_lossy().replace('\\', "/"));
     if display.chars().count() > max_chars {
         let kept = max_chars.saturating_sub(1);
-        format!("{}…", display.chars().take(kept).collect::<String>())
+        let shown = display.chars().take(kept).collect::<String>();
+        // A cut must not leave half of a `\n` escape behind (#16455).
+        format!("{}…", shown.trim_end_matches('\\'))
     } else {
         display
     }

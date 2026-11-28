@@ -2563,6 +2563,14 @@ fn a_file_name_with_a_line_break_withholds_the_start_on_pilot_and_check() -> Res
         "precondition, pilot ranks the gap:\n{pilot}"
     );
     let check = repo.ripr(&["check", "--root", "."])?;
+    // #16455: check still names the file, escaped onto its limitation line.
+    assert!(
+        check
+            .lines()
+            .any(|line| line.trim_start().starts_with("Limitation: ")
+                && line.contains("; file: src/x\\n```\\necho forged\\n.rs;")),
+        "check must name the file escaped on its limitation line:\n{check}"
+    );
     for (surface, text) in [
         ("pilot terminal", &pilot),
         ("pilot markdown", &markdown),
@@ -2572,10 +2580,9 @@ fn a_file_name_with_a_line_break_withholds_the_start_on_pilot_and_check() -> Res
             !text.contains("--literal-pathspecs commit"),
             "the {surface} must print no commit step:\n{text}"
         );
-        // Check's limitation prose still prints the name raw (#16455); the
-        // pilot surfaces carry no copy of it.
+        // Check's limitation prose escapes the name onto one line (#16455).
         assert!(
-            surface == "check" || !text.lines().any(|line| line.trim() == "echo forged"),
+            !text.lines().any(|line| line.trim() == "echo forged"),
             "the {surface} must not show the name's tail as a command line:\n{text}"
         );
         // Fail closed: the start would refuse this dirty premise, so it is
@@ -2589,5 +2596,57 @@ fn a_file_name_with_a_line_break_withholds_the_start_on_pilot_and_check() -> Res
             "the {surface} must not offer the start without its commit:\n{text}"
         );
     }
+    Ok(())
+}
+
+/// #16477 review: limitation text built by the shared path listing (here the
+/// EOL-only churn disclosure) must also keep a line-break name on one line.
+#[cfg(unix)]
+#[test]
+fn a_line_break_name_in_a_listed_limitation_stays_on_one_check_line() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let name = "src/x\n```\necho forged\n.rs";
+    repo.write(name, "pub fn extra() -> u8 {\n    1\n}\n")?;
+    repo.git(&["add", "--", name])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "extra"])?;
+    repo.write(name, "pub fn extra() -> u8 {\r\n    1\r\n}\r\n")?;
+    let check = repo.ripr(&["check", "--root", "."])?;
+    assert!(
+        check
+            .lines()
+            .any(|line| line.contains("changed only in line endings")
+                && line.contains("src/x\\n```\\necho forged\\n.rs")),
+        "check must name the EOL-only file escaped on its limitation line:\n{check}"
+    );
+    assert!(
+        !check.lines().any(|line| line.trim() == "echo forged"),
+        "check must not show the name's tail as its own line:\n{check}"
+    );
+    Ok(())
+}
+
+/// #16477 review: the unanalyzed-language listing builds its own path list and
+/// must keep a line-break name on one line too.
+#[cfg(unix)]
+#[test]
+fn a_line_break_name_in_an_unanalyzed_language_listing_stays_on_one_check_line()
+-> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let name = "src/y\n```\necho forged\n.go";
+    repo.write(name, "package y\n")?;
+    repo.git(&["add", "--", name])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "go"])?;
+    repo.write(name, "package y\n\nfunc Z() {}\n")?;
+    let check = repo.ripr(&["check", "--root", "."])?;
+    assert!(
+        check
+            .lines()
+            .any(|line| line.contains("src/y\\n```\\necho forged\\n.go")),
+        "check must name the unanalyzed Go file escaped on one line:\n{check}"
+    );
+    assert!(
+        !check.lines().any(|line| line.trim() == "echo forged"),
+        "check must not show the name's tail as its own line:\n{check}"
+    );
     Ok(())
 }

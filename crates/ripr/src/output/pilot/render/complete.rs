@@ -12,7 +12,7 @@ use crate::output::agent_seam_packets::{
 use crate::output::human::terminal_safe;
 use crate::output::json::escape as json_escape;
 use crate::output::markdown::{PowershellForm, code_span, powershell_form};
-use crate::output::path::{display_path, display_path_text, human_path};
+use crate::output::path::{display_path, display_path_text, human_path, prose_path_text};
 use crate::output::pilot::commands::{
     PilotCommands, python_card_first_pr_command, repair_edit_scope, repair_inline_target_file,
     repair_start_command,
@@ -1793,12 +1793,7 @@ fn push_changed_file_limitations(
         let (prefix, path) = if markdown {
             ("- Current change limitation", code_span(&path))
         } else {
-            (
-                "  current change limitation",
-                path.replace('\r', "\\r")
-                    .replace('\n', "\\n")
-                    .replace('\t', "\\t"),
-            )
+            ("  current change limitation", prose_path_text(&path))
         };
         out.push_str(&terminal_safe(format!(
             "{prefix}: {}: {path}; {}. {}\n",

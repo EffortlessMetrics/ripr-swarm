@@ -3330,7 +3330,10 @@ pub(crate) fn incomplete_limitation_summary(output: &super::CheckOutput) -> Stri
     };
     let mut summary = limitation.plain_label().to_string();
     if let Some(path) = &limitation.path {
-        summary.push_str(&format!(" (in `{path}`)"));
+        summary.push_str(&format!(
+            " (in `{}`)",
+            crate::output::path::prose_path_text(path)
+        ));
     }
     summary.push_str(&format!(
         "; to proceed: {}",

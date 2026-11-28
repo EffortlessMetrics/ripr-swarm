@@ -1,0 +1,1 @@
+export { discount } from './price';
