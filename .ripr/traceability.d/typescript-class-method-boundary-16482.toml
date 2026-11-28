@@ -1,0 +1,16 @@
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/method_receiver_witness_tests.rs::an_inline_and_a_bound_receiver_witness_the_exact_boundary",
+  "crates/ripr/src/analysis/language/typescript/method_receiver_witness_tests.rs::a_renamed_or_barrel_class_import_witnesses_the_exact_boundary",
+  "crates/ripr/src/analysis/language/typescript/method_receiver_witness_tests.rs::a_static_method_witnesses_through_its_class",
+  "crates/ripr/src/analysis/language/typescript/method_receiver_witness_tests.rs::a_method_receiver_keeps_the_boundary_guards",
+  "crates/ripr/src/analysis/language/typescript/method_receiver_witness_tests.rs::a_replaced_spied_or_shadowed_method_is_not_related",
+  "crates/ripr/src/analysis/language/typescript/method_receiver_witness_tests.rs::the_inline_rewrite_keeps_the_method_arguments",
+  "fixtures/typescript_vitest_class_method_boundary",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/inline_new_receiver.rs",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+]

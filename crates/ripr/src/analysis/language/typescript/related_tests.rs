@@ -3800,22 +3800,7 @@ pub(crate) fn receiver_owner_call_relation(
     {
         return false;
     }
-    let mut receiver_names = unrebound_constructed_receivers(&test.body_text, &constructor_names);
-    // A receiver built in the enclosing scope (`const cart = new Cart()` in a
-    // `describe`, `cart = new Cart()` in a `beforeEach`) is the object the
-    // body calls, unless the body declares or reassigns that name itself.
-    for binding in test.scope_bindings.iter() {
-        let body = binding_scan_body(test, binding);
-        if binding
-            .constructed_by
-            .as_ref()
-            .is_some_and(|constructor| constructor_names.contains(constructor))
-            && !local_identifier_declared_in_test_body(body, &binding.name)
-            && !super::tests_extract::identifier_written_in(body, &binding.name)
-        {
-            push_unique_string(&mut receiver_names, binding.name.clone());
-        }
-    }
+    let receiver_names = constructed_method_receivers(test, &constructor_names);
     // A spied, mocked or replaced accessor (`vi.spyOn(Url.prototype,
     // "origin", "get").mockReturnValue(...)`) is not the getter as written,
     // so neither reading nor calling through it can notice a mutation of the
@@ -3851,6 +3836,75 @@ pub(crate) fn receiver_owner_call_relation(
             || factory_built_getter_read(test, owner, alias_map, workspace_root);
     }
     factory_built_method_call(test, owner, alias_map, workspace_root)
+}
+
+/// Locals that hold an instance built by one of `constructor_names`: a
+/// body `const cart = new Cart()` that is never rebound, or a receiver built
+/// in the enclosing scope (`const cart = new Cart()` in a `describe`, `cart =
+/// new Cart()` in a `beforeEach`) that the body neither declares nor
+/// reassigns.
+fn constructed_method_receivers(
+    test: &TypeScriptTest,
+    constructor_names: &[String],
+) -> Vec<String> {
+    let mut receiver_names = unrebound_constructed_receivers(&test.body_text, constructor_names);
+    for binding in test.scope_bindings.iter() {
+        let body = binding_scan_body(test, binding);
+        if binding
+            .constructed_by
+            .as_ref()
+            .is_some_and(|constructor| constructor_names.contains(constructor))
+            && !local_identifier_declared_in_test_body(body, &binding.name)
+            && !super::tests_extract::identifier_written_in(body, &binding.name)
+        {
+            push_unique_string(&mut receiver_names, binding.name.clone());
+        }
+    }
+    receiver_names
+}
+
+/// Receivers through which a test calls a changed method (#16482).
+pub(crate) struct MethodCallReceivers {
+    /// Names a call `name.method(...)` goes through: a local bound to `new
+    /// C()` for an instance method, the class binding for a static method.
+    pub(crate) bound: Vec<String>,
+    /// Class bindings an inline `new C(...).method(...)` constructs.
+    pub(crate) constructors: Vec<String>,
+}
+
+/// The receivers by which `test` calls the ordinary instance or static
+/// method `owner`, read by the same identity, shadow, rebinding, mock and
+/// replacement gates that give the test its `ReceiverOwnerCall` or
+/// `ClassMethodCall` relation. `None` for any other owner, and for a test
+/// that mocks the owner's module or replaces the method: those relations
+/// credit no call, so no receiver may witness one.
+pub(crate) fn method_call_receivers(
+    test: &TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Option<MethodCallReceivers> {
+    if owner.method_kind != TypeScriptMethodKind::Ordinary
+        || test_mocks_owner_module(test, owner, alias_map, workspace_root)
+        || super::method_replacement_guard::method_replaced_in_test(test, &owner.name)
+    {
+        return None;
+    }
+    match owner.owner_kind {
+        OwnerKind::Method => {
+            let constructors =
+                constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+            Some(MethodCallReceivers {
+                bound: constructed_method_receivers(test, &constructors),
+                constructors,
+            })
+        }
+        OwnerKind::ClassMethod => Some(MethodCallReceivers {
+            bound: class_names_for_class_method_owner(test, owner, alias_map, workspace_root),
+            constructors: Vec::new(),
+        }),
+        _ => None,
+    }
 }
 
 /// Getter owner (#13592-B4) observed only as a literal key of a property

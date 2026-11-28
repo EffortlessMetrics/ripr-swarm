@@ -3331,6 +3331,34 @@
       ]
     },
     {
+      "id": "typescript_vitest_class_method_boundary",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_vitest_class_method_boundary",
+      "vector": "method_receiver_witnesses_pinned_boundary_control",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "typescript:src/cart.ts::discount"
+        }
+      ]
+    },
+    {
       "id": "typescript_vitest_renamed_reexport_boundary",
       "language": "typescript",
       "tier": "pure",
