@@ -877,7 +877,9 @@ impl MacroVisibility {
 /// Whether `source` may hold a `path = …` attribute argument that names a
 /// file called `file_name`, under any module name. Comments may sit
 /// between the tokens. A plain or raw string value names the file when it
-/// is the file name or ends in `/` and the file name, after decoding
+/// has the file name as its last component, split at `/` or `\` (Windows
+/// accepts both; elsewhere a backslash counts too, which only refuses
+/// more) and compared without ASCII case, after decoding
 /// escapes such as `"\x74ool.rs"`. An escape that does not decode, trivia
 /// this does not skip, or a non-string value right after `#[path` (a macro
 /// fragment) can name any file, so each counts as a mount.
@@ -909,11 +911,12 @@ fn may_mount_file_named(source: &str, file_name: &str) -> bool {
             return true;
         };
         match string_literal_value(value) {
+            // Compared without ASCII case, since a case-insensitive file
+            // system (the Windows and macOS defaults) opens `Tool.rs` as
+            // `tool.rs`.
             Some(Some(text)) => {
-                text == file_name
-                    || text
-                        .strip_suffix(file_name)
-                        .is_some_and(|parent| parent.ends_with('/'))
+                let base = text.rsplit(['/', '\\']).next().unwrap_or(&text);
+                base.eq_ignore_ascii_case(file_name)
             }
             // An escape or literal the scan cannot decode.
             Some(None) => true,
@@ -1605,6 +1608,9 @@ mod tests {
             "#[path = \"\\u{74}o\\u{6F}l.rs\"]\nmod mounted;\n",
             "#[path = \"../bin/\\\n    tool.rs\"]\nmod mounted;\n",
             "#[path = \"\\q.rs\"]\nmod mounted;\n",
+            "#[path = \"..\\\\bin\\\\tool.rs\"]\nmod mounted;\n",
+            "#[path = r\"..\\bin\\tool.rs\"]\nmod mounted;\n",
+            "#[path = \"../bin/Tool.RS\"]\nmod mounted;\n",
             "#[cfg_attr(test, path = \"tool.rs\")]\nmod mounted;\n",
             "macro_rules! m { ($f:literal) => { #[path = $f] mod mounted; }; }\n",
         ] {

@@ -395,7 +395,8 @@ names, each resolved on its own) at the top level, and in the file's crate
 (the crate root its `mod` declarations lead up to: `lib.rs`, `main.rs`,
 `build.rs`, or a file directly in `tests`, `benches`, `examples` or `src/bin`
 that no other file declares, plainly or with an attribute, and that no
-`#[path]` value elsewhere names once its escapes are decoded; a value that
+`#[path]` value elsewhere names once its escapes are decoded (its last
+component after `/` or `\`, compared without ASCII case); a value that
 does not decode, or a macro fragment in its place, may name any file. Two
 declarers or a `#[path]` one, under any module name, leave the crate unknown) exactly one macro of that name exists and it carries a
 plain `#[macro_export]` (only `doc`, `allow`, `warn` or `deny` besides it).
