@@ -1,0 +1,225 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_field_construction_short_field_name_other_field/input",
+  "summary": {"changed_rust_files":1,"probes":2,"findings":2,"exposed":0,"weakly_exposed":2,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:7e8e4a3d7d92bee19aea1bad6d25b580a03a35662f35d922cb14419570ac1fbb","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:field_construction:6c12f323",
+      "canonical_gap_id": "gap:rust:src/lib.rs:origin_shift:field_construction:field_construction:y_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:origin_shift:field_construction:field_construction:y_1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "origin_shift",
+        "behavior_kind": "field_construction",
+        "probe_kind": "field_construction",
+        "normalized_discriminator": "y_1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:field_construction:6c12f323",
+        "family": "field_construction",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": "y: 1"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach origin_shift: shift_sets_x"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches constructed field: y: 1"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach origin_shift: shift_sets_x", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches constructed field: y: 1", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches constructed field: y: 1 (line 8)", "related test src/lib.rs:16 shift_sets_x uses strong exact value oracle: assert_eq!(origin_shift(3).x, 3);", "source assertion argument value 3 at line 17", "source function argument value dx = 3 at line 17", "missing discriminator y: 1: No field-value assertion observes the constructed field: y: 1"],
+      "flow_sinks": [
+        {"kind":"struct_field","text":"y: 1","line":8}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches constructed field: y: 1", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach origin_shift: shift_sets_x"],
+      "missing": ["Missing check value: y: 1", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "17": "assert_eq!(origin_shift(3).x, 3);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 17,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 17,
+            "value": "dx = 3",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "y: 1",
+            "reason": "No field-value assertion observes the constructed field: y: 1",
+            "flow_sink": {"kind":"struct_field","text":"y: 1","line":8}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 17,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 17,
+          "value": "dx = 3",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "y: 1",
+          "reason": "No field-value assertion observes the constructed field: y: 1",
+          "flow_sink": {"kind":"struct_field","text":"y: 1","line":8}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "shift_sets_x",
+          "file": "src/lib.rs",
+          "line": 16,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(origin_shift(3).x, 3);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "missing_exact_assertion",
+          "why": "no assertion pins `y: 1`"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "suggested_next_action": "Strengthen the related assertion so it discriminates the changed behavior.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_lib.rs:return_value:53eff910",
+      "canonical_gap_id": "gap:rust:src/lib.rs:origin_shift:return_value:return_value:point_x_dx_y_1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:origin_shift:return_value:return_value:point_x_dx_y_1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "origin_shift",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "point_x_dx_y_1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.92,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:53eff910",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 8,
+        "expression": "Point { x: dx, y: 1 }"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach origin_shift: shift_sets_x"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: Point { x: dx, y: 1 }"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach origin_shift: shift_sets_x", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: Point { x: dx, y: 1 }", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: Point { x: dx, y: 1 } (line 8)", "related test src/lib.rs:16 shift_sets_x uses strong exact value oracle: assert_eq!(origin_shift(3).x, 3);", "source assertion argument value 3 at line 17", "source function argument value dx = 3 at line 17"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"Point { x: dx, y: 1 }","line":8}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: Point { x: dx, y: 1 }", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach origin_shift: shift_sets_x"],
+      "missing": ["No strong discriminator was detected"],
+      "assertion_texts": {
+        "17": "assert_eq!(origin_shift(3).x, 3);"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 17,
+            "value": "3",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 17,
+            "value": "dx = 3",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 17,
+          "value": "3",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 17,
+          "value": "dx = 3",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "shift_sets_x",
+          "file": "src/lib.rs",
+          "line": 16,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(origin_shift(3).x, 3);",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "observation_unconfirmed",
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "The related test `shift_sets_x` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "suggested_next_action": "The related test `shift_sets_x` already has an exact assertion; this does not establish observation of the returned value. Check whether the change can affect the returned value. If it can, add a separating input and assert the exact returned value. If it cannot, test the changed effect separately; another input cannot distinguish unchanged returns.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
