@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0441"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0441-runner-occupancy.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #14525 adds raw runner occupancy and incomplete-attempt semantics to the existing advisory CI-budget report."
