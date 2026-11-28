@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/rust_transitive_reach_test_helper_chain/input
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 2 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked on 1 candidate line: 0 appear noticed by tests, 0 partly noticed, 0 reached but not noticed, 2 no test path. 2 found, 0 suppressed by your settings
 
 Analysis outcome: findings below (analysis complete)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -18,8 +18,7 @@ Start here:
   Next step: Tests cannot close this static-analysis limitation: ripr cannot trace entry
     `assert_public_api_accepts` -> owner `matches_greater` through a transitive Rust helper path.
     Inspect the named path and existing assertions through the public API; add a test only for an
-    independently confirmed gap. This limitation does not establish a missing test. Route analyzer
-    work to `analysis/rust-public-api-transitive-reach`
+    independently confirmed gap. This limitation does not establish a missing test
   Evidence: reach no · infection unknown · propagation yes · observation no · assertion no
     Stages (static evidence): reach = test path to changed owner; infection = inputs can activate change;
       propagation = changed effect reaches output; observation = related test/assertion evidence;
@@ -27,7 +26,8 @@ Start here:
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
-      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;
+      both can rest on a test link ripr could not confirm; the reach stage says which;
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
@@ -36,6 +36,7 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast probe:src_eval.rs:predicate:f66d616d
   ripr context --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast --at probe:src_eval.rs:predicate:f66d616d
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
@@ -47,7 +48,6 @@ Hidden:
     no path = no test path was found
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: ripr found no static test path for any of the 2 changed expression(s) in this diff. Scope
   analyzed: 1 changed Rust file(s), 2 changed expression(s), and 0 statically linked related

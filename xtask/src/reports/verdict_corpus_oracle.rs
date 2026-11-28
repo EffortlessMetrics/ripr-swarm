@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// ripr's `OracleKind` names (`crates/ripr/src/domain/evidence.rs`).
+/// ripr's `OracleKind` names (`crates/ripr-contract/src/domain/evidence.rs`).
 pub(crate) const ORACLE_KINDS: [&str; 10] = [
     "exact_value",
     "exact_error_variant",

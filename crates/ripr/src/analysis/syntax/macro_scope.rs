@@ -151,6 +151,9 @@ pub(crate) struct GeneratorCalls {
     /// A bare call inside an inline module or function. A `use` is not
     /// visible in a child module, so a macro named by one reaches none.
     pub nested_bare: bool,
+    /// A bare call inside an inline module. A bare call in a function of the
+    /// file's own top level still sees the file's top-level `use` items.
+    pub nested_in_module: bool,
     /// Byte range of the `crate::` in front of each top-level `crate::name!`.
     pub crate_prefixes: Vec<(usize, usize)>,
 }
@@ -190,6 +193,10 @@ pub(crate) fn generator_calls(
             None => {
                 entry.bare = true;
                 entry.nested_bare |= !top_level;
+                entry.nested_in_module |= call
+                    .syntax()
+                    .ancestors()
+                    .any(|ancestor| ast::Module::can_cast(ancestor.kind()));
             }
             Some(qualifier) if top_level && qualifier.qualifier().is_none() => {
                 let head: String = qualifier

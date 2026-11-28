@@ -7,7 +7,7 @@
 use super::*;
 use crate::domain::RelatedTestMiss;
 
-fn complete_perl_actionability_context() -> PerlActionabilityContext {
+pub(super) fn complete_perl_actionability_context() -> PerlActionabilityContext {
     PerlActionabilityContext {
         receipt_command: Some(
             [
@@ -263,9 +263,20 @@ fn perl_fact_packet_adapter_consumes_exact_return_fixture() -> Result<(), String
 }
 
 #[test]
+fn perl_fact_packet_adapter_accepts_v1_and_v2_schema_versions() -> Result<(), String> {
+    let v1 = consume(EXACT_RETURN_PACKET)?;
+    assert_eq!(v1.schema_version, crate::app::PERL_FACT_PACKET_SCHEMA);
+
+    let v2_text = EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v2\"");
+    let v2 = consume(&v2_text)?;
+    assert_eq!(v2.schema_version, crate::app::PERL_FACT_PACKET_V2_SCHEMA);
+    Ok(())
+}
+
+#[test]
 fn perl_fact_packet_adapter_rejects_unknown_schema_version() -> Result<(), String> {
     let err = match consume(
-        &EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v2\""),
+        &EXACT_RETURN_PACKET.replace("\"ripr-perl-facts-v1\"", "\"ripr-perl-facts-v3\""),
     ) {
         Ok(_) => return Err("unknown schema version should fail closed".to_string()),
         Err(err) => err,
@@ -673,12 +684,24 @@ fn perl_related_test_linking_classifies_reachability_and_revealability() -> Resu
     Ok(())
 }
 
+pub(super) const RETURN_PACKET: &str = include_str!(
+    "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
+);
+
+pub(super) fn concrete_return_packet() -> Result<PerlFactPacket, String> {
+    let mut packet = consume(RETURN_PACKET)?;
+    let change = packet
+        .changes
+        .iter_mut()
+        .find(|change| change.change_id == "change:lib/My/App.pm:8:return")
+        .ok_or("missing return change")?;
+    change.missing_discriminator = Some("discounted amount".to_string());
+    Ok(packet)
+}
+
 #[test]
 fn perl_strict_actionability_requires_all_packet_and_context_fields() -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let context = complete_perl_actionability_context();
     let gap = packet
         .canonical_gap_identity_for_change("change:lib/My/App.pm:8:return")
@@ -696,7 +719,7 @@ fn perl_strict_actionability_requires_all_packet_and_context_fields() -> Result<
         "perl:lib/My/App.pm::My::App::discount"
     );
     assert_eq!(actionable.evidence_class, ExposureClass::WeaklyExposed);
-    assert_eq!(actionable.missing_discriminator, "return_value");
+    assert_eq!(actionable.missing_discriminator, "discounted amount");
     assert_eq!(actionable.repair_kind, "add_exact_return_assertion");
     assert_eq!(
         actionable.target_test_shape,
@@ -795,10 +818,7 @@ fn perl_strict_actionability_requires_all_packet_and_context_fields() -> Result<
 #[test]
 fn perl_strict_actionability_uses_selected_strict_evidence_for_gap_identity() -> Result<(), String>
 {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let mut packet = consume(fixture)?;
+    let mut packet = concrete_return_packet()?;
     packet.relations.insert(
         0,
         RelationFact {
@@ -845,10 +865,7 @@ fn perl_strict_actionability_uses_selected_strict_evidence_for_gap_identity() ->
 
 #[test]
 fn perl_strict_actionability_blocks_limitation_on_any_related_evidence() -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let mut packet = consume(fixture)?;
+    let mut packet = concrete_return_packet()?;
     let mut additional_relation = packet
         .relations
         .first()
@@ -877,10 +894,7 @@ fn perl_strict_actionability_blocks_limitation_on_any_related_evidence() -> Resu
 
 #[test]
 fn perl_repair_card_and_agent_packet_project_strict_actionability() -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let context = complete_perl_actionability_context();
     let card = packet
         .repair_card_for_change("change:lib/My/App.pm:8:return", &context)
@@ -898,12 +912,12 @@ fn perl_repair_card_and_agent_packet_project_strict_actionability() -> Result<()
     assert_eq!(card.changed_owner, "perl:lib/My/App.pm::My::App::discount");
     assert_eq!(card.evidence_class, "weakly_exposed");
     assert_eq!(card.repair_kind, "add_exact_return_assertion");
-    assert_eq!(card.missing_discriminator, "return_value");
+    assert_eq!(card.missing_discriminator, "discounted amount");
     assert_eq!(card.target_test_shape, "Test::More exact_return_assertion");
     assert_eq!(card.suggested_test_location, "t/app.t::discount_smoke");
     assert_eq!(
         card.suggested_assertion,
-        "assert the exact returned `return_value` value"
+        "assert the exact returned `discounted amount` value"
     );
     assert_eq!(card.verify_command, "prove t/app.t");
     assert_eq!(
@@ -986,10 +1000,7 @@ fn perl_repair_card_and_agent_packet_project_strict_actionability() -> Result<()
 #[test]
 fn perl_private_repair_card_and_agent_packet_json_preserve_internal_projection_boundary()
 -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let context = complete_perl_actionability_context();
     let card = packet
         .repair_card_for_change("change:lib/My/App.pm:8:return", &context)
@@ -1072,10 +1083,7 @@ fn perl_private_repair_card_and_agent_packet_json_preserve_internal_projection_b
 #[test]
 fn perl_repair_card_and_agent_packet_fail_closed_without_strict_actionability() -> Result<(), String>
 {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let mut missing_receipt = complete_perl_actionability_context();
     missing_receipt.receipt_command = None;
     assert_eq!(
@@ -1109,10 +1117,7 @@ fn perl_repair_card_and_agent_packet_fail_closed_without_strict_actionability() 
 
 #[test]
 fn perl_strict_actionability_fails_closed_for_missing_or_weak_fields() -> Result<(), String> {
-    let fixture = include_str!(
-        "../../../../../../fixtures/perl_lsp_facts_exporter/expected/ripr-perl-source-test-oracle-facts-v1.json"
-    );
-    let packet = consume(fixture)?;
+    let packet = concrete_return_packet()?;
     let context = complete_perl_actionability_context();
 
     let mut missing_receipt = context.clone();
@@ -6492,5 +6497,170 @@ fn perl_isnt_is_a_smoke_oracle_not_an_exact_one() -> Result<(), String> {
         EXACT_RETURN_PACKET.replace("is($got, 10, 'discount threshold')", "isnt_zero($got, 10)");
     let (class, _) = first_finding_misses(&packet)?;
     assert_eq!(class, exact_class);
+    Ok(())
+}
+
+/// RIPR-SPEC-0235 rule 23 (#7851): equal sink text is not observation of a
+/// changed returned-list element. The producer often copies the whole
+/// changed expression onto every strong oracle. A literal-list `is_deeply`
+/// still aligns; `is(scalar ...)` and a self-comparison do not. Packets
+/// below are edited-producer consumer evidence: they start from
+/// `EXACT_RETURN_PACKET` and are not upstream fact emission.
+fn equal_fact_list_packet(expression: &str) -> Result<String, String> {
+    edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "changes",
+            "changed_observable",
+            serde_json::json!("$1"),
+        )?;
+        set_first(packet, "oracles", "observed_sink", serde_json::json!("$1"))?;
+        set_first(
+            packet,
+            "oracles",
+            "expression",
+            serde_json::json!(expression),
+        )?;
+        Ok(())
+    })
+}
+
+fn first_class(packet: &str) -> Result<crate::domain::ExposureClass, String> {
+    findings_from_packet(packet)?
+        .into_iter()
+        .next()
+        .map(|finding| finding.class)
+        .ok_or_else(|| "expected one finding".to_string())
+}
+
+#[test]
+fn list_element_equal_fact_does_not_promote_scalar_or_self_comparison() -> Result<(), String> {
+    use crate::domain::ExposureClass;
+    const LIST: &str = "is_deeply([PathParts::splitpath('d1/d2/d3/file')], ['', 'd1/d2/d3/', 'file'], 'list splits volume, directory, and file')";
+    const SCALAR: &str = "is(scalar PathParts::splitpath('d1/d2/d3/file'), 'file', 'scalar context is the basename')";
+    const SELF: &str = "is_deeply([PathParts::splitpath('d1/d2/d3/file')], [PathParts::splitpath('d1/d2/d3/file')], 'list self-comparison')";
+    const QUALIFIED_SCALAR: &str =
+        "Test::More::is(scalar PathParts::splitpath('d1/d2/d3/file'), 'file', 'scalar')";
+    const QUALIFIED_SELF: &str = "Test::More::is_deeply([PathParts::splitpath('d1/d2/d3/file')], [PathParts::splitpath('d1/d2/d3/file')], 'self')";
+    const IS_SELF: &str = "is(PathParts::splitpath('d1/d2/d3/file'), PathParts::splitpath('d1/d2/d3/file'), 'is self')";
+
+    let list = findings_from_packet(&equal_fact_list_packet(LIST)?)?;
+    let list = list.first().ok_or("expected one finding")?;
+    assert_eq!(
+        list.class,
+        ExposureClass::Exposed,
+        "independent list is_deeply must keep exact alignment"
+    );
+    assert!(
+        list.evidence
+            .iter()
+            .any(|e| e.starts_with("perl_already_discriminated:")),
+        "independent list is_deeply must emit already-discriminated evidence"
+    );
+
+    for (label, expression) in [
+        ("scalar is", SCALAR),
+        ("qualified scalar is", QUALIFIED_SCALAR),
+        ("list self-comparison", SELF),
+        ("qualified list self-comparison", QUALIFIED_SELF),
+        ("is self-comparison", IS_SELF),
+    ] {
+        let findings = findings_from_packet(&equal_fact_list_packet(expression)?)?;
+        let finding = findings.first().ok_or("expected one finding")?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::WeaklyExposed,
+            "{label} must not promote equal-fact list-element sinks: {expression}"
+        );
+        assert!(
+            !finding
+                .evidence
+                .iter()
+                .any(|e| e.starts_with("perl_already_discriminated:")),
+            "{label} must not emit already-discriminated evidence"
+        );
+        assert!(
+            finding.canonical_gap.is_some()
+                || finding
+                    .recommended_next_step
+                    .as_deref()
+                    .is_some_and(|step| !step.is_empty()),
+            "{label} must keep advisory guidance"
+        );
+    }
+
+    // Controls: a plain `is` with independent expected text still aligns,
+    // and a name that only starts with `is_deeply` is not the matcher.
+    assert_eq!(
+        first_class(&equal_fact_list_packet(
+            "is($got, 10, 'discount threshold')",
+        )?)?,
+        ExposureClass::Exposed,
+        "plain is($got, 10) keeps exact alignment"
+    );
+    assert_eq!(
+        first_class(&equal_fact_list_packet(
+            "is_deeply_ok([PathParts::splitpath('d1/d2/d3/file')], ['', 'd1/d2/d3/', 'file'])",
+        )?)?,
+        ExposureClass::Exposed,
+        "a longer name than is_deeply is not the self-comparison matcher"
+    );
+
+    // Producer-rate preservation: perl-idiom-wantarray-exact credits
+    // is(scalar ctx_value(), 3) because the equal sink is the scalar arm.
+    let wantarray = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "changes",
+            "changed_observable",
+            serde_json::json!("wantarray ? @r : scalar @r"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "observed_sink",
+            serde_json::json!("wantarray ? @r : scalar @r"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "expression",
+            serde_json::json!("is(scalar Toolkit::ctx_value(), 3, 'scalar context counts')"),
+        )?;
+        Ok(())
+    })?;
+    assert_eq!(
+        first_class(&wantarray)?,
+        ExposureClass::Exposed,
+        "is(scalar ...) still aligns when the sink names scalar/wantarray"
+    );
+
+    // Scalar-return observables are not numbered captures; scalar `is` keeps credit.
+    let scalar_return = edited_packet(EXACT_RETURN_PACKET, |packet| {
+        set_first(
+            packet,
+            "changes",
+            "changed_observable",
+            serde_json::json!("$result"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "observed_sink",
+            serde_json::json!("$result"),
+        )?;
+        set_first(
+            packet,
+            "oracles",
+            "expression",
+            serde_json::json!("is(scalar Foo::value(), 3, 'scalar return counts')"),
+        )?;
+        Ok(())
+    })?;
+    assert_eq!(
+        first_class(&scalar_return)?,
+        ExposureClass::Exposed,
+        "scalar is on a scalar-return observable must not be withheld by rule 23"
+    );
     Ok(())
 }

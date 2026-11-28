@@ -180,3 +180,97 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — recording_double_observer_refusals (15)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — recording_double_observer_refusals (16)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — recording_double_observer_refusals (17)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — recording_double_observer_refusals (18)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — recording_double_observer_refusals (19)
+
+Reason:
+RIPR-SPEC-0122: the call_deletion change type reads "a line that makes a call changed"; the family names the probe ripr runs on a changed call, not the edit (#15271); human text only, check.json unchanged
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — recording_double_observer_refusals (20)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — recording_double_observer_refusals (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — recording_double_observer_refusals (22)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless recording_double_observer_refusals --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

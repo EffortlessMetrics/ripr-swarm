@@ -12,7 +12,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Number, Value};
 
 use super::{MAX_NATIVE_BYTES, NativeDocument};
-use crate::domain::external_verification_native::{
+use ripr_contract::domain::external_verification_native::{
     NativeFailureKind, NativeHarness, NativeOutcome, NativeRun, NativeRunState, NativeVerdict,
 };
 

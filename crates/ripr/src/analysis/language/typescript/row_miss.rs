@@ -28,10 +28,9 @@
 //!   `it.each([[owner, 1]])`), and even the affirmative shadow or unrelated
 //!   import rejections refute only the apparent call, not hooks, helpers,
 //!   re-exports or mocks. Those rows keep `miss: None`.
-//! - `assertion_not_observing`: withheld by this producer. Row eligibility is the
-//!   explicit `RelatedTest::role` (#5563), not this value, so a later
-//!   annotation cannot change decisions; rows that would have carried it
-//!   get `observation_unconfirmed` or no miss.
+//! - `assertion_not_observing`: only when row-local sink observation is
+//!   `affirmatively_other_sink` (#5528). Unresolved observation stays
+//!   `observation_unconfirmed`.
 //! - `observation_unconfirmed` on an unanchored or unresolved-alias owner
 //!   call: identity is unproved, so no row-to-owner relationship exists to
 //!   leave unconfirmed.
@@ -125,7 +124,7 @@ pub(crate) fn ts_row_miss(
         // whether the assertion observes the changed owner is unknown.
         Disp::RejectedOwnerModuleMock | Disp::RejectedSpyFabrication => {
             admitted_assertion_row(admission, test)
-                .then_some(RelatedTestMiss::ObservationUnconfirmed)
+                .then_some(RelatedTestMiss::AssertionNotObserving)
         }
         // Identity is unproved: the name may be a same-named function from an
         // enclosing scope or an import the resolver cannot place. No path or
@@ -209,16 +208,29 @@ fn established_path_miss(
     ) {
         return Some(RelatedTestMiss::ObservationUnconfirmed);
     }
-    // The finding-wide observation guard, evaluated over this row alone: a
-    // row that confirms its own observation has no miss to explain.
-    let observed = ts_changed_value_is_observed(
-        context.probe_shape,
-        context.line_text,
-        context.owner,
-        std::slice::from_ref(candidate),
-        context.alias_map,
-        context.workspace_root,
-        context.credits,
+    // Row-local changed-sink observation (#5528): the family-relevant assertion
+    // only; aggregate classification still OR-reduces the same per-candidate
+    // states through `ts_changed_value_is_observed`.
+    let observation = ts_row_changed_sink_observation(
+        TsChangedSinkObservationInput {
+            probe_shape: context.probe_shape,
+            line_text: context.line_text,
+            owner: context.owner,
+            alias_map: context.alias_map,
+            workspace_root: context.workspace_root,
+            credits: context.credits,
+        },
+        candidate,
+        assertion,
     );
-    (!observed).then_some(RelatedTestMiss::ObservationUnconfirmed)
+    match observation {
+        TypeScriptChangedSinkObservation::ConfirmedChangedSink
+        | TypeScriptChangedSinkObservation::NotApplicable => None,
+        TypeScriptChangedSinkObservation::AffirmativelyOtherSink => {
+            Some(RelatedTestMiss::AssertionNotObserving)
+        }
+        TypeScriptChangedSinkObservation::Unresolved => {
+            Some(RelatedTestMiss::ObservationUnconfirmed)
+        }
+    }
 }

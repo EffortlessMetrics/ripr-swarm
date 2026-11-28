@@ -190,7 +190,7 @@ pub(super) fn apply_cross_language_limit(finding: &mut Finding, probe: &Probe, i
 /// Borrowed, pass-local lookup. Each source identifier is indexed once, never
 /// by copying a function/body. Empty inputs make every later lookup constant
 /// time; no-path findings do not rescan all files or macro token trees.
-pub(super) struct PropertyMacroMentionIndex<'a> {
+pub(in crate::analysis) struct PropertyMacroMentionIndex<'a> {
     captured_root: Option<&'a std::path::Path>,
     selected_root: &'a std::path::Path,
     by_identifier: std::collections::BTreeMap<&'a str, Vec<PropertyMacroLocation<'a>>>,
@@ -243,6 +243,61 @@ impl<'a> PropertyMacroMentionIndex<'a> {
         }
     }
 
+    /// Repo seam owners use root-relative indexed paths. This is the same
+    /// source/package authority as the Finding consumer, with no new resolver.
+    pub(in crate::analysis) fn for_index(index: &'a RustIndex) -> Self {
+        Self::new(index, std::path::Path::new(""))
+    }
+
+    fn selected(
+        &self,
+        owner_name: &str,
+        owner_file: &std::path::Path,
+        exclude_bindings: bool,
+    ) -> Option<&PropertyMacroLocation<'a>> {
+        let owner_package = self.owner_package(owner_file);
+        self.by_identifier
+            .get(owner_name)?
+            .iter()
+            .filter(|location| {
+                !exclude_bindings
+                    || !location
+                        .witness
+                        .binding_only_identifiers
+                        .iter()
+                        .any(|binding| binding == owner_name)
+            })
+            .filter(|location| {
+                match (owner_package, self.known_package(location.file)) {
+                    (Some(owner), Some(mentioned)) => owner == mentioned,
+                    // Unresolved package identity cannot prove unrelatedness.
+                    _ => true,
+                }
+            })
+            .min_by_key(|location| location.metadata_failure.is_none())
+    }
+
+    /// A source-bound failed provider verification, projected once by the
+    /// same sanitized diagnosis/recovery owner used by the diff pipeline.
+    /// A property whose only spelling of the owner declares the property or a
+    /// parameter cannot withhold that owner's repository evidence.
+    pub(in crate::analysis) fn provider_failure_summary(
+        &self,
+        owner_name: &str,
+        owner_file: &std::path::Path,
+    ) -> Option<String> {
+        let location = self.selected(owner_name, owner_file, true)?;
+        let failure = location.metadata_failure?;
+        Some(format!(
+            "Reach unresolved ({}): property macro `{}!` at {}:{} lexically mentions `{owner_name}`; offline provider verification; {failure}. {} No generated test, observed value, owner execution or missing-test certainty is established.",
+            StaticLimitKind::RustMacroReachUnresolved.as_str(),
+            location.witness.name,
+            location.file.display().to_string().replace('\\', "/"),
+            location.witness.line,
+            provider_metadata::recovery_step(failure),
+        ))
+    }
+
     fn known_package(&self, indexed_file: &std::path::Path) -> Option<&str> {
         self.package_authority?
             .get(indexed_file)
@@ -260,6 +315,22 @@ impl<'a> PropertyMacroMentionIndex<'a> {
             .or_else(|| probe_file.strip_prefix(self.captured_root?).ok())?;
         self.known_package(relative)
     }
+
+    /// A test from a different known manifest cannot supply a local
+    /// inspection pointer. Preserve the unresolved hint when either
+    /// identity is missing or comes from the manifestless directory fallback.
+    pub(super) fn subprocess_package_filter(
+        &self,
+        owner: &std::path::Path,
+    ) -> impl Fn(&std::path::Path) -> bool + '_ {
+        let owner = self.owner_package(owner);
+        move |test| match (owner, self.known_package(test)) {
+            (Some(a), Some(b)) if !a.starts_with("directory:") && !b.starts_with("directory:") => {
+                a == b
+            }
+            _ => true,
+        }
+    }
 }
 
 /// A suffix/name match is a possible lexical mention, never resolved reach.
@@ -270,29 +341,11 @@ pub(super) fn apply_unresolved_property_macro_limit(
     owner_file: &std::path::Path,
     mentions: &PropertyMacroMentionIndex<'_>,
 ) -> bool {
-    let Some(locations) = mentions.by_identifier.get(owner_name) else {
-        return false;
-    };
-    // This is retained manifest/source authority, not a path-layout guess.
-    // No per-finding filesystem reads or manifest resolution are performed.
-    let owner_package = mentions.owner_package(owner_file);
-    // Prefer a relevant invocation whose actual verification failed over an
-    // earlier opaque sibling. The diagnostic stays attached to its own witness;
-    // it must never be copied onto the unsupported sibling's source pointer.
     let Some(PropertyMacroLocation {
         file,
         witness,
         metadata_failure,
-    }) = locations
-        .iter()
-        .filter(|location| {
-            match (owner_package, mentions.known_package(location.file)) {
-                (Some(owner), Some(mentioned)) => owner == mentioned,
-                // An unresolved package identity cannot prove unrelatedness.
-                _ => true,
-            }
-        })
-        .min_by_key(|location| location.metadata_failure.is_none())
+    }) = mentions.selected(owner_name, owner_file, false)
     else {
         return false;
     };
@@ -458,8 +511,22 @@ fn apply_macro_assertion_witness(finding: &mut Finding, witness: RustMacroAssert
 /// what ripr could not resolve instead of prescribing an assertion the suite
 /// may already contain. Classification (already `weakly_exposed` via the
 /// unconfirmed-observation rule in reveal) is unchanged.
-pub(super) fn apply_wrapper_error_binding_limit(finding: &mut Finding, probe: &Probe) {
-    if finding.class != ExposureClass::WeaklyExposed || finding.static_limit_kind.is_some() {
+///
+/// #14968: `literal_only_related` says every related test asserts only
+/// dropped literal-only assertions. Such a finding read `weakly_exposed` from
+/// the literal alone; dropping that credit lowers the class to
+/// `reachable_unrevealed`, never the limitation or the typed next step it
+/// named (RIPR-SPEC-0094).
+pub(super) fn apply_wrapper_error_binding_limit(
+    finding: &mut Finding,
+    probe: &Probe,
+    literal_only_related: bool,
+) {
+    let literal_only_unrevealed =
+        literal_only_related && finding.class == ExposureClass::ReachableUnrevealed;
+    if (finding.class != ExposureClass::WeaklyExposed && !literal_only_unrevealed)
+        || finding.static_limit_kind.is_some()
+    {
         return;
     }
     if !matches!(
@@ -473,6 +540,10 @@ pub(super) fn apply_wrapper_error_binding_limit(finding: &mut Finding, probe: &P
     }
 
     finding.static_limit_kind = Some(StaticLimitKind::WrapperErrorBindingUnresolved);
+    if literal_only_unrevealed {
+        finding.recommended_next_step =
+            Some(crate::analysis::classify::WRAPPER_ERROR_BINDING_NEXT_STEP.to_string());
+    }
     finding.evidence.push(
         "limitation_last_established_edge: changed wrapper conversion maps the converted callee's error into the boxed error channel".to_string(),
     );
@@ -538,7 +609,9 @@ fn only_credited_local_macros_supply_an_oracle(finding: &Finding) -> bool {
         let Some(oracle) = related.oracle.as_deref() else {
             // A refused assertion on a directly related test is still an
             // assertion ripr judged (#7089).
-            if related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+            if related
+                .miss
+                .is_some_and(crate::domain::RelatedTestMiss::is_assertion_refusal_miss)
                 && (related.relation_reason.is_none()
                     || is_direct_relation(related.relation_reason))
             {
@@ -711,11 +784,17 @@ fn find_unresolved_assertion_macro_witness_among(
         }) {
             continue;
         }
+        let aliases = index
+            .files()
+            .get(&test.file)
+            .map(|file| assertion_macro_import_aliases(&file.source))
+            .unwrap_or_default();
         for (macro_name, macro_line) in unresolved_assertion_macro_invocations_among(
             &test.body,
             test.start_line,
             owner_in_arguments,
             credited,
+            &aliases,
         ) {
             candidates.push(RustMacroAssertionWitness {
                 test_name: test.name.clone(),
@@ -737,7 +816,191 @@ fn unresolved_assertion_macro_invocations(
     start_line: usize,
     owner_in_arguments: Option<&str>,
 ) -> Vec<(String, usize)> {
-    unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[])
+    unresolved_assertion_macro_invocations_among(body, start_line, owner_in_arguments, &[], &[])
+}
+
+/// Evidence prefix of an unread assertion-like macro row line (#15237).
+pub(crate) const UNREAD_ASSERTION_MACRO_PREFIX: &str = "assertion-like macro not read: ";
+
+/// #15237: a related-test row read as `no_assertion` whose test body invokes
+/// an assertion-like macro ripr does not classify (`assert_delta!`, a
+/// test-local `macro_rules!` built from `if bad { panic!(..) }`) does have a
+/// check; what it observes is unknown. The row becomes the analyzer-limit miss
+/// `assertion_admission_unproven` and the finding names the test and macro.
+///
+/// This runs after every limit and gap decision of the post-classify pass, so
+/// it never feeds one: a refusal miss reads as "an assertion ripr judged" to
+/// those decisions (#7089), which this macro is not. It grants no oracle,
+/// strength, class or limit, and leaves the stage summaries alone; only the
+/// false absence claim is withdrawn. Macros are read from comment- and
+/// string-masked text with the #7089 witness's spelling rule.
+pub(super) fn name_unread_assertion_macro_rows(finding: &mut Finding, index: &RustIndex) {
+    let mut lines = Vec::new();
+    for row in &mut finding.related_tests {
+        if row.oracle.is_some()
+            || row.miss != Some(crate::domain::RelatedTestMiss::NoAssertion)
+            || row.file.extension().is_none_or(|ext| ext != "rs")
+        {
+            continue;
+        }
+        let Some(macro_name) = index
+            .tests()
+            .iter()
+            .chain(index.files().values().flat_map(|file| file.tests.iter()))
+            .find(|test| {
+                test.name == row.name && test.file == row.file && test.start_line == row.line
+            })
+            .and_then(|test| first_executed_unread_assertion_macro(&test.body))
+        else {
+            continue;
+        };
+        row.miss = Some(crate::domain::RelatedTestMiss::AssertionAdmissionUnproven);
+        lines.push(format!(
+            "{UNREAD_ASSERTION_MACRO_PREFIX}`{}` checks through `{macro_name}!`, an assertion-like macro ripr does not read, so whether it observes the changed behavior is not established",
+            row.name
+        ));
+    }
+    for line in lines {
+        if !finding.evidence.contains(&line) {
+            finding.evidence.push(line);
+        }
+    }
+}
+
+/// The first assertion-like macro ripr does not classify that `body` invokes
+/// as code: not inside another macro's input (`stringify!(assert_x!(..))`
+/// never evaluates it) and not inside a `macro_rules!` definition, which only
+/// defines it. A test-local `macro_rules!` whose every arm runs one counts
+/// when the test then invokes that live local macro, and the inner name is
+/// returned (#15475). Read from comment- and string-masked text (#15237).
+fn first_executed_unread_assertion_macro(body: &str) -> Option<String> {
+    first_executed_in_masked(&mask_rust_comments_and_strings(body))
+}
+
+/// One open delimiter in [`first_executed_in_masked`].
+struct WalkFrame {
+    /// It opens macro input, where nothing nested runs as code.
+    inert: bool,
+    /// The local macro it defines and where its body starts, if any.
+    defines: Option<(String, usize)>,
+    /// How many locals were live when it opened.
+    live_locals: usize,
+}
+
+/// [`first_executed_unread_assertion_macro`] over already-masked text. A local
+/// definition's body is read with this same walk, so its own inert inputs and
+/// `name !=` comparisons are skipped there too.
+fn first_executed_in_masked(masked: &str) -> Option<String> {
+    let bytes = masked.as_bytes();
+    // One entry per open delimiter; a definition leaves scope with the block
+    // that holds it.
+    let mut frames: Vec<WalkFrame> = Vec::new();
+    // Every live local `macro_rules!` definition so far, with the
+    // assertion-like macro its body runs, if any; a later definition of a
+    // name shadows an earlier one.
+    let mut locals: Vec<(String, Option<String>)> = Vec::new();
+    // The previous significant token was `macro_rules!` (then its name).
+    let mut after_macro_rules = 0u8;
+    let mut defined_name: Option<String> = None;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let ch = bytes[index];
+        match ch {
+            b'(' | b'[' | b'{' => {
+                let before = masked[..index].trim_end();
+                let live = !frames.iter().any(|frame| frame.inert);
+                let defines = (after_macro_rules == 2 && live)
+                    .then(|| defined_name.take())
+                    .flatten()
+                    .map(|name| (name, index + 1));
+                let opens_macro_input = before.ends_with('!') || after_macro_rules == 2;
+                if before.ends_with('!') && live {
+                    let bang = before.len() - 1;
+                    if let Some(name) = macro_name_before_bang(masked, bang) {
+                        if is_unresolved_assertion_like_macro(&name) {
+                            return Some(name);
+                        }
+                        if let Some((_, Some(inner))) =
+                            locals.iter().rev().find(|(local, _)| *local == name)
+                        {
+                            return Some(inner.clone());
+                        }
+                    }
+                }
+                frames.push(WalkFrame {
+                    inert: opens_macro_input,
+                    defines,
+                    live_locals: locals.len(),
+                });
+                after_macro_rules = 0;
+            }
+            b')' | b']' | b'}' => {
+                if let Some(frame) = frames.pop() {
+                    locals.truncate(frame.live_locals);
+                    if let Some((name, start)) = frame.defines {
+                        locals.push((name, every_arm_runs_unread_assertion(&masked[start..index])));
+                    }
+                }
+                after_macro_rules = 0;
+            }
+            b'!' => {
+                // Only `macro_rules!` is followed by a name and then a body; a
+                // longer name ending in `macro_rules` (`my_macro_rules!`) opens
+                // ordinary macro input at its delimiter, so a suffix match is
+                // enough.
+                after_macro_rules = u8::from(masked[..index].trim_end().ends_with("macro_rules"));
+            }
+            c if c.is_ascii_alphanumeric() || c == b'_' => {
+                let start = index;
+                while index + 1 < bytes.len()
+                    && (bytes[index + 1].is_ascii_alphanumeric() || bytes[index + 1] == b'_')
+                {
+                    index += 1;
+                }
+                if after_macro_rules == 1 {
+                    after_macro_rules = 2;
+                    defined_name = Some(masked[start..=index].to_string());
+                } else {
+                    after_macro_rules = 0;
+                }
+            }
+            c if c.is_ascii_whitespace() => {}
+            _ => after_macro_rules = 0,
+        }
+        index += 1;
+    }
+    None
+}
+
+/// The assertion-like macro that every arm of a masked `macro_rules!` body
+/// runs as code, named from its first arm; `None` when any arm runs none, so
+/// an invocation that may select a quiet arm keeps its absence claim.
+fn every_arm_runs_unread_assertion(body: &str) -> Option<String> {
+    let bytes = body.as_bytes();
+    let mut first = None;
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut transcriber = false;
+    for (index, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => {
+                if depth == 0 {
+                    start = index + 1;
+                    transcriber = body[..index].trim_end().ends_with("=>");
+                }
+                depth += 1;
+            }
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 && transcriber {
+                    let name = first_executed_in_masked(&body[start..index])?;
+                    first.get_or_insert(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    first
 }
 
 fn unresolved_assertion_macro_invocations_among(
@@ -745,6 +1008,7 @@ fn unresolved_assertion_macro_invocations_among(
     start_line: usize,
     owner_in_arguments: Option<&str>,
     credited: &[String],
+    aliases: &[String],
 ) -> Vec<(String, usize)> {
     let mut invocations = Vec::new();
     let masked_body = mask_rust_comments_and_strings(body);
@@ -777,7 +1041,7 @@ fn unresolved_assertion_macro_invocations_among(
             // With credited macros the witness is the credited spelling, not
             // another assertion-like macro in the same test (#7089).
             let named = if credited.is_empty() {
-                is_unresolved_assertion_like_macro(&macro_name)
+                is_unresolved_assertion_like_macro(&macro_name) || aliases.contains(&macro_name)
             } else {
                 credited.contains(&macro_name)
             };
@@ -929,6 +1193,51 @@ fn macro_name_before_bang(line: &str, bang: usize) -> Option<String> {
     } else {
         Some(name.to_string())
     }
+}
+
+/// Names a file binds to an assertion macro with `use path::assert_x as name;`
+/// (also inside a brace list). The rename hides the `assert_` spelling the
+/// limit keys on, so `ok_eq!(..)` under `use claims::assert_ok_eq as ok_eq;`
+/// would read as a plain gap although the test asserts (#12779). The alias only
+/// names a limit and never earns an oracle, and it is read file-wide, so a
+/// rename in another scope can only move a gap to the named limit, never the
+/// reverse.
+fn assertion_macro_import_aliases(source: &str) -> Vec<String> {
+    let masked = mask_rust_comments_and_strings(source);
+    let mut aliases = Vec::new();
+    let mut rest = masked.as_str();
+    while let Some(found) = rest.find("use ") {
+        let boundary = rest[..found]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch.is_ascii_alphanumeric() || ch == '_'));
+        let after = &rest[found + 4..];
+        let end = after.find(';').unwrap_or(after.len());
+        if boundary {
+            let statement = &after[..end];
+            let words: Vec<&str> = statement
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .filter(|word| !word.is_empty())
+                .collect();
+            for pair in words.windows(3) {
+                if let [original, "as", alias] = pair
+                    && (*original == "assert"
+                        || original.starts_with("assert_")
+                        || matches!(
+                            *original,
+                            "prop_assert" | "prop_assert_eq" | "prop_assert_ne"
+                        ))
+                    && *alias != "_"
+                {
+                    aliases.push((*alias).to_string());
+                }
+            }
+        }
+        rest = &after[end..];
+    }
+    aliases.sort();
+    aliases.dedup();
+    aliases
 }
 
 fn is_unresolved_assertion_like_macro(macro_name: &str) -> bool {
@@ -1110,6 +1419,7 @@ mod tests {
             name: "proptest".into(),
             line: 1,
             mentioned_identifiers: vec!["gate".into()],
+            binding_only_identifiers: Vec::new(),
         };
         for (package, valid, limited) in [
             ("owner-manifest", true, true),
@@ -1194,9 +1504,10 @@ mod tests {
 
     use super::{
         apply_cross_language_limit, apply_rust_macro_wrapped_assertion_limit,
-        apply_wrapper_error_binding_limit, attr_is_ffi_binding, cross_language_limit_kind,
-        generates_assertion, is_known_rust_assertion_macro, is_unresolved_assertion_like_macro,
-        owner_has_ffi_attr, unresolved_assertion_macro_invocations,
+        apply_wrapper_error_binding_limit, assertion_macro_import_aliases, attr_is_ffi_binding,
+        cross_language_limit_kind, generates_assertion, is_known_rust_assertion_macro,
+        is_unresolved_assertion_like_macro, owner_has_ffi_attr,
+        unresolved_assertion_macro_invocations, unresolved_assertion_macro_invocations_among,
     };
     use crate::analysis::facts::{
         CallFact, FunctionSourceRole, FunctionSummary, LiteralFact, RustIndex, TestSummary,
@@ -1216,14 +1527,14 @@ mod tests {
             start_line: 1,
             end_line: 5,
             body: format!("pub fn {name}(x: i32) -> i32 {{ x }}").into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
             attrs: attrs.into_iter().map(|s| s.to_string()).collect(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             impl_context: Default::default(),
             item: Default::default(),
         }
@@ -1231,6 +1542,7 @@ mod tests {
 
     fn probe_for_owner(file: &str, name: &str, family: ProbeFamily) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:{file}::{name}")),
             location: SourceLocation::new(file, 2, 1),
             owner: Some(SymbolId(format!("{file}::{name}"))),
@@ -1259,6 +1571,7 @@ mod tests {
             id: "probe:src_lib.rs:predicate:test".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib.rs:predicate:test".to_string()),
                 location: SourceLocation::new("src/lib.rs", 2, 1),
                 owner: Some(SymbolId("src/lib.rs::inner".to_string())),
@@ -1324,7 +1637,8 @@ mod tests {
                 line: start_line,
                 name: "inner".to_string(),
                 text: "inner(10, 3)".to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
             literals: vec![
                 LiteralFact {
@@ -1335,11 +1649,37 @@ mod tests {
                     line: start_line + 1,
                     value: "7".to_string(),
                 },
-            ],
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            ]
+            .into(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
+    }
+
+    #[test]
+    fn assertion_import_aliases_read_plain_and_braced_renames_only() {
+        let source = "use claims::assert_ok_eq as ok_eq;\nuse claims::{assert_err, assert_some as some, helper as h};\nuse other::check as ck;\n// use claims::assert_none as commented;\nconst S: &str = \"use claims::assert_ok as quoted;\";\nfn note() { let user = 1; }\n";
+        assert_eq!(
+            assertion_macro_import_aliases(source),
+            vec!["ok_eq".to_string(), "some".to_string()]
+        );
+        assert!(assertion_macro_import_aliases("use claims::assert_ok_eq;").is_empty());
+        assert!(assertion_macro_import_aliases("use claims::assert_ok_eq as _;").is_empty());
+    }
+
+    #[test]
+    fn an_alias_is_named_only_when_the_import_binds_it() {
+        let body = "ok_eq!(owner(1), 2);\nother!(owner(1), 2);\n";
+        let aliases = vec!["ok_eq".to_string()];
+        let named: Vec<String> =
+            unresolved_assertion_macro_invocations_among(body, 10, None, &[], &aliases)
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect();
+        assert_eq!(named, vec!["ok_eq".to_string()]);
+        assert!(unresolved_assertion_macro_invocations(body, 10, None).is_empty());
     }
 
     #[test]
@@ -1591,7 +1931,7 @@ mod tests {
         let with_attribute = |attribute: &str| {
             let (finding, _) = weakly_exposed_beside_a_proximity_oracle();
             let mut test = test_summary("direct_inner", "src/lib.rs", 20, "weight(x)");
-            test.attrs = vec![attribute.to_string()];
+            test.attrs = vec![attribute.to_string()].into();
             let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
                 tests: vec![test],
                 ..Default::default()
@@ -1733,7 +2073,7 @@ let _ = (result, note, raw);"##,
         finding.probe.family = ProbeFamily::ErrorPath;
         finding.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
         let probe = finding.probe.clone();
-        apply_wrapper_error_binding_limit(&mut finding, &probe);
+        apply_wrapper_error_binding_limit(&mut finding, &probe, false);
         assert_eq!(
             finding.static_limit_kind,
             Some(StaticLimitKind::WrapperErrorBindingUnresolved)
@@ -1745,7 +2085,7 @@ let _ = (result, note, raw);"##,
         returned.probe.family = ProbeFamily::ReturnValue;
         returned.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
         let probe = returned.probe.clone();
-        apply_wrapper_error_binding_limit(&mut returned, &probe);
+        apply_wrapper_error_binding_limit(&mut returned, &probe, false);
         assert_eq!(
             returned.static_limit_kind,
             Some(StaticLimitKind::WrapperErrorBindingUnresolved)
@@ -1757,7 +2097,7 @@ let _ = (result, note, raw);"##,
         predicate.probe.family = ProbeFamily::Predicate;
         predicate.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
         let probe = predicate.probe.clone();
-        apply_wrapper_error_binding_limit(&mut predicate, &probe);
+        apply_wrapper_error_binding_limit(&mut predicate, &probe, false);
         assert_eq!(predicate.static_limit_kind, None);
 
         let mut already_named =
@@ -1768,11 +2108,40 @@ let _ = (result, note, raw);"##,
         already_named.static_limit_kind =
             Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved);
         let probe = already_named.probe.clone();
-        apply_wrapper_error_binding_limit(&mut already_named, &probe);
+        apply_wrapper_error_binding_limit(&mut already_named, &probe, false);
         assert_eq!(
             already_named.static_limit_kind,
             Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
         );
+
+        // #14968: a `reachable_unrevealed` seam keeps the limit and its typed
+        // next step only when every related test asserts dropped literals.
+        for literal_only in [true, false] {
+            let mut unrevealed =
+                reachable_unrevealed_finding_with_related_test("wraps", "tests/it.rs", 4);
+            unrevealed.probe.family = ProbeFamily::ErrorPath;
+            unrevealed.probe.expression = "try_parse(raw).map_err(Into::into)".to_string();
+            unrevealed.recommended_next_step = Some("Add a meaningful assertion".to_string());
+            let probe = unrevealed.probe.clone();
+            apply_wrapper_error_binding_limit(&mut unrevealed, &probe, literal_only);
+            assert_eq!(unrevealed.class, ExposureClass::ReachableUnrevealed);
+            if literal_only {
+                assert_eq!(
+                    unrevealed.static_limit_kind,
+                    Some(StaticLimitKind::WrapperErrorBindingUnresolved)
+                );
+                assert_eq!(
+                    unrevealed.recommended_next_step.as_deref(),
+                    Some(crate::analysis::classify::WRAPPER_ERROR_BINDING_NEXT_STEP)
+                );
+            } else {
+                assert_eq!(unrevealed.static_limit_kind, None);
+                assert_eq!(
+                    unrevealed.recommended_next_step.as_deref(),
+                    Some("Add a meaningful assertion")
+                );
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,16 @@
+# Registers the closed-constant assertion refusal (#15476) under RIPR-SPEC-0094.
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/src/analysis/classify/literal_assertion.rs::tests::closed_call_assertions_are_constants_only_on_literal_arguments",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::predicate_probe_credits_no_constant_of_another_pure_function",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::closed_constant_drop_needs_a_reach_relation",
+  "crates/ripr/tests/predicate_constant_assertion.rs::a_constant_assertion_on_another_pure_function_credits_no_observation",
+  "crates/ripr/tests/predicate_constant_assertion.rs::an_owner_assertion_beside_a_constant_keeps_its_credit",
+  "crates/ripr/tests/predicate_constant_assertion.rs::a_helper_or_argument_that_may_carry_state_keeps_the_earlier_reading",
+  "crates/ripr/tests/predicate_constant_assertion.rs::a_callee_whose_identity_or_closure_is_unestablished_keeps_the_earlier_reading",
+  "crates/ripr/src/analysis/classify/transitive_reach/assertion_owner_identity_tests.rs::opposite_kind_if_over_primitive_parameters_is_closed",
+]
+fixtures = [
+  "fixtures/predicate_constant_of_other_function",
+]

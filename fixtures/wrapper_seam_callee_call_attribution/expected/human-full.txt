@@ -3,16 +3,17 @@ mode: fast
 root: fixtures/wrapper_seam_callee_call_attribution/input
 
 Summary: 2 changed behavior(s) checked: 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
 
-WARNING ./src/lib.rs:14
+NOTE ./src/lib.rs:14
   id: probe:src_lib.rs:error_path:463e8297
 
 Changed
@@ -26,7 +27,7 @@ Change type
   owner:  src/lib.rs::parse_summary
 
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (note, confidence 0.66)
 
 Evidence
   - reach weak: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): calls_callee_before_shadow_binding, observes_callee_outcome
@@ -57,10 +58,11 @@ Limitation detail
 Next step
   Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast probe:src_lib.rs:error_path:463e8297
   ripr context --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast --at probe:src_lib.rs:error_path:463e8297
 
-WARNING ./src/lib.rs:14
+NOTE ./src/lib.rs:14
   id: probe:src_lib.rs:return_value:7ef92e0f
 
 Changed
@@ -74,7 +76,7 @@ Change type
   owner:  src/lib.rs::parse_summary
 
 Static exposure
-  weakly_exposed (warning, confidence 0.66)
+  weakly_exposed (note, confidence 0.66)
 
 Evidence
   - reach weak: Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): calls_callee_before_shadow_binding, observes_callee_outcome
@@ -84,7 +86,7 @@ Evidence
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
   - local flow reaches returned value: try_parse_summary(raw).map_err(|error| error.to_string().into()) (line 14)
   - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(parsed.map(|n| n), Ok(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
-  - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(ignored, Ok(5)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/attribution.rs:13 calls_callee_before_shadow_binding uses strong exact value oracle: assert_eq!(ignored, Ok(5)); unconfirmed
   - related test tests/attribution.rs:4 observes_callee_outcome uses strong exact value oracle: assert_eq!(parsed.map(|n| n), Ok(3)); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 3 at line 6
   - source assertion argument value 3 at line 15
@@ -106,5 +108,6 @@ Limitation detail
 Next step
   Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically establish that this boxed wrapper conversion carries the callee's error variant, so an existing exact downcast witness is not statically creditable. Verify via real mutation testing or deeper conversion modeling
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast probe:src_lib.rs:return_value:7ef92e0f
   ripr context --root <cwd>/fixtures/wrapper_seam_callee_call_attribution/input --diff <cwd>/fixtures/wrapper_seam_callee_call_attribution/diff.patch --mode fast --at probe:src_lib.rs:return_value:7ef92e0f

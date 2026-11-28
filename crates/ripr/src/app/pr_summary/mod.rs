@@ -17,13 +17,12 @@ mod util;
 
 use io::load_json;
 pub use json::{build_pr_evidence_summary, render_pr_evidence_summary_json};
+use model::InputState;
 pub use model::PrEvidenceSummaryJson;
 pub use render::render_evidence_summary_md;
 use render::{SummaryRenderInput, render_pr_evidence_summary};
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use crate::cli::{expect_value, unknown_argument};
 
 use super::subcommand::resolve_selected_root;
 
@@ -42,10 +41,10 @@ const DIFF_REPORT_JSON: &str = "target/ripr/reports/diff-report.json";
 const ATTEMPT_LEDGER_JSON: &str = "target/ripr/reports/swarm-attempt-ledger.json";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct SummaryOptions {
-    root: PathBuf,
-    check: bool,
-    baseline: Option<String>,
+pub(crate) struct SummaryOptions {
+    pub(crate) root: PathBuf,
+    pub(crate) check: bool,
+    pub(crate) baseline: Option<String>,
 }
 
 /// Entry point for `ripr pr-summary`. Composes existing artifacts into a PR
@@ -53,12 +52,10 @@ struct SummaryOptions {
 /// - `target/ripr/pr/summary.md` (legacy PR evidence summary)
 /// - `target/ripr/reports/pr-evidence-summary.json` (v1 JSON)
 /// - `target/ripr/reports/pr-evidence-summary.md` (v1 Markdown panel)
-pub(crate) fn run_pr_summary(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let options = parse_options(args)?;
+///
+/// Argv parsing and `--help` live in the CLI adapter
+/// (`cli::commands::pr_summary`); this takes parsed options.
+pub(crate) fn execute_pr_summary(options: SummaryOptions) -> Result<(), String> {
     let repo = resolve_selected_root(&options.root)?;
     // The selected root owns every input and output. A missing or file-typed
     // root must refuse before any write: `create_dir_all` below would
@@ -68,6 +65,23 @@ pub(crate) fn run_pr_summary(args: &[String]) -> Result<(), String> {
             "pr-summary root {} is not a directory; pass `--root` naming an existing repository directory",
             options.root.display()
         ));
+    }
+    // A baseline the caller named that cannot be used must not silently drop
+    // the delta (honest-baseline rule): refuse before anything is written.
+    if let Some(baseline) = options.baseline.as_deref() {
+        match load_json(&repo, baseline).state {
+            InputState::Present => {}
+            InputState::Missing => {
+                return Err(format!(
+                    "pr-summary --baseline {baseline} is missing or unreadable; pass --baseline naming a before-snapshot JSON that exists, or omit it for a summary without gap deltas"
+                ));
+            }
+            InputState::Invalid(reason) => {
+                return Err(format!(
+                    "pr-summary --baseline {baseline} is not valid JSON ({reason}); pass --baseline naming a before-snapshot JSON written by the command that produced it, or omit it for a summary without gap deltas"
+                ));
+            }
+        }
     }
     let summary = summary_text(&repo);
     let path = repo.join(PR_SUMMARY_MD);
@@ -135,62 +149,6 @@ fn summary_text(repo: &Path) -> String {
     })
 }
 
-fn parse_options(args: &[String]) -> Result<SummaryOptions, String> {
-    let mut root = PathBuf::from(".");
-    let mut check = false;
-    let mut baseline: Option<String> = None;
-    let mut index = 0;
-    while let Some(arg) = args.get(index) {
-        match arg.as_str() {
-            "--check" => check = true,
-            "--root" | "--baseline" => {
-                index += 1;
-                let path = expect_value(args, index, arg)?;
-                if path.trim().is_empty() || path.starts_with('-') {
-                    return Err(format!(
-                        "pr-summary {arg} requires a non-empty path value; pass `{arg} <path>`"
-                    ));
-                }
-                #[cfg(windows)]
-                {
-                    let parsed = Path::new(path);
-                    if !parsed.is_absolute()
-                        && (parsed.has_root()
-                            || matches!(
-                                parsed.components().next(),
-                                Some(std::path::Component::Prefix(_))
-                            ))
-                    {
-                        return Err(format!(
-                            "pr-summary {arg} requires a fully qualified or ordinary relative path; \
-                             Windows partially qualified paths are not supported; pass a drive-qualified absolute path or a plain relative path"
-                        ));
-                    }
-                }
-                if arg == "--root" {
-                    root = PathBuf::from(path);
-                } else {
-                    baseline = Some(path.to_string());
-                }
-            }
-            other => return Err(unknown_argument("pr-summary", other)),
-        }
-        index += 1;
-    }
-    Ok(SummaryOptions {
-        root,
-        check,
-        baseline,
-    })
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(PR_SUMMARY_HELP, &[])
-    );
-}
-
 /// Help body for `ripr pr-summary`. Also the flag source for unknown-argument
 /// suggestions; keep accepted flags on option-list lines.
 pub(crate) const PR_SUMMARY_HELP: &str = "\
@@ -214,7 +172,10 @@ Outputs:
 
 fn check_summary(path: &Path, expected: &str) -> Result<(), String> {
     let actual = fs::read_to_string(path).map_err(|err| {
-        format!("missing or unreadable {PR_SUMMARY_MD}: {err}; run `ripr pr-summary` to write it")
+        format!(
+            "missing or unreadable {PR_SUMMARY_MD}: {}; run `ripr pr-summary` to write it",
+            crate::bounded_input::read_failure_detail(&err)
+        )
     })?;
     if actual == expected {
         println!("PR evidence summary contract ok: {PR_SUMMARY_MD}");
@@ -242,6 +203,8 @@ fn write_parented_file(path: &Path, label: &str, contents: impl AsRef<[u8]>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // cfg(test) only: drive argv through the CLI adapter (tracked in #5193).
+    use crate::cli::commands::pr_summary_command::{parse_options, pr_summary as run_pr_summary};
 
     #[test]
     fn parse_accepts_check_only() {
@@ -366,12 +329,21 @@ mod tests {
         Ok(())
     }
 
+    /// #9008: a conflicting repeated `--root` refuses with both values named;
+    /// #10542: an identical repeat is silently absorbed so scripted
+    /// double-root invocations keep working.
     #[test]
-    fn parse_last_root_wins_regardless_of_flag_order() -> Result<(), String> {
-        let args = ["--check", "--root", "a", "--root", "b"].map(str::to_string);
-        let options = parse_options(&args)?;
-        if options.root.as_path() != Path::new("b") || !options.check {
-            return Err(format!("unexpected options: {options:?}"));
+    fn parse_refuses_a_conflicting_second_root_and_absorbs_an_identical_one() -> Result<(), String>
+    {
+        let conflicting = ["--check", "--root", "a", "--root", "b"].map(str::to_string);
+        match parse_options(&conflicting) {
+            Err(error) if error == "pr-summary takes --root once (got 'a' and 'b')" => {}
+            other => return Err(format!("conflicting repeat was not refused: {other:?}")),
+        }
+        let identical = ["--check", "--root", "a", "--root", "a"].map(str::to_string);
+        let options = parse_options(&identical)?;
+        if options.root.as_path() != Path::new("a") || !options.check {
+            return Err(format!("identical repeat was not absorbed: {options:?}"));
         }
         Ok(())
     }
@@ -561,16 +533,23 @@ mod tests {
     }
 
     #[test]
-    fn unusable_baseline_degrades_to_no_baseline() -> Result<(), String> {
+    fn unusable_baseline_is_refused_without_changing_the_summary() -> Result<(), String> {
         let root = fixture_root("baseline")?;
         run_pr_summary(&args_for(&root, &[]))?;
         let without = read(&root, PR_EVIDENCE_SUMMARY_JSON)?;
         fs::write(root.join("before.json"), "{ not json")
             .map_err(|error| format!("write baseline: {error}"))?;
-        run_pr_summary(&args_for(&root, &["--baseline", "before.json"]))?;
-        run_pr_summary(&args_for(&root, &["--baseline", "absent.json"]))?;
+        for (name, fragment) in [
+            ("before.json", "is not valid JSON"),
+            ("absent.json", "is missing or unreadable"),
+        ] {
+            match run_pr_summary(&args_for(&root, &["--baseline", name])) {
+                Err(error) if error.contains(fragment) && error.contains("pass --baseline") => {}
+                other => return Err(format!("{name}: expected refusal, got {other:?}")),
+            }
+        }
         if read(&root, PR_EVIDENCE_SUMMARY_JSON)? != without {
-            return Err("unusable baseline changed the v1 JSON".to_string());
+            return Err("refused baseline changed the v1 JSON".to_string());
         }
         Ok(())
     }

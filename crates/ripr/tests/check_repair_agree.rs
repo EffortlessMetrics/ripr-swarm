@@ -99,6 +99,15 @@ impl Repo {
         std::fs::write(self.0.join(name), text).map_err(|e| e.to_string())
     }
 
+    /// The repository root as pilot spells it in a `git -C <root>` step:
+    /// canonical, with a Windows verbatim `\\?\` prefix folded and `/`
+    /// separators, the shell-friendly spelling `bound_root` prints.
+    fn canonical_root(&self) -> Result<String, String> {
+        std::fs::canonicalize(&self.0)
+            .map(|path| printed_root(&path.to_string_lossy()))
+            .map_err(|e| e.to_string())
+    }
+
     fn git(&self, args: &[&str]) -> Result<(), String> {
         let output = Command::new("git")
             .current_dir(&self.0)
@@ -120,9 +129,18 @@ impl Repo {
     }
 
     fn ripr_status(&self, args: &[&str]) -> Result<(Option<i32>, String), String> {
+        self.ripr_status_env(args, &[])
+    }
+
+    fn ripr_status_env(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> Result<(Option<i32>, String), String> {
         let output: Output = Command::new(env!("CARGO_BIN_EXE_ripr"))
             .current_dir(&self.0)
             .args(args)
+            .envs(env.iter().copied())
             .output()
             .map_err(|e| e.to_string())?;
         Ok((
@@ -213,6 +231,38 @@ fn check_never_reports_no_seam_where_repair_lists_seams_in_the_file() -> Result<
     Ok(())
 }
 
+#[test]
+fn untied_count_does_not_claim_gripped_sibling_is_repairable() -> Result<(), String> {
+    let sibling = "\npub fn doubled(x: i32) -> i32 {\n    x * 2\n}\n";
+    let old = format!(
+        "pub fn label(n: u32) -> &'static str {{\n    match n {{\n        0 => \"zero\",\n        1 => \"one\",\n        _ => \"many\",\n    }}\n}}\n{sibling}"
+    );
+    let new = old.replace("1 => \"one\"", "1 => \"uno\"");
+    let repo = Repo::create_uncommitted(
+        &old,
+        &new,
+        // Only `doubled` is gripped; the changed `label` arm has no matching
+        // test input, so check counts untied spots in the file while repair
+        // counts the gripped sibling outside the changed lines.
+        "use ar::doubled;\n\n#[test]\nfn doubled_works() {\n    assert_eq!(doubled(2), 4);\n}\n",
+    )?;
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("outside your changed lines is already noticed by existing tests"),
+        "gripped sibling precondition:\n{repair}"
+    );
+    let check = repo.ripr(&["check", "--base", "HEAD"])?;
+    assert!(
+        check.contains("spots in this finding's file, but could not tie one"),
+        "unbound precondition:\n{check}"
+    );
+    assert!(
+        !check.contains("repairable spots in this finding's file"),
+        "count must not assert eligibility:\n{check}"
+    );
+    Ok(())
+}
+
 const GRIPPED_BOUNDARY_OLD: &str =
     "pub fn f(x: i32) -> i32 {\n    let y = if x > 10 { 1 } else { 2 };\n    y\n}\n";
 const GRIPPED_BOUNDARY_NEW: &str =
@@ -227,7 +277,8 @@ fn gap_finding_on_a_whole_gripped_seam_names_the_disagreement_not_no_binding() -
         GRIPPED_BOUNDARY_NEW,
         GRIPPED_BOUNDARY_TEST,
     )?;
-    let repair = repo.ripr(&["repair", "--root", "."])?;
+    // The whole-seam reading: an empty range (#16082) keeps repair unscoped.
+    let repair = repo.ripr(&["repair", "--root", ".", "--base", "HEAD"])?;
     assert!(
         repair.contains("already check it"),
         "precondition, repair reads the whole seam as gripped:\n{repair}"
@@ -274,8 +325,9 @@ const LOOP_NEW: &str = "pub fn sum_to(n: u32) -> u32 {\n    let mut acc = 0;\n  
 const LOOP_TEST: &str =
     "use ar::sum_to;\n\n#[test]\nfn sum_to_zero() {\n    assert_eq!(sum_to(0), 0);\n}\n";
 
-/// #11111: with no diff to scope to, bare repair's whole-seam "already check
-/// it (exposed)" names the seam it is about, so it is not read as a verdict
+/// #11111: with no diff to scope to (an empty `--base HEAD` range; a bare
+/// repair here follows check's last-commit rescope, #16082), repair's
+/// whole-seam "already check it (exposed)" names the seam it is about, so it is not read as a verdict
 /// on the changed loop line that `ripr check` cannot classify.
 #[test]
 fn whole_seam_gripped_refusal_names_its_seam_not_the_change() -> Result<(), String> {
@@ -286,7 +338,7 @@ fn whole_seam_gripped_refusal_names_its_seam_not_the_change() -> Result<(), Stri
             && !check.contains("Static exposure: exposed"),
         "precondition, check does not read the changed loop as exposed:\n{check}"
     );
-    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD"])?;
     assert_eq!(code, Some(3), "repair must not start:\n{repair}");
     assert!(
         repair.contains("the code at src/lib.rs:6 `acc`: ") && repair.contains("already check it"),
@@ -421,10 +473,11 @@ fn changed_constant_returned_whole_selects_the_same_repair_in_both() -> Result<(
         "check must name greet's returned value:\n{check}"
     );
     // The change is uncommitted, so repair selects the seam and then asks
-    // for the commit before starting; the selection is what must agree.
+    // for the commit before starting; the selection is what must agree. The
+    // refusal names the façade rerun for that seam (#14394).
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
-        repair.contains(&format!("--seam-id {id}"))
+        repair.contains(&format!("ripr repair {id} --root "))
             && !repair.contains("shout")
             && !repair.contains("choose the change to repair"),
         "repair must select the seam check offered ({id}):\n{repair}"
@@ -496,6 +549,11 @@ const WS_CORE_TOML: &str =
 const WS_APP_SRC: &str = "pub fn checkout(price: u32) -> u32 {\n    wscore::discount(price)\n}\n";
 const WS_OLD: &str = "pub fn discount(price: u32) -> u32 {\n    if price > 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
 const WS_NEW: &str = "pub fn discount(price: u32) -> u32 {\n    if price >= 100 {\n        price - 10\n    } else {\n        price\n    }\n}\n";
+/// #11401: the unreached fixture. A plain `wscore::discount(price)` call now
+/// reads noticed in `ripr check` (RIPR-SPEC-0407), so the dependency is
+/// declared under `[dev-dependencies]` only here: library code cannot see it,
+/// the call is not a crate edge, and the change keeps no static path.
+const WS_DEV_ONLY_APP_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dev-dependencies]\nwscore = { path = \"../wscore\" }\n";
 const WS_CORE_TEST: &str = "use wscore::discount;\n\n#[test]\nfn discount_at_boundary() {\n    assert_eq!(discount(100), 90);\n    assert_eq!(discount(50), 50);\n}\n";
 const WS_APP_TEST: &str = "use app::checkout;\n\n#[test]\nfn checkout_at_boundary() {\n    assert_eq!(checkout(100), 90);\n}\n";
 
@@ -515,9 +573,30 @@ fn workspace_repo(core_tests: bool, commit_change: bool) -> Result<Repo, String>
     Repo::create_workspace(&files, WS_NEW, commit_change)
 }
 
-/// The repair text for a fixture, with the refusal asserted (exit 3).
+/// The workspace whose only test is in `app` and reaches `wscore` through a
+/// dev-only dependency ripr does not follow: no static path
+/// (#11401).
+fn unreached_workspace_repo(commit_change: bool) -> Result<Repo, String> {
+    Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_DEV_ONLY_APP_TOML),
+            ("app/src/lib.rs", WS_APP_SRC),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            ("app/tests/t.rs", WS_APP_TEST),
+        ],
+        WS_NEW,
+        commit_change,
+    )
+}
+
+/// The whole-repository repair text for a committed fixture, with the
+/// refusal asserted (exit 3). `--base HEAD` names an empty range: a bare
+/// repair on this clean default branch would follow check's last-commit
+/// rescope (#16082) and scope to the change.
 fn refused_repair(repo: &Repo) -> Result<String, String> {
-    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD"])?;
     assert_eq!(code, Some(3), "repair must not start:\n{repair}");
     Ok(repair)
 }
@@ -678,6 +757,22 @@ fn assert_limited_change_is_not_called_gripped(
     );
     // Location-specific: a spot counted as outside the change must not also
     // read as a different check on it, and the reverse.
+    // #15278: a gripped spot on the changed lines that check itself reads as a
+    // gap is reopened with check's reading, so it is neither a different check
+    // nor outside the change.
+    if gripped_note.starts_with("`ripr check` reads this changed code") {
+        assert!(
+            !repair.contains("different check than the one still open"),
+            "a spot check reads as open is not a different check:\n{repair}"
+        );
+        assert!(
+            !(repair.contains("outside your changed lines")
+                && repair.contains("already noticed by existing tests and not listed")),
+            "a spot check reads as open on the change is not counted outside it:\n{repair}"
+        );
+        assert_plain(&repair);
+        return Ok(());
+    }
     let on_change = gripped_note.contains("different check");
     assert_eq!(
         repair.contains("different check than the one still open"),
@@ -722,8 +817,10 @@ fn limited_option_change_is_not_called_gripped_by_repair() -> Result<(), String>
         OPTION_OLD,
         OPTION_NEW,
         OPTION_TEST,
-        "Changed behavior: x % 2 == 0",
-        "different check than the one still open",
+        // #14266: the weak `.or(Some(0))` return gap leads Start here over
+        // the unknown predicate on the same line; both are non-exposed.
+        "Changed behavior: xs.iter().copied().find(|x| x % 2 == 0).or(Some(0))",
+        "`ripr check` reads this changed code as weak",
     )
 }
 
@@ -740,7 +837,7 @@ fn limited_generic_change_is_not_called_gripped_by_repair() -> Result<(), String
 
 #[test]
 fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), String> {
-    let committed = workspace_repo(false, true)?;
+    let committed = unreached_workspace_repo(true)?;
     let check = committed.ripr(&["check", "--base", "HEAD~1"])?;
     assert!(
         check.contains("Static exposure: no path")
@@ -756,7 +853,7 @@ fn unreached_workspace_change_is_not_called_gripped_by_repair() -> Result<(), St
         "the class refusal must be plain and name what ripr could not establish:\n{unscoped}"
     );
 
-    let repo = workspace_repo(false, false)?;
+    let repo = unreached_workspace_repo(false)?;
     let check = repo.ripr(&["check"])?;
     assert!(
         check.contains("Static exposure: no path"),
@@ -808,13 +905,14 @@ fn bare_repair_does_not_list_an_unchanged_seams_missing_evidence_for_the_change(
     Ok(())
 }
 
-/// The same shape with the change committed: no diff is available, so repair
-/// keeps the whole-repository view, and each reason names the seam it is
+/// The same shape with an empty range (`--base HEAD`; a bare repair on this
+/// clean default branch follows check's last-commit rescope, #16082): no
+/// diff is available, so repair keeps the whole-repository view, and each reason names the seam it is
 /// about instead of sitting beside the other as a second verdict.
 #[test]
 fn whole_repository_refusals_name_the_seam_each_reason_is_about() -> Result<(), String> {
     let repo = Repo::create(GUARD_OLD, GUARD_NEW, GUARD_TEST)?;
-    let (code, repair) = repo.ripr_status(&["repair", "--root", "."])?;
+    let (code, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD"])?;
     assert_eq!(code, Some(3), "repair must not start:\n{repair}");
     assert!(
         repair.contains("the code at src/lib.rs:2 `age > 120`: ripr does not report a gap here")
@@ -889,6 +987,321 @@ fn sibling_err_variant_pin_leaves_the_return_value_seam_weak() -> Result<(), Str
     Ok(())
 }
 
+/// #15278: the regex `is_word_byte` shape. Tests elsewhere in the repository
+/// pin the whole match seam, so the seam inventory used to read the arm as
+/// already gripped, while `ripr check` reads the changed arm as weak (no test
+/// input selects the changed digit range). Bare repair must not say "the existing tests already
+/// check it, and `ripr check` reports the same" while check reports a gap.
+const WORD_OLD: &str = "pub fn is_word_byte(c: u8) -> bool {\n    match c {\n        b'_' | b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' => true,\n        _ => false,\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn word_byte() {\n        assert!(is_word_byte(b'a'));\n        assert!(!is_word_byte(b'-'));\n    }\n}\n";
+const WORD_TEST: &str = "use ar::is_word_byte;\n\n#[test]\nfn pins() {\n    assert_eq!(is_word_byte(b'a'), true);\n    assert_eq!(is_word_byte(b'-'), false);\n}\n";
+
+#[test]
+fn repair_never_says_check_reports_the_same_while_check_reports_a_weak_gap() -> Result<(), String> {
+    let new = WORD_OLD.replace("b'0'..=b'9'", "b'1'..=b'9'");
+    let repo = Repo::create(WORD_OLD, &new, WORD_TEST)?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Static exposure: weak"),
+        "precondition, check reports a weak gap on the changed arm:\n{check}"
+    );
+    let (code, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD~1"])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("Nothing to do")
+            && !repair.contains("reports the same")
+            && !repair.contains("already check it"),
+        "repair must not call a change check reads as weak already checked:\n{repair}"
+    );
+    // Since #15359 no test input is read as selecting the changed arm, so the
+    // arm is no longer read as gripped and repair names the missing evidence
+    // instead of contradicting check.
+    assert!(
+        repair.contains("repair route not ready")
+            && repair.contains("a test input that reaches the changed code")
+            && repair.contains("Check by hand"),
+        "repair must name the missing evidence and the by-hand next step:\n{repair}"
+    );
+    Ok(())
+}
+
+// #15278 item 1: the same disagreement on the explicit surfaces. `a + b` to
+// `a - b` with only `total(0, 0) == 0` is weak for check (the inputs cannot
+// tell the two apart), while the inventory reads the returned value as pinned.
+const SUM_OLD: &str = "pub fn total(a: i32, b: i32) -> i32 {\n    a + b\n}\n";
+const SUM_NEW: &str = "pub fn total(a: i32, b: i32) -> i32 {\n    a - b\n}\n";
+const SUM_TEST: &str =
+    "use ar::total;\n\n#[test]\nfn zero() {\n    assert_eq!(total(0, 0), 0);\n}\n";
+
+/// The id of the one finding `ripr check --format json` reports.
+fn only_finding_id(repo: &Repo) -> Result<String, String> {
+    let json = repo.ripr(&["check", "--format", "json"])?;
+    let (_, tail) = json
+        .split_once("\"id\": \"probe:")
+        .ok_or_else(|| format!("check JSON names no probe finding:\n{json}"))?;
+    let (id, _) = tail
+        .split_once('"')
+        .ok_or_else(|| format!("unterminated finding id:\n{json}"))?;
+    Ok(format!("probe:{id}"))
+}
+
+fn weak_sum_repo() -> Result<Repo, String> {
+    let repo = Repo::create_uncommitted(SUM_OLD, SUM_NEW, SUM_TEST)?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: weak"),
+        "precondition, check reports a weak gap on the changed return:\n{check}"
+    );
+    Ok(repo)
+}
+
+#[test]
+fn repair_by_finding_id_never_says_already_checked_while_check_reports_a_weak_gap()
+-> Result<(), String> {
+    let repo = weak_sum_repo()?;
+    let id = only_finding_id(&repo)?;
+    let (code, repair) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("already check it") && !repair.contains("no gap to repair"),
+        "repair must not call check's own weak finding already checked:\n{repair}"
+    );
+    assert!(
+        repair.contains("`ripr check` reads this changed code as weak")
+            && repair.contains("write or strengthen the test by hand"),
+        "repair must name check's reading and the by-hand next step:\n{repair}"
+    );
+    Ok(())
+}
+
+#[test]
+fn stub_never_says_tests_already_discriminate_while_check_reports_a_weak_gap() -> Result<(), String>
+{
+    let repo = weak_sum_repo()?;
+    let stub = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+    ])?;
+    assert!(
+        !stub.contains("existing tests already discriminate it")
+            && !stub.contains("not evidence of a missing discriminator"),
+        "the stub must not call a change check reads as weak already discriminated:\n{stub}"
+    );
+    assert!(
+        stub.contains("`ripr check` reads your changed code there as weak (weakly_exposed)")
+            && stub.contains("this stub is for that gap"),
+        "the stub must name check's reading:\n{stub}"
+    );
+    let json = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+        "--json",
+    ])?;
+    assert!(
+        json.contains("\"grip_class\": \"strongly_gripped\"")
+            && json.contains("\"classification\": \"weakly_exposed\""),
+        "the JSON keeps the inventory class and carries check's class:\n{json}"
+    );
+    Ok(())
+}
+
+#[test]
+fn pilot_never_says_no_test_to_add_while_check_reports_a_weak_gap() -> Result<(), String> {
+    let repo = weak_sum_repo()?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        !pilot.contains("so there is no test to add"),
+        "pilot must not say there is no test to add while check reports a gap:\n{pilot}"
+    );
+    assert!(
+        pilot.contains("but `ripr check` reads your changed code there as a gap or cannot tell")
+            && pilot.contains("Pilot ranked no gap, but `ripr check` reads your changed code")
+            && pilot.contains("run `ripr check --root "),
+        "pilot must point at check's reading of the change:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// #16082: on a clean checkout of the comparison base, bare human `ripr
+/// check` analyzes the last commit. Repair, stub and pilot scope to that same
+/// range, so the committed weak change keeps the agreement the uncommitted
+/// fixture above proves. Before #16082 all three read the empty default range
+/// and kept the inventory's "already checked" reading.
+#[test]
+fn clean_default_branch_repair_stub_and_pilot_follow_checks_last_commit() -> Result<(), String> {
+    let repo = Repo::create(SUM_OLD, SUM_NEW, SUM_TEST)?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("analyzed the last commit (--base HEAD~1)")
+            && check.contains("Static exposure: weak"),
+        "precondition, bare check falls back to the last commit and reports the weak gap:\n{check}"
+    );
+    let structured = repo.ripr(&["check", "--format", "json"])?;
+    assert!(
+        !structured.contains("\"id\": \"probe:"),
+        "structured formats keep their empty-range contract:\n{structured}"
+    );
+    let json = repo.ripr(&["check", "--format", "json", "--base", "HEAD~1"])?;
+    let (_, tail) = json
+        .split_once("\"id\": \"probe:")
+        .ok_or_else(|| format!("check JSON names no probe finding:\n{json}"))?;
+    let (id, _) = tail
+        .split_once('"')
+        .ok_or_else(|| format!("unterminated finding id:\n{json}"))?;
+    let id = format!("probe:{id}");
+
+    let (code, repair) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        !repair.contains("already check it") && !repair.contains("no gap to repair"),
+        "repair must not call check's weak finding already checked:\n{repair}"
+    );
+    assert!(
+        repair.contains("`ripr check` reads this changed code as weak"),
+        "repair must name check's reading of the last commit:\n{repair}"
+    );
+
+    let stub = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+    ])?;
+    assert!(
+        !stub.contains("existing tests already discriminate it")
+            && stub.contains("`ripr check` reads your changed code there as weak (weakly_exposed)"),
+        "the stub must name check's reading of the last commit:\n{stub}"
+    );
+
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        !pilot.contains("so there is no test to add")
+            && pilot.contains("Pilot ranked no gap, but `ripr check` reads your changed code"),
+        "pilot must point at check's reading of the last commit:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// #16082 control: an explicit `--base` names the range, so a clean
+/// checkout compared with itself is not rescoped. Repair keeps the empty
+/// range and says nothing differs from that base.
+#[test]
+fn explicit_base_on_clean_default_branch_is_not_rescoped() -> Result<(), String> {
+    let repo = Repo::create(SUM_OLD, SUM_NEW, SUM_TEST)?;
+    let (_, repair) = repo.ripr_status(&["repair", "--root", ".", "--base", "HEAD"])?;
+    assert!(
+        repair.contains("because nothing differs from `HEAD`"),
+        "an explicit base must keep its own empty range:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #16082 controls: check stays the authority on the rescope. A last commit
+/// that check's own intake refuses (over the diff line limit) or does not
+/// count (only ripr's own reports) leaves check on its empty default range,
+/// and repair and pilot stay there too instead of scoping to the raw patch.
+#[test]
+fn last_commit_check_does_not_accept_keeps_repair_and_pilot_unscoped() -> Result<(), String> {
+    let over = Repo::create(SUM_OLD, SUM_NEW, SUM_TEST)?;
+    over.write("README.md", &"line\n".repeat(20))?;
+    over.git(&["add", "README.md"])?;
+    over.git(&["commit", "-q", "--no-gpg-sign", "--amend", "--no-edit"])?;
+    let limit = [("RIPR_MAX_DIFF_CHANGED_LINES", "5")];
+    let (_, check) = over.ripr_status_env(&["check"], &limit)?;
+    assert!(
+        !check.contains("analyzed the last commit"),
+        "precondition, check's intake refuses the oversized last commit:\n{check}"
+    );
+    let (_, repair) = over.ripr_status_env(&["repair", "--root", "."], &limit)?;
+    assert!(
+        repair.contains("could not tell which lines you changed"),
+        "repair must stay on check's empty range:\n{repair}"
+    );
+
+    let reports = Repo::create_uncommitted(SUM_NEW, SUM_NEW, SUM_TEST)?;
+    std::fs::create_dir_all(reports.0.join("target/ripr/pilot")).map_err(|e| e.to_string())?;
+    reports.write("target/ripr/pilot/pilot-summary.md", "# report\n")?;
+    reports.git(&["add", "-f", "target/ripr/pilot/pilot-summary.md"])?;
+    reports.git(&["commit", "-q", "--no-gpg-sign", "-m", "reports"])?;
+    let check = reports.ripr(&["check"])?;
+    assert!(
+        !check.contains("analyzed the last commit"),
+        "precondition, check does not count ripr's own reports:\n{check}"
+    );
+    let repair = reports.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("could not tell which lines you changed"),
+        "repair must stay on check's empty range:\n{repair}"
+    );
+    let pilot = reports.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        !pilot.contains("HEAD~1"),
+        "pilot must not report the report-only commit as the change:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// Discriminating negative: a change check reads as exposed keeps every
+/// surface's "already checked" wording.
+#[test]
+fn an_exposed_change_keeps_the_already_checked_wording_on_every_surface() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(
+        "pub fn dbl(x: i32) -> i32 {\n    x * 2\n}\n",
+        "pub fn dbl(x: i32) -> i32 {\n    x * 3\n}\n",
+        "use ar::dbl;\n\n#[test]\nfn exact() {\n    assert_eq!(dbl(2), 6);\n}\n",
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: exposed"),
+        "precondition, check reads exposed:\n{check}"
+    );
+    let id = only_finding_id(&repo)?;
+    let (code, repair) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(3), "repair must not start:\n{repair}");
+    assert!(
+        repair.contains("existing tests already check it")
+            && !repair.contains("`ripr check` reads this changed code as"),
+        "an exposed change stays already checked:\n{repair}"
+    );
+    let stub = repo.ripr(&[
+        "agent",
+        "stub",
+        "--root",
+        ".",
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "return_value",
+    ])?;
+    assert!(
+        stub.contains("existing tests already discriminate it")
+            && !stub.contains("`ripr check` reads your changed code"),
+        "an exposed change keeps the strongly gripped disclosure:\n{stub}"
+    );
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("No gap was found, so there is no test to add")
+            && !pilot.contains("but `ripr check` reads"),
+        "an exposed change keeps pilot's no-gap closing line:\n{pilot}"
+    );
+    Ok(())
+}
+
 // Not-ready burn-down (#11111): the closing step of a bare-repair refusal
 // follows what `ripr check` says about the change.
 
@@ -959,6 +1372,1121 @@ fn async_route_refusal_does_not_offer_a_stub_that_refuses() -> Result<(), String
     assert!(
         stub.contains("async"),
         "precondition, the stub command itself refuses the async owner:\n{stub}"
+    );
+    Ok(())
+}
+
+/// #13636 (A): with the production change still uncommitted, `ripr repair`
+/// refuses to start, so `ripr check` names the commit step before the repair
+/// start it prints. Once the change is committed, the commit step disappears.
+#[test]
+fn uncommitted_change_check_names_the_commit_step_before_the_repair_start() -> Result<(), String> {
+    let dirty = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let check = dirty.ripr(&["check", "--base", "HEAD"])?;
+    let commit_at = check
+        .find("Commit your production change first")
+        .ok_or_else(|| format!("check must name the commit step:\n{check}"))?;
+    let start_at = check
+        .find("\n  ripr repair ")
+        .ok_or_else(|| format!("check must still name the repair start:\n{check}"))?;
+    assert!(
+        commit_at < start_at,
+        "the commit step must come before the repair start:\n{check}"
+    );
+    assert!(
+        check.contains("--literal-pathspecs commit -m \"<message>\" -- src/lib.rs"),
+        "the commit step must name the uncommitted production file:\n{check}"
+    );
+    // The commit step is the reason the start would refuse today.
+    let (code, repair) = dirty.ripr_status(&["repair", "--root", "."])?;
+    assert_ne!(code, Some(0), "repair must refuse while dirty:\n{repair}");
+    assert!(
+        repair.contains("ripr repair needs your source changes committed first")
+            && repair.contains("Uncommitted: src/lib.rs"),
+        "repair must refuse for the same file check names:\n{repair}"
+    );
+
+    let json = dirty.ripr(&["check", "--base", "HEAD", "--format", "json"])?;
+    let repair = json_repair_route(&json)?;
+    assert_eq!(
+        repair["status"], "blocked_uncommitted",
+        "the JSON repair route must say the start is blocked:\n{json}"
+    );
+    assert_eq!(
+        repair["uncommitted_files"],
+        serde_json::json!(["src/lib.rs"]),
+        "the JSON repair route must name the uncommitted file:\n{json}"
+    );
+    assert!(
+        repair.get("command").is_none(),
+        "a blocked start must carry no runnable command:\n{json}"
+    );
+
+    let committed = Repo::create(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let check = committed.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("\n  ripr repair ") && !check.contains("Commit your production change"),
+        "a committed change needs no commit step:\n{check}"
+    );
+    Ok(())
+}
+
+/// The `finding_routes[0].repair` object of a `ripr check --format json`
+/// run. `text` is stdout followed by stderr; only the first JSON value is read.
+fn json_repair_route(text: &str) -> Result<serde_json::Value, String> {
+    let start = text
+        .find('{')
+        .ok_or_else(|| format!("no JSON document:\n{text}"))?;
+    let document: serde_json::Value = serde_json::Deserializer::from_str(&text[start..])
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("no JSON document:\n{text}"))?
+        .map_err(|error| format!("unparseable JSON ({error}):\n{text}"))?;
+    let routes = document["finding_routes"]
+        .as_array()
+        .ok_or_else(|| format!("finding_routes must be an array:\n{text}"))?;
+    let [route] = routes.as_slice() else {
+        return Err(format!("expected one finding route:\n{text}"));
+    };
+    route
+        .get("repair")
+        .cloned()
+        .ok_or_else(|| format!("the finding route must carry a repair entry:\n{text}"))
+}
+
+/// A repository whose analyzed root is the `crate` subdirectory, with a
+/// repository-level `src/lib.rs` outside it. The `CONST_OLD` -> `CONST_NEW`
+/// change is committed when `commit_change` is set and left dirty otherwise;
+/// the outside file is dirty in both cases.
+fn outer_repo_with_subdir_root(commit_change: bool) -> Result<Repo, String> {
+    outer_repo(commit_change, false, true)
+}
+
+/// The outer repository, with a repository-level Cargo package when
+/// `top_manifest` is set (one that does not claim `crate`), and the
+/// repository-level `src/lib.rs` left dirty when `dirty_sibling` is set.
+fn outer_repo(
+    commit_change: bool,
+    top_manifest: bool,
+    dirty_sibling: bool,
+) -> Result<Repo, String> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let outer = std::env::temp_dir().join(format!(
+        "ripr-check-repair-agree-outer-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let repo = Repo(outer);
+    for dir in ["src", "crate/src", "crate/tests"] {
+        std::fs::create_dir_all(repo.0.join(dir)).map_err(|e| e.to_string())?;
+    }
+    repo.write(".gitignore", "target/\n")?;
+    repo.write("src/lib.rs", "pub fn outer() -> u8 {\n    1\n}\n")?;
+    if top_manifest {
+        repo.write(
+            "Cargo.toml",
+            "[package]\nname = \"outer\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+    }
+    repo.write("crate/Cargo.toml", CARGO_TOML)?;
+    repo.write("crate/src/lib.rs", CONST_OLD)?;
+    repo.write("crate/tests/t.rs", CONST_TEST)?;
+    repo.git(&["-c", "init.templateDir=", "init", "-q"])?;
+    repo.git(&["config", "user.email", "t@example.com"])?;
+    repo.git(&["config", "user.name", "t"])?;
+    repo.git(&["config", "commit.gpgSign", "false"])?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "base"])?;
+    repo.write("crate/src/lib.rs", CONST_NEW)?;
+    if commit_change {
+        repo.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])?;
+    }
+    if dirty_sibling {
+        repo.write("src/lib.rs", "pub fn outer() -> u8 {\n    2\n}\n")?;
+    }
+    Ok(repo)
+}
+
+/// #15488: `ripr check --root <subdir>` withholds the seam start altogether
+/// and names the Git top-level, because a repair attempt starts only there
+/// (#15363) — the start (and its commit step) printed here before would
+/// refuse at the before phase even after the commit. The dirty files inside
+/// and outside the analyzed root no longer need a `../...` commit step on
+/// this screen; the top-level check names them in its own route.
+#[test]
+fn subdir_check_withholds_the_seam_start_and_names_the_top_level() -> Result<(), String> {
+    let repo = outer_repo_with_subdir_root(false)?;
+    let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD"])?;
+    assert!(
+        !check.contains("\n  ripr repair ")
+            && !check.contains("Commit your production change first")
+            && check.contains("is not the exact Git top-level"),
+        "a subdirectory check must offer no seam start and name the top-level:\n{check}"
+    );
+    // The start itself still refuses first, before writing anything.
+    let (code, repair) = repo.ripr_status(&["repair", "--root", "crate"])?;
+    assert!(
+        code != Some(0) && repair.contains("is not the exact Git top-level"),
+        "the start refuses the subdirectory root:\n{repair}"
+    );
+    assert!(
+        !repo.0.join("crate/target/ripr/repair-attempts").exists(),
+        "the refusal must take no attempt lock under the subdirectory root:\n{repair}"
+    );
+    let json = repo.ripr(&[
+        "check", "--root", "crate", "--base", "HEAD", "--format", "json",
+    ])?;
+    // A withheld route offers no repair entry at all: no command, no step.
+    // The error must be the specific missing-repair one, so malformed JSON
+    // or a missing or multiple-route document fails here instead of passing.
+    let error = match json_repair_route(&json) {
+        Ok(_) => {
+            return Err(format!(
+                "a subdirectory route must carry no repair entry:\n{json}"
+            ));
+        }
+        Err(error) => error,
+    };
+    assert!(
+        error.starts_with("the finding route must carry a repair entry:"),
+        "expected the missing-repair error, got: {error}"
+    );
+    Ok(())
+}
+
+/// #13636 (A): a committed-only run did not analyze the dirty file the start
+/// refuses over, so the seam route prints no commit step vouching for it and
+/// no runnable start; it is refused, as the gap route refuses the same state.
+/// #15488 ordering: under a subdirectory root the finding's own refusal is
+/// named first. The top-level gate applies only where a start would otherwise
+/// be printed, so it does not rewrite this reason.
+#[test]
+fn committed_only_check_at_a_subdirectory_root_refuses_the_seam_route() -> Result<(), String> {
+    let repo = outer_repo_with_subdir_root(true)?;
+    let check = repo.ripr(&["check", "--root", "crate", "--base", "HEAD~1"])?;
+    assert!(
+        !check.contains("Commit your production change")
+            && !check.contains("\n  ripr repair ")
+            && check.contains("No strong assertion was detected"),
+        "a committed-only run at a subdirectory root must refuse the seam route:\n{check}"
+    );
+    let json = repo.ripr(&[
+        "check", "--root", "crate", "--base", "HEAD~1", "--format", "json",
+    ])?;
+    // A refused route offers no repair entry at all: no command, no commit step.
+    let Err(error) = json_repair_route(&json) else {
+        return Err(format!(
+            "a refused seam route must carry no repair entry:\n{json}"
+        ));
+    };
+    assert!(
+        error.starts_with("the finding route must carry a repair entry"),
+        "the JSON must still carry its one finding route: {error}"
+    );
+    Ok(())
+}
+
+const SHIPPING_OLD: &str = "pub fn shipping(weight: u32) -> u32 {\n    if weight > 20 {\n        15\n    } else {\n        5\n    }\n}\n";
+const SHIPPING_NEW: &str = "pub fn shipping(weight: u32) -> u32 {\n    if weight > 25 {\n        15\n    } else {\n        5\n    }\n}\n";
+
+/// The 16-hex spot id of the `ripr repair <id>` start a check screen offers.
+fn offered_repair_id(check: &str) -> Option<String> {
+    check.lines().find_map(|line| {
+        let rest = line.trim_start().strip_prefix("ripr repair ")?;
+        let id = rest.split_whitespace().next()?;
+        (id.len() == 16 && id.bytes().all(|b| b.is_ascii_hexdigit())).then(|| id.to_string())
+    })
+}
+
+/// #14084: a changed boundary whose only test calls the owner and asserts
+/// nothing. The before phase withholds the seam (its propagation stage is
+/// unknown), so check must not print a start for it and bare repair must not
+/// list it as startable; both give the one plain reason, as a typed refusal.
+#[test]
+fn no_assertion_gap_is_not_offered_a_start_the_before_phase_refuses() -> Result<(), String> {
+    let repo = Repo::create(
+        SHIPPING_OLD,
+        SHIPPING_NEW,
+        "use ar::shipping;\n\n#[test]\nfn shipping_runs() {\n    let _ = shipping(30);\n}\n",
+    )?;
+    let reason = "it cannot tell from reading the code whether the changed value reaches a result a test can check";
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Changed behavior: weight > 25"),
+        "the fixture must produce the boundary finding:\n{check}"
+    );
+    assert!(
+        offered_repair_id(&check).is_none() && check.contains(reason),
+        "check must name the reason instead of offering a start:\n{check}"
+    );
+    let repair = refused_repair(&repo)?;
+    assert!(
+        repair.contains(reason) && repair.contains("refusal code=no_eligible_seam"),
+        "bare repair must refuse with the same reason:\n{repair}"
+    );
+    // The item check names for the full gate's answer: a typed refusal, not
+    // the before phase's exit 2.
+    let id = check
+        .split("run `ripr repair ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .ok_or_else(|| format!("check must name the item to ask the gate about:\n{check}"))?
+        .to_string();
+    let (code, named) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(
+        code,
+        Some(3),
+        "a named item must refuse as a decision:\n{named}"
+    );
+    assert!(
+        named.contains(reason)
+            && named.contains("refusal code=seam_not_repair_eligible")
+            && !named.contains("no workflow starts")
+            && !named.contains("static limitation"),
+        "the named refusal must be the shared gate's plain one:\n{named}"
+    );
+    Ok(())
+}
+
+/// Control for #14084: the same change under a test that reads the result
+/// with a loose assertion is offered a start by check, and that exact
+/// command starts.
+#[test]
+fn weak_assertion_gap_start_offered_by_check_starts() -> Result<(), String> {
+    let repo = Repo::create(
+        SHIPPING_OLD,
+        SHIPPING_NEW,
+        "use ar::shipping;\n\n#[test]\nfn shipping_is_positive() {\n    assert!(shipping(30) > 0);\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    let id = offered_repair_id(&check)
+        .ok_or_else(|| format!("check must offer a repair start:\n{check}"))?;
+    let (code, started) = repo.ripr_status(&["repair", &id, "--root", "."])?;
+    assert_eq!(code, Some(0), "the offered start must start:\n{started}");
+    assert!(
+        started.contains("Repair prepared for seam"),
+        "the start must print its before-phase summary:\n{started}"
+    );
+    Ok(())
+}
+
+/// #14084: when check already reads the finding as unclear, its limitation
+/// guidance is the whole story; the withheld seam adds no second advisory.
+/// The comparison sits in parentheses, an operand shape the boundary reader
+/// does not bind, so the finding stays unclear. (A plain
+/// `member && total >= 120` is read by the guarded boundary rule, #13037,
+/// which credits only rows that hold `member = true`.)
+#[test]
+fn unclear_finding_on_a_withheld_seam_adds_no_repair_advisory() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && (total >= 100) {\n        total - 10\n    } else {\n        total\n    }\n}\n",
+        "pub fn discount(total: u32, member: bool) -> u32 {\n    if member && (total >= 120) {\n        total - 10\n    } else {\n        total\n    }\n}\n",
+        "use ar::discount;\n\n#[test]\nfn runs() {\n    let _ = discount(200, true);\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    assert!(
+        check.contains("Static exposure: unknown"),
+        "the fixture must produce an unclear finding:\n{check}"
+    );
+    assert!(
+        offered_repair_id(&check).is_none() && !check.contains("no repair start offered"),
+        "an unclear finding must stay without a repair advisory:\n{check}"
+    );
+    let repair = refused_repair(&repo)?;
+    assert!(
+        repair.contains("whether the changed value reaches a result a test can check"),
+        "bare repair still names why the spot cannot start:\n{repair}"
+    );
+    Ok(())
+}
+
+/// #14719: a compound predicate's gap id names its one comparison
+/// (`s.len==1`), which the inner `s.len() > 1` seam on the same line also
+/// mints. Repair by that id picks the most-specific seam instead of refusing
+/// the id as naming several seams.
+#[test]
+fn compound_predicate_gap_id_names_one_seam() -> Result<(), String> {
+    let repo = Repo::create(
+        "pub fn f(s: &str) -> u32 {\n    if s.starts_with('-') {\n        1\n    } else {\n        0\n    }\n}\n",
+        "pub fn f(s: &str) -> u32 {\n    if s.starts_with('-') && s.len() > 1 {\n        1\n    } else {\n        0\n    }\n}\n",
+        "use ar::f;\n\n#[test]\nfn t() {\n    let _ = f(\"-v\");\n}\n",
+    )?;
+    let check = repo.ripr(&["check", "--base", "HEAD~1"])?;
+    let id = "gap:rust:src/lib.rs:f:predicate_boundary:predicate:s.len==1";
+    assert!(
+        check.contains(id),
+        "the predicate's gap id names the narrowed comparison:\n{check}"
+    );
+    let (_, repair) = repo.ripr_status(&["repair", id, "--root", "."])?;
+    assert!(
+        !repair.contains("item_names_several_seams") && repair.contains("names gap `"),
+        "the gap id must resolve to one seam:\n{repair}"
+    );
+    let inner = seam_id_for_expression(&repo, "s.len() > 1")?;
+    let outer = seam_id_for_expression(&repo, "s.starts_with('-') && s.len() > 1")?;
+    assert_ne!(inner, outer, "the fixture must mint two distinct seams");
+    assert!(
+        repair.contains(&format!("names gap `{inner}`")) && !repair.contains(&format!("`{outer}`")),
+        "repair must pick the inner comparison seam {inner}, not the enclosing {outer}:\n{repair}"
+    );
+    Ok(())
+}
+
+/// The seam id `ripr pilot` lists for the one seam whose changed expression is
+/// exactly `expression`.
+fn seam_id_for_expression(repo: &Repo, expression: &str) -> Result<String, String> {
+    repo.ripr(&["pilot", "--root", "."])?;
+    let text = std::fs::read_to_string(repo.0.join("target/ripr/pilot/agent-seam-packets.json"))
+        .map_err(|e| e.to_string())?;
+    let packets: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let ids: Vec<&str> = packets["packets"]
+        .as_array()
+        .ok_or("pilot packets must be an array")?
+        .iter()
+        .filter(|packet| packet["changed_expression"] == expression)
+        .filter_map(|packet| packet["seam_id"].as_str())
+        .collect();
+    match ids.as_slice() {
+        [id] => Ok((*id).to_string()),
+        other => Err(format!(
+            "expected one seam for `{expression}`, found {other:?}"
+        )),
+    }
+}
+
+/// #15278 item 3: the only test of `wscore::discount` lives in `app/tests`
+/// and calls it directly. `ripr check` names that test, so `ripr pilot` must
+/// not say no test reaches the changed code.
+#[test]
+fn pilot_credits_a_direct_call_from_a_test_in_another_package() -> Result<(), String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            (
+                "app/tests/t.rs",
+                "#[test]\nfn t1() {\n    assert!(wscore::discount(5) > 0);\n}\n",
+            ),
+        ],
+        WS_NEW,
+        false,
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: weak") && check.contains("app/tests/t.rs:2 t1"),
+        "precondition, check names the cross-package test on a weak gap:\n{check}"
+    );
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("wscore/src/lib.rs:2"),
+        "precondition, pilot ranks the changed comparison:\n{pilot}"
+    );
+    assert!(
+        !pilot.contains("ripr found no test that reaches this")
+            && !pilot.contains("no test is seen calling"),
+        "pilot must not say no test reaches code check sees t1 reach:\n{pilot}"
+    );
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2") && line.contains("tests only loosely check this")
+        }),
+        "pilot relates t1 to the comparison as a reaching test:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// The control: two free functions share the name, and the test calls the
+/// one in its own package. Nothing says which `discount` a call reaches
+/// across packages, so the other package's function stays unreached.
+#[test]
+fn pilot_keeps_the_package_guard_when_the_function_name_is_shared() -> Result<(), String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_TOML),
+            (
+                "app/src/lib.rs",
+                "pub fn discount(price: u32) -> u32 {\n    price\n}\n",
+            ),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            (
+                "app/tests/t.rs",
+                "#[test]\nfn t1() {\n    assert!(app::discount(5) > 0);\n}\n",
+            ),
+        ],
+        WS_NEW,
+        false,
+    )?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2")
+                && line.contains("ripr found no test that reaches this")
+        }),
+        "the shared name keeps wscore's comparison unreached:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// The same credit for a bare call bound by `use wscore::discount;`: the
+/// import names the owner's crate, so the call settles on the owner.
+#[test]
+fn pilot_credits_a_bare_call_imported_from_the_owners_crate() -> Result<(), String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            (
+                "app/tests/t.rs",
+                "use wscore::discount;\n\n#[test]\nfn t1() {\n    assert!(discount(5) > 0);\n}\n",
+            ),
+        ],
+        WS_NEW,
+        true,
+    )?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2") && line.contains("tests only loosely check this")
+        }),
+        "pilot relates the imported bare call to the comparison:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// `app` also depends on a registry crate `pricing`, and the test calls
+/// `pricing::discount`. That call names another crate, so it cannot reach
+/// `wscore::discount` and the package guard stands although the name is
+/// unique in the workspace.
+#[test]
+fn pilot_keeps_the_package_guard_for_a_call_through_another_crate() -> Result<(), String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_WITH_PRICING_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            (
+                "app/tests/t.rs",
+                "#[test]\nfn t1() {\n    assert!(pricing::discount(5) > 0);\n}\n",
+            ),
+        ],
+        WS_NEW,
+        true,
+    )?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert_comparison_unreached(&pilot)
+}
+
+/// `wscore::discount` is private, and the test imports `discount` from
+/// `pricing`. The bare call is bound by that import, so it cannot reach the
+/// private owner and the package guard stands.
+#[test]
+fn pilot_keeps_the_package_guard_for_a_bare_call_imported_from_another_crate() -> Result<(), String>
+{
+    let private_old = WS_OLD.replacen("pub fn discount", "fn discount", 1) + WS_TOTAL;
+    let private_new = WS_NEW.replacen("pub fn discount", "fn discount", 1) + WS_TOTAL;
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_WITH_PRICING_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", &private_old),
+            (
+                "app/tests/t.rs",
+                "use pricing::discount;\n\n#[test]\nfn t1() {\n    assert!(discount(5) > 0);\n}\n",
+            ),
+        ],
+        &private_new,
+        true,
+    )?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert_comparison_unreached(&pilot)
+}
+
+/// A closure that shadows the imported `discount` is what the bare call
+/// runs, so the call cannot reach `wscore::discount`.
+#[test]
+fn pilot_keeps_the_package_guard_for_a_bare_call_shadowed_by_a_closure() -> Result<(), String> {
+    let pilot = pilot_for_app_test(
+        "use wscore::discount;\n\n#[test]\nfn t1() {\n    let discount = |price: u32| price + 1;\n    assert!(discount(5) > 0);\n}\n",
+    )?;
+    assert_comparison_unreached(&pilot)
+}
+
+/// A real call before a later shadowing closure still reaches the owner.
+#[test]
+fn pilot_credits_a_bare_call_made_before_a_later_shadow() -> Result<(), String> {
+    let pilot = pilot_for_app_test(
+        "use wscore::discount;\n\n#[test]\nfn t1() {\n    assert!(discount(5) > 0);\n    let discount = |price: u32| price + 1;\n    assert!(discount(6) > 0);\n}\n",
+    )?;
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2") && line.contains("tests only loosely check this")
+        }),
+        "the call before the shadow reaches the comparison:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// `stringify!` never evaluates its tokens, so an owner spelling inside it
+/// lends nothing while the call that runs is `pricing::discount`.
+#[test]
+fn pilot_keeps_the_package_guard_for_an_owner_spelled_only_in_stringify() -> Result<(), String> {
+    let pilot = pilot_for_app_test(
+        "#[test]\nfn t1() {\n    assert!(pricing::discount(5) > 0);\n    let _ = stringify!(wscore::discount(5));\n}\n",
+    )?;
+    assert_comparison_unreached(&pilot)
+}
+
+/// `ripr pilot` over the `WS_*` workspace with `app` also depending on
+/// `pricing`, `test` as `app/tests/t.rs`, and the change committed.
+fn pilot_for_app_test(test: &str) -> Result<String, String> {
+    let repo = Repo::create_workspace(
+        &[
+            ("Cargo.toml", WS_ROOT),
+            ("app/Cargo.toml", WS_APP_WITH_PRICING_TOML),
+            ("app/src/lib.rs", ""),
+            ("wscore/Cargo.toml", WS_CORE_TOML),
+            ("wscore/src/lib.rs", WS_OLD),
+            ("app/tests/t.rs", test),
+        ],
+        WS_NEW,
+        true,
+    )?;
+    repo.ripr(&["pilot", "--root", "."])
+}
+
+const WS_APP_WITH_PRICING_TOML: &str = "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwscore = { path = \"../wscore\" }\npricing = \"1\"\n";
+const WS_TOTAL: &str = "pub fn total(price: u32) -> u32 {\n    discount(price)\n}\n";
+
+fn assert_comparison_unreached(pilot: &str) -> Result<(), String> {
+    assert!(
+        pilot.contains("wscore/src/lib.rs:2"),
+        "precondition, pilot ranks the changed comparison:\n{pilot}"
+    );
+    assert!(
+        pilot.lines().any(|line| {
+            line.contains("wscore/src/lib.rs:2")
+                && line.contains("ripr found no test that reaches this")
+        }),
+        "a call that cannot reach the owner leaves the comparison unreached:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// #15278 item 4: a field change in a method no test calls. Pilot names the
+/// method a test must call instead of describing oracles that never run it.
+#[test]
+fn pilot_names_the_method_a_test_must_call() -> Result<(), String> {
+    const HEAD: &str = "pub struct Counter {\n    pub count: u32,\n}\n\nimpl Counter {\n    pub fn new() -> Self {\n        Counter { count: 0 }\n    }\n\n    pub fn bump(&mut self) {\n        self.count += STEP;\n    }\n}\n";
+    let old = HEAD.replace("STEP", "1");
+    let new = HEAD.replace("STEP", "2");
+    let repo = Repo::create_uncommitted(
+        &old,
+        &new,
+        "use ar::Counter;\n\n#[test]\nfn starts_at_zero() {\n    assert_eq!(Counter::new().count, 0);\n}\n",
+    )?;
+    let check = repo.ripr(&["check"])?;
+    assert!(
+        check.contains("Static exposure: no path"),
+        "precondition, check finds no test path to the changed field:\n{check}"
+    );
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("why it matters: no test is seen calling `bump`")
+            && pilot.contains("test to add: one that calls `bump`"),
+        "pilot must say a test has to call bump:\n{pilot}"
+    );
+    assert!(
+        !pilot.contains("Strongest oracle") && !pilot.contains("has no test file to use"),
+        "pilot must not describe oracles or a missing test file here:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// #16381: pilot sees the same dirty production premise the before phase
+/// refuses ("commit first ... Nothing was started"), so its ordered list names
+/// the commit before the repair start, in the terminal and the saved Markdown
+/// summary alike. Staged and unstaged tracked production edits both hold the
+/// premise; a committed change and a dirty test file (the refusal's own
+/// allowance) do not.
+#[test]
+fn pilot_names_the_commit_step_before_a_repair_start_that_would_refuse() -> Result<(), String> {
+    const COMMIT: &str = "--literal-pathspecs commit -m \"<message>\" -- src/lib.rs";
+    fn pilot_md(repo: &Repo) -> Result<String, String> {
+        std::fs::read_to_string(repo.0.join("target/ripr/pilot/pilot-summary.md"))
+            .map_err(|e| e.to_string())
+    }
+
+    // Committed control: the repair start is step 1, with no commit step.
+    let committed = Repo::create(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let pilot = committed.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("Next, in order:\n  1. ripr agent repair --root "),
+        "precondition, a committed change starts the repair first:\n{pilot}"
+    );
+    assert!(
+        !pilot.contains(COMMIT),
+        "no commit step when committed:\n{pilot}"
+    );
+    let markdown = pilot_md(&committed)?;
+    assert!(
+        markdown.contains("ripr agent repair --root ") && !markdown.contains(COMMIT),
+        "the committed Markdown summary names no commit step:\n{markdown}"
+    );
+
+    let unstaged = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let staged = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    staged.git(&["add", "src/lib.rs"])?;
+    for (state, repo) in [("unstaged", &unstaged), ("staged", &staged)] {
+        let pilot = repo.ripr(&["pilot", "--root", "."])?;
+        let heading_at = pilot
+            .find("Next, in order:\n")
+            .ok_or_else(|| format!("{state}: pilot must keep its ordered list:\n{pilot}"))?;
+        let next = &pilot[heading_at..];
+        let commit_at = next
+            .find(&format!("{COMMIT}\n"))
+            .ok_or_else(|| format!("{state}: the ordered list must name the commit:\n{pilot}"))?;
+        let start_at = next
+            .find("  1. ripr agent repair --root ")
+            .ok_or_else(|| format!("{state}: pilot must still name the repair start:\n{pilot}"))?;
+        assert!(
+            commit_at < start_at,
+            "{state}: the commit step must come before the repair start:\n{pilot}"
+        );
+        // No runnable repair command anywhere on the screen precedes a commit
+        // step, including the top recommendation's own `repair this gap` line.
+        let first_commit = pilot.find(COMMIT).unwrap_or(usize::MAX);
+        let first_start = pilot.find("ripr agent repair --root").unwrap_or(0);
+        assert!(
+            first_commit < first_start,
+            "{state}: a repair command must not precede the commit step:\n{pilot}"
+        );
+        let markdown = pilot_md(repo)?;
+        let md_commit = markdown.find(&format!("{COMMIT}\n")).ok_or_else(|| {
+            format!("{state}: the Markdown must name the commit step:\n{markdown}")
+        })?;
+        let md_start = markdown.find("ripr agent repair --root ").ok_or_else(|| {
+            format!("{state}: the Markdown must name the repair start:\n{markdown}")
+        })?;
+        assert!(
+            md_commit < md_start,
+            "{state}: the Markdown commit step must come first:\n{markdown}"
+        );
+        // The commit step is the reason the printed start refuses today.
+        let start = next[start_at + "  1. ".len()..]
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let args: Vec<&str> = start.split_whitespace().skip(1).collect();
+        let (code, repair) = repo.ripr_status(&args)?;
+        assert_eq!(code, Some(2), "{state}: the start must refuse:\n{repair}");
+        assert!(
+            repair.contains("ripr repair needs your source changes committed first"),
+            "{state}: the start must refuse for the dirty premise:\n{repair}"
+        );
+        let (commit_root, commit_files) = printed_commit(next)?;
+        assert_eq!(
+            commit_root,
+            repo.canonical_root()?,
+            "{state}: the commit runs at the analyzed root:\n{pilot}"
+        );
+        assert_eq!(
+            commit_files,
+            refused_uncommitted(&repair)?,
+            "{state}: the commit names exactly the files the start refuses over:\n{pilot}\n{repair}"
+        );
+        if state == "unstaged" {
+            // Run the printed commit, then the printed start: it starts.
+            run_printed_commit(repo, &commit_root, &commit_files)?;
+            let (code, started) = repo.ripr_status(&args)?;
+            assert_eq!(
+                code,
+                Some(0),
+                "{state}: after the printed commit the start must start:\n{started}"
+            );
+            assert!(
+                !started.contains("Nothing was started"),
+                "{state}: the start must not refuse after the commit:\n{started}"
+            );
+        }
+    }
+
+    // A dirty test file is the refusal's allowance: no commit step.
+    let test_dirty = Repo::create(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    test_dirty.write("tests/t.rs", &format!("{CONST_TEST}\n// still editing\n"))?;
+    let pilot = test_dirty.ripr(&["pilot", "--root", "."])?;
+    assert!(
+        pilot.contains("Next, in order:\n  1. ripr agent repair --root ")
+            && !pilot.contains("--literal-pathspecs commit"),
+        "a dirty test file adds no commit step:\n{pilot}"
+    );
+    assert!(
+        !pilot_md(&test_dirty)?.contains("--literal-pathspecs commit"),
+        "a dirty test file adds no Markdown commit step"
+    );
+    Ok(())
+}
+
+/// A root path in the printed spelling: a Windows verbatim prefix (`\\?\`
+/// or `\\?\UNC\`) folded and `\` separators as `/`, so a comparison holds
+/// on every host.
+fn printed_root(path: &str) -> String {
+    let path = path
+        .strip_prefix(r"\\?\UNC\")
+        .map(|rest| format!(r"\\{rest}"))
+        .unwrap_or_else(|| path.strip_prefix(r"\\?\").unwrap_or(path).to_string());
+    path.replace('\\', "/")
+}
+
+/// The `git -C <root> --literal-pathspecs commit -m "<message>" -- <files>`
+/// step a pilot screen prints: its `-C` value and its file list, in order.
+/// The temporary roots these tests use need no quoting, so the words split
+/// on whitespace; the root is returned in the [`printed_root`] spelling.
+fn printed_commit(screen: &str) -> Result<(String, Vec<String>), String> {
+    let line = screen
+        .lines()
+        .find(|line| line.contains(" --literal-pathspecs commit -m \"<message>\" -- "))
+        .ok_or_else(|| format!("the screen prints no commit step:\n{screen}"))?;
+    let (head, files) = line
+        .split_once(" -- ")
+        .ok_or_else(|| format!("the commit step names no files: {line}"))?;
+    let root = head
+        .split_once("git -C ")
+        .and_then(|(_, rest)| rest.split_whitespace().next())
+        .ok_or_else(|| format!("the commit step names no -C root: {line}"))?;
+    Ok((
+        printed_root(root),
+        files.split_whitespace().map(str::to_string).collect(),
+    ))
+}
+
+/// The exact `Uncommitted:` file list of a dirty-premise refusal.
+fn refused_uncommitted(refusal: &str) -> Result<Vec<String>, String> {
+    refusal
+        .split_once("Uncommitted: ")
+        .and_then(|(_, rest)| rest.split_once(". Commit them"))
+        .map(|(files, _)| files.split(", ").map(str::to_string).collect())
+        .ok_or_else(|| format!("not a dirty-premise refusal:\n{refusal}"))
+}
+
+/// Run the printed commit step's exact command (`-C` root and files) in
+/// `repo`, with a concrete message in place of `<message>`.
+fn run_printed_commit(repo: &Repo, root: &str, files: &[String]) -> Result<(), String> {
+    let mut args = vec![
+        "-C",
+        root,
+        "--literal-pathspecs",
+        "commit",
+        "-q",
+        "--no-gpg-sign",
+        "-m",
+        "commit first",
+        "--",
+    ];
+    args.extend(files.iter().map(String::as_str));
+    repo.git(&args)
+}
+
+/// The pilot screen withholds the repair start behind a prerequisite it
+/// cannot print as one copyable command: no commit step and no runnable
+/// `ripr agent repair` start, in the terminal or the saved Markdown summary.
+fn assert_no_copyable_commit_or_start(case: &str, pilot: &str, markdown: &str) {
+    for (surface, text) in [("terminal", pilot), ("markdown", markdown)] {
+        assert!(
+            !text.contains("--literal-pathspecs commit"),
+            "{case}: the {surface} must print no copyable commit step:\n{text}"
+        );
+    }
+    assert!(
+        !pilot.contains("repair this gap: ripr agent repair")
+            && !pilot.contains("1. ripr agent repair"),
+        "{case}: the terminal must not present the start as runnable:\n{pilot}"
+    );
+    assert!(
+        !markdown.contains("ripr agent repair --root"),
+        "{case}: the Markdown must not present the start as runnable:\n{markdown}"
+    );
+}
+
+/// #16381 review: at a subdirectory `--root` the repair start refuses at the
+/// before phase ("not the exact Git top-level") whatever is committed, so
+/// pilot prints neither a commit step (which would name `../...` paths outside
+/// the analyzed root) nor a start that looks runnable after it; it names the
+/// top-level with `ripr check`'s own subdirectory disclosure. Covered with a
+/// dirty sibling outside the root only, with dirty files on both sides, and
+/// with both sides dirty at a nested Cargo project the enclosing package does
+/// not claim (check's top-level gate keeps that root, but the attempt still
+/// refuses it, so a commit of the in-root file alone would not be enough).
+/// The same standalone project with only the in-root file dirty, where no
+/// `../` path exists, is withheld too: the attempt refuses that root whatever
+/// is committed, so the in-root commit step would not clear it. A clean plain
+/// subdirectory root is withheld as `ripr check` withholds it.
+#[test]
+fn pilot_at_a_subdirectory_root_prints_no_commit_step_and_no_runnable_start() -> Result<(), String>
+{
+    for (case, commit_change, top_manifest, dirty_sibling) in [
+        ("sibling only", true, false, true),
+        ("mixed", false, false, true),
+        ("mixed, standalone nested project", false, true, true),
+        ("clean, plain subdirectory", true, false, false),
+        (
+            "in-root only, standalone nested project",
+            false,
+            true,
+            false,
+        ),
+    ] {
+        let repo = outer_repo(commit_change, top_manifest, dirty_sibling)?;
+        let pilot = repo.ripr(&["pilot", "--root", "crate"])?;
+        let markdown =
+            std::fs::read_to_string(repo.0.join("crate/target/ripr/pilot/pilot-summary.md"))
+                .map_err(|e| format!("{case}: {e}\n{pilot}"))?;
+        assert!(
+            pilot.contains("gap "),
+            "{case}: precondition, pilot ranks the crate's gap:\n{pilot}"
+        );
+        assert_no_copyable_commit_or_start(case, &pilot, &markdown);
+        for (surface, text) in [("terminal", &pilot), ("markdown", &markdown)] {
+            assert!(
+                text.contains("repair start offered: this root is not the exact Git top-level"),
+                "{case}: the {surface} must name check's subdirectory disclosure:\n{text}"
+            );
+        }
+        // The withheld start is one the before phase refuses here, and no
+        // commit clears that: with every file committed it still refuses
+        // over the root (a nested project's start names the dirty premise
+        // first, so the commit-both rerun is what pins the root refusal).
+        let (code, repair) = repo.ripr_status(&["repair", "--root", "crate"])?;
+        assert!(
+            code != Some(0)
+                && (repair.contains("is not the exact Git top-level")
+                    || repair.contains("ripr repair needs your source changes committed first")),
+            "{case}: the start refuses as pilot found it:\n{repair}"
+        );
+        repo.git(&[
+            "commit",
+            "-q",
+            "--no-gpg-sign",
+            "--allow-empty",
+            "-am",
+            "commit every file",
+        ])?;
+        let (code, repair) = repo.ripr_status(&["repair", "--root", "crate"])?;
+        assert!(
+            code != Some(0) && repair.contains("is not the exact Git top-level"),
+            "{case}: after committing every file the start still refuses the root:\n{repair}"
+        );
+    }
+    Ok(())
+}
+
+/// #16381 review: the inline test module the repair edits lives in a dirty
+/// production file the preflight skips (it carries `#[cfg(test)]`), while
+/// another dirty production file holds the premise. Pilot's one commit step
+/// names both, once each, and running it lets the printed start start.
+#[test]
+fn pilot_commit_step_merges_the_dirty_inline_target() -> Result<(), String> {
+    const INLINE_OLD: &str = "pub fn discount(qty: u32, limit: u32) -> u32 {\n    if qty > limit { 10 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn weak() {\n        assert!(discount(12, 10) > 0);\n    }\n}\n";
+    const INLINE_NEW: &str = "pub fn discount(qty: u32, limit: u32) -> u32 {\n    if qty >= limit { 10 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn weak() {\n        assert!(discount(12, 10) > 0);\n    }\n}\n";
+    let repo = Repo::create_uncommitted(INLINE_OLD, INLINE_NEW, "#[test]\nfn unrelated() {}\n")?;
+    repo.git(&["rm", "-q", "tests/t.rs"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "inline tests only"])?;
+    repo.write("src/extra.rs", "pub fn extra() -> u8 {\n    1\n}\n")?;
+    repo.git(&["add", "src/extra.rs"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "extra"])?;
+    repo.write("src/extra.rs", "pub fn extra() -> u8 {\n    2\n}\n")?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    let next = pilot
+        .split_once("Next, in order:\n")
+        .map(|(_, next)| next)
+        .ok_or_else(|| format!("pilot must keep its ordered list:\n{pilot}"))?;
+    let (commit_root, commit_files) = printed_commit(next)?;
+    assert_eq!(
+        commit_root,
+        repo.canonical_root()?,
+        "the commit runs at the analyzed root:\n{pilot}"
+    );
+    assert_eq!(
+        commit_files,
+        ["src/extra.rs", "src/lib.rs"],
+        "one commit names the premise file and the inline target, once each:\n{pilot}"
+    );
+    assert!(
+        !next.contains("has uncommitted edits, commit or stash them"),
+        "the commit step replaces the inline-target line:\n{pilot}"
+    );
+    let start_at = next
+        .find("  1. ripr agent repair --root ")
+        .ok_or_else(|| format!("pilot must name the repair start:\n{pilot}"))?;
+    let args: Vec<String> = next[start_at + "  1. ".len()..]
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .skip(1)
+        .map(str::to_string)
+        .collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_printed_commit(&repo, &commit_root, &commit_files)?;
+    let (code, started) = repo.ripr_status(&args)?;
+    assert_eq!(
+        code,
+        Some(0),
+        "after the printed commit the start must start:\n{started}"
+    );
+    Ok(())
+}
+
+/// #16381 review: a commit step whose file name needs quoting the PowerShell
+/// console reads differently prints its PowerShell form beside it on the
+/// terminal, as the repair start does.
+#[cfg(unix)]
+#[test]
+fn pilot_commit_step_prints_its_powershell_form_when_quoting_differs() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    repo.write("src/o'brien.rs", "pub fn extra() -> u8 {\n    1\n}\n")?;
+    repo.git(&["add", "src/o'brien.rs"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "extra"])?;
+    repo.write("src/o'brien.rs", "pub fn extra() -> u8 {\n    2\n}\n")?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    let next = pilot
+        .split_once("Next, in order:\n")
+        .map(|(_, next)| next)
+        .ok_or_else(|| format!("pilot must keep its ordered list:\n{pilot}"))?;
+    let mut lines = next.lines();
+    let commit_at = lines
+        .position(|line| line.contains("--literal-pathspecs commit -m \"<message>\" -- "))
+        .ok_or_else(|| format!("precondition, pilot prints the commit step:\n{pilot}"))?;
+    let commit = next.lines().nth(commit_at).unwrap_or_default();
+    assert!(
+        commit.contains(r"'src/o'\''brien.rs'"),
+        "precondition, the Bash form quotes the apostrophe:\n{pilot}"
+    );
+    let form = next.lines().nth(commit_at + 1).unwrap_or_default();
+    assert!(
+        form.trim_start().starts_with("(PowerShell) ") && form.contains("o''brien.rs"),
+        "the commit step's PowerShell form follows it:\n{pilot}"
+    );
+    Ok(())
+}
+
+/// #16381 review: a dirty production file whose name holds a line break would
+/// print a commit spanning lines that could close the Markdown command fence.
+/// Pilot and check withhold the start with the unreadable-premise advisory
+/// rather than offer it without the commit it needs.
+#[cfg(unix)]
+#[test]
+fn a_file_name_with_a_line_break_withholds_the_start_on_pilot_and_check() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let name = "src/x\n```\necho forged\n.rs";
+    repo.write(name, "pub fn extra() -> u8 {\n    1\n}\n")?;
+    repo.git(&["add", "--", name])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "extra"])?;
+    repo.write(name, "pub fn extra() -> u8 {\n    2\n}\n")?;
+    let pilot = repo.ripr(&["pilot", "--root", "."])?;
+    let markdown = std::fs::read_to_string(repo.0.join("target/ripr/pilot/pilot-summary.md"))
+        .map_err(|e| format!("{e}\n{pilot}"))?;
+    assert!(
+        pilot.contains("gap "),
+        "precondition, pilot ranks the gap:\n{pilot}"
+    );
+    let check = repo.ripr(&["check", "--root", "."])?;
+    // #16455: check still names the file, escaped onto its limitation line.
+    assert!(
+        check
+            .lines()
+            .any(|line| line.trim_start().starts_with("Limitation: ")
+                && line.contains("; file: src/x\\n```\\necho forged\\n.rs;")),
+        "check must name the file escaped on its limitation line:\n{check}"
+    );
+    for (surface, text) in [
+        ("pilot terminal", &pilot),
+        ("pilot markdown", &markdown),
+        ("check", &check),
+    ] {
+        assert!(
+            !text.contains("--literal-pathspecs commit"),
+            "the {surface} must print no commit step:\n{text}"
+        );
+        // Check's limitation prose escapes the name onto one line (#16455).
+        assert!(
+            !text.lines().any(|line| line.trim() == "echo forged"),
+            "the {surface} must not show the name's tail as a command line:\n{text}"
+        );
+        // Fail closed: the start would refuse this dirty premise, so it is
+        // withheld with the unreadable-premise advisory, not offered bare.
+        assert!(
+            text.contains("could not validate the prerequisites for the repair start"),
+            "the {surface} must withhold the start with check's advisory:\n{text}"
+        );
+        assert!(
+            !text.contains("--phase before"),
+            "the {surface} must not offer the start without its commit:\n{text}"
+        );
+    }
+    Ok(())
+}
+
+/// #16477 review: limitation text built by the shared path listing (here the
+/// EOL-only churn disclosure) must also keep a line-break name on one line.
+#[cfg(unix)]
+#[test]
+fn a_line_break_name_in_a_listed_limitation_stays_on_one_check_line() -> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let name = "src/x\n```\necho forged\n.rs";
+    repo.write(name, "pub fn extra() -> u8 {\n    1\n}\n")?;
+    repo.git(&["add", "--", name])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "extra"])?;
+    repo.write(name, "pub fn extra() -> u8 {\r\n    1\r\n}\r\n")?;
+    let check = repo.ripr(&["check", "--root", "."])?;
+    assert!(
+        check
+            .lines()
+            .any(|line| line.contains("changed only in line endings")
+                && line.contains("src/x\\n```\\necho forged\\n.rs")),
+        "check must name the EOL-only file escaped on its limitation line:\n{check}"
+    );
+    assert!(
+        !check.lines().any(|line| line.trim() == "echo forged"),
+        "check must not show the name's tail as its own line:\n{check}"
+    );
+    Ok(())
+}
+
+/// #16477 review: the unanalyzed-language listing builds its own path list and
+/// must keep a line-break name on one line too.
+#[cfg(unix)]
+#[test]
+fn a_line_break_name_in_an_unanalyzed_language_listing_stays_on_one_check_line()
+-> Result<(), String> {
+    let repo = Repo::create_uncommitted(CONST_OLD, CONST_NEW, CONST_TEST)?;
+    let name = "src/y\n```\necho forged\n.go";
+    repo.write(name, "package y\n")?;
+    repo.git(&["add", "--", name])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "go"])?;
+    repo.write(name, "package y\n\nfunc Z() {}\n")?;
+    let check = repo.ripr(&["check", "--root", "."])?;
+    assert!(
+        check
+            .lines()
+            .any(|line| line.contains("src/y\\n```\\necho forged\\n.go")),
+        "check must name the unanalyzed Go file escaped on one line:\n{check}"
+    );
+    assert!(
+        !check.lines().any(|line| line.trim() == "echo forged"),
+        "check must not show the name's tail as its own line:\n{check}"
     );
     Ok(())
 }

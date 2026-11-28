@@ -1,0 +1,23 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/tests/typescript_push_argument_observation.rs::length_only_reports_the_missing_appended_value_for_both_frameworks",
+  "crates/ripr/tests/typescript_push_argument_observation.rs::unrelated_and_nondiscriminating_values_do_not_restore_credit",
+  "crates/ripr/tests/typescript_push_argument_observation.rs::discriminating_indexed_values_keep_credit_for_both_frameworks",
+  "crates/ripr/tests/typescript_push_argument_observation.rs::changed_cardinality_keeps_length_credit_for_both_frameworks",
+  "crates/ripr/tests/typescript_push_argument_observation.rs::framework_registration_identity_keeps_the_extension_bounded",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::push_argument_witness_requires_same_framework_imports",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::framework_extension_still_refuses_replaced_builtins",
+  "crates/ripr/src/analysis/language/typescript/tests/push_length_tests.rs::jest_extension_binds_the_actual_registration",
+]
+fixtures = ["fixtures/typescript_jest_push_argument_length"]
+code = ["crates/ripr/src/analysis/language/typescript/push_argument_guard.rs"]
+outputs = [
+  "fixtures/typescript_jest_push_argument_length/expected/check.json",
+  "fixtures/typescript_jest_push_argument_length/expected/human.txt",
+  "fixtures/typescript_jest_push_argument_length/expected/human-full.txt",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0108"
+fixtures = ["fixtures/typescript_jest_push_argument_length"]

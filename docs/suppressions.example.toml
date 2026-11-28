@@ -31,3 +31,21 @@ created_at = "2026-07-29"
 last_seen = "2026-07-29"
 review_by = "2026-10-31"
 expected_visibility = "suppressed_visible"
+
+# Prefer the owning function when the accepted exception should survive edits
+# to its expression (a finding_id hashes the expression and changes with it).
+# `path` is the exact root-relative file; `function` is the owner name as the
+# finding carries it (`retry_allowed`, `impl Retry::allowed`). `owner` stays the
+# human or team that owns the exception.
+[[suppressions]]
+kind = "exposure_gap"
+path = "src/retry.rs"
+function = "retry_allowed"
+owner = "team-retry"
+reason = "Retry policy is covered by the integration suite."
+expires = "2026-12-31"
+scope = "seam:retry::retry_allowed"
+created_at = "2026-07-29"
+last_seen = "2026-07-29"
+review_by = "2026-10-31"
+expected_visibility = "suppressed_visible"

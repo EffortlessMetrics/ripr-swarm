@@ -15,9 +15,9 @@ Start the focused-test repair for this seam.
 - Current evidence strength: `Static evidence found related test context, but the current check is weak because the discriminator is missing.`
 - Missing discriminator: amount == discount_threshold
 - Focused proof intent: assert_eq!(discounted_total(/* boundary input where amount == discount_threshold */), /* expected */)
-  (replace each /* ... */ comment with a real value from your test before using it)
+  (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now)
 - Repair start: `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`
-- After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.
+- After the test edit: run the after-phase command the before phase prints; it verifies movement and writes the receipt.
 - Analysis outcome for the receipt: `ripr check --root . --base main --mode draft --format json > target/ripr/workflow/analysis-outcome.json`
 - Manual verify without a repair attempt (needs before and after snapshots taken around the test edit): `ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json`
 - Manual receipt without a repair attempt (after the manual verify): `ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id 8f7fa8644fd12280 --json --out target/ripr/reports/agent-receipt.json`
@@ -41,7 +41,7 @@ Start the focused-test repair for this seam.
 
 `ripr agent repair --root . --seam-id 8f7fa8644fd12280 --phase before`
 
-After the test edit: run the `--attempt ... --phase after` command the before phase prints; it verifies movement and writes the receipt.
+After the test edit: run the after-phase command the before phase prints; it verifies movement and writes the receipt.
 
 ## Analysis Outcome For The Receipt
 

@@ -92,3 +92,51 @@ fn claims_route_outcomes(root: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #12462: the payload route reads `assert_ok!` only where the verified
+/// import is in scope. The control credits through the file-root import; the
+/// same test with the import in another function, or compiled out by
+/// `cfg(any())`, is refused.
+#[test]
+fn the_claims_payload_route_needs_the_import_in_scope() -> Result<(), String> {
+    let root = verified_claims_root()?;
+    let outcome = claims_import_scope_outcomes(&root);
+    let _ = std::fs::remove_dir_all(&root);
+    outcome
+}
+
+fn claims_import_scope_outcomes(root: &Path) -> Result<(), String> {
+    let body = |import: &str| {
+        format!(
+            "use demo::checked_div;\n{import}\n#[test]\nfn divides() {{\n    let q = assert_ok!(checked_div(17, 5));\n    assert_eq!(q, 3);\n}}\n"
+        )
+    };
+    let admitted = |tests: &str| {
+        admitted_under(
+            root,
+            OK_LIB,
+            "checked_div",
+            ProbeFamily::ReturnValue,
+            "Ok(a / b)",
+            tests,
+        )
+    };
+    assert_eq!(
+        admitted(&body("use claims::assert_ok;\n"))?,
+        vec!["assert_eq!(q, 3);".to_string()],
+        "control: the file-root import credits"
+    );
+    let other_fn = body("fn elsewhere() {\n    use claims::assert_ok;\n    let _ = 1;\n}\n");
+    assert_eq!(
+        admitted(&other_fn)?,
+        Vec::<String>::new(),
+        "import in another fn"
+    );
+    let compiled_out = body("#[cfg(any())]\nuse claims::assert_ok;\n");
+    assert_eq!(
+        admitted(&compiled_out)?,
+        Vec::<String>::new(),
+        "import under cfg(any())"
+    );
+    Ok(())
+}

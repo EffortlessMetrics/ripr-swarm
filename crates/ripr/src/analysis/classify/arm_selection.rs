@@ -146,7 +146,7 @@ pub(in crate::analysis) use witness::{
 };
 
 mod guard_entry;
-pub(in crate::analysis) use guard_entry::{GuardEntry, named_integer_bound};
+pub(in crate::analysis) use guard_entry::{GuardEntry, GuardEntryEvidence, named_integer_bound};
 
 /// RIPR-SPEC-0229 decision 6: an integer scrutinee computed from its
 /// parameter by one division or remainder by a positive integer literal
@@ -1222,6 +1222,44 @@ impl ArmSelector {
         Some(ObservedArmInputs { inputs, selection })
     }
 
+    /// Whether some direct owner call this module can read in a test body
+    /// selects this arm. Unlike `observed_inputs`, a mention it cannot read
+    /// on another line does not cancel the answer: such a use may select any
+    /// arm, so it never proves an arm unselected, but it cannot undo a call
+    /// whose input does select it (#15359 review). A mention that is neither
+    /// a call nor a plain value use may rebind the name
+    /// (`let price_cents = |s| 450;`), so then no call is credited.
+    pub(in crate::analysis) fn some_call_selects(&self, test: &TestSummary) -> bool {
+        let masked = mask_comments_and_strings(&test.body);
+        let mentions = whole_word_offsets(&masked, &self.owner);
+        if !mentions
+            .iter()
+            .all(|offset| is_call_or_plain_value_use(&masked, *offset, &self.owner))
+        {
+            return false;
+        }
+        line_starts_of(&test.body, &mentions)
+            .into_iter()
+            .any(|line_start| {
+                let line_end = test.body[line_start..]
+                    .find('\n')
+                    .map_or(test.body.len(), |offset| line_start + offset);
+                let line = &test.body[line_start..line_end];
+                let calls = owner_calls_in(line, &self.owner, self.method, &self.local_roots);
+                let line_mentions = mentions
+                    .iter()
+                    .filter(|offset| (line_start..line_end).contains(*offset))
+                    .count();
+                calls.len() == line_mentions
+                    && calls.iter().any(|call| {
+                        self.call_input(call).is_some_and(|input| {
+                            !self.input_import_ambiguous(test, input)
+                                && self.judge(input) == ArmSelection::Selects
+                        })
+                    })
+            })
+    }
+
     fn call_input<'a>(&self, call: &OwnerCall<'a>) -> Option<&'a str> {
         let input = match self.binding {
             ScrutineeBinding::Receiver => call.receiver,
@@ -1797,13 +1835,27 @@ pub(in crate::analysis) fn may_name_constant(source: &str, name: &str) -> bool {
 /// declares (#7543). `None` when the file may bind that name to anything
 /// else: it declares no such enum or more than one, declares another item
 /// of that name, imports the name, glob-imports a module (which may bring
-/// a same-named struct with constants), or calls an item macro (whose
-/// output is not read). So an uncased `Kind::A` stays unreadable unless the
-/// file itself shows `A` is a variant of `Kind`.
+/// a same-named struct with constants), calls an item macro (whose
+/// output is not read), or the owner function or an item in its body
+/// carries a non-builtin attribute or derive (whose expansion may declare
+/// a local `Kind`, #7692). So an uncased `Kind::A` stays unreadable unless
+/// the file itself shows `A` is a variant of `Kind`.
 fn declared_enum_variants(
     source: &str,
     type_name: &str,
     owner: &str,
+) -> Option<std::collections::BTreeSet<String>> {
+    declared_enum_variants_scoped(source, type_name, owner, true)
+}
+
+/// [`declared_enum_variants`], with the owner-attribute check (#7692) optional:
+/// an imported enum's module is not the owner's file, so a same-named
+/// attributed function there cannot expand at the owner's match.
+fn declared_enum_variants_scoped(
+    source: &str,
+    type_name: &str,
+    owner: &str,
+    owner_in_file: bool,
 ) -> Option<std::collections::BTreeSet<String>> {
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
     // Cheap text test before the parse: most owner files declare no enum
@@ -1857,6 +1909,7 @@ fn declared_enum_variants(
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
             || parent_glob_outside_this_file(&node)
             || may_shadow_in_owner_scope(&node, owner)
+            || (owner_in_file && owner_attr_may_emit_items(&node, owner, source))
         {
             return None;
         }
@@ -1937,10 +1990,11 @@ fn may_shadow_in_owner_scope(node: &ra_ap_syntax::SyntaxNode, owner: &str) -> bo
 /// module path the recorded `mod` edges place in exactly one workspace file
 /// (`use kinds::Kind;` after `mod kinds;`, `use crate::a::b::Kind;`,
 /// `use self::..`/`use super::..`), and that file declares the enum
-/// (`declared_enum_variants`). An owner item or item macro that may define
-/// `Kind`, an inline or `cfg`-duplicated module step, a `cfg`-gated import
-/// or step, a chain that does not start at a `src/` or `crates/<name>/src/`
-/// crate root, any workspace `#[path]`, a
+/// (`declared_enum_variants`). An owner item, item macro, or non-builtin
+/// attribute or derive on the owner function or an item in its body that
+/// may define `Kind` (#7692), an inline or `cfg`-duplicated module step, a
+/// `cfg`-gated import or step, a chain that does not start at a `src/` or
+/// `crates/<name>/src/` crate root, any workspace `#[path]`, a
 /// re-export, an external or package-named root, an `include!` edge, or any
 /// unresolved edge reads nothing, so `Kind::A` stays unreadable.
 fn imported_enum_variants(
@@ -1983,6 +2037,7 @@ fn imported_enum_variants(
             || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
             || may_shadow_in_owner_scope(&node, owner_name)
+            || owner_attr_may_emit_items(&node, owner_name, &owner.source)
         {
             return None;
         }
@@ -2177,7 +2232,112 @@ fn imported_enum_variants(
     if file == owner_file {
         return None;
     }
-    declared_enum_variants(&files.get(&file)?.source, type_name, owner_name)
+    declared_enum_variants_scoped(&files.get(&file)?.source, type_name, owner_name, false)
+}
+
+/// Compiler attributes that expand to no new items, matching the sibling-root
+/// check in [`may_expand_items`]. A derive is listed so its arguments can be
+/// judged separately.
+const BUILTIN_ATTRIBUTES: &[&str] = &[
+    "allow",
+    "cfg",
+    "cold",
+    "deny",
+    "deprecated",
+    "derive",
+    "doc",
+    "expect",
+    "forbid",
+    "ignore",
+    "inline",
+    "must_use",
+    "no_mangle",
+    "non_exhaustive",
+    "repr",
+    "should_panic",
+    "test",
+    "track_caller",
+    "warn",
+];
+
+/// Standard derivable traits. A custom derive may emit any item, including a
+/// local `struct Kind` with associated constants (#7692).
+const BUILTIN_DERIVES: &[&str] = &[
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "Eq",
+    "Hash",
+    "Ord",
+    "PartialEq",
+    "PartialOrd",
+];
+
+/// Whether `source` imports a glob or a name that may shadow a builtin
+/// attribute or derive (`use pm::Clone; #[derive(Clone)]`).
+fn imports_shadow_builtin_macros(source: &str) -> bool {
+    imports_may_shadow_builtins(source, false)
+}
+
+/// With `variant_globs_inert`, a glob of an enum's variants (`use Kind::*`)
+/// does not count: variants cannot name an attribute or derive macro.
+fn imports_may_shadow_builtins(source: &str, variant_globs_inert: bool) -> bool {
+    flattened_use_paths(source).iter().any(|import| {
+        let mut segments = import.path.rsplit("::");
+        let last = segments.next().unwrap_or_default();
+        let name = import.alias.as_deref().unwrap_or(last);
+        let name = name.strip_prefix("r#").unwrap_or(name);
+        if name == "*" && import.alias.is_none() {
+            return !(variant_globs_inert && segments.next().is_some_and(is_variant_name));
+        }
+        name == "*" || BUILTIN_ATTRIBUTES.contains(&name) || BUILTIN_DERIVES.contains(&name)
+    })
+}
+
+/// Whether `attr` is a proc-macro attribute or a custom derive: those may
+/// emit any item. `cfg_attr` is not a builtin here, because it may apply
+/// one. A path `name::rest` is never a compiler builtin.
+fn attribute_may_emit_items(attr: &ra_ap_syntax::ast::Attr) -> bool {
+    use ra_ap_syntax::AstNode;
+    let text = attr.syntax().text().to_string();
+    let inner = text
+        .trim_start_matches(|ch: char| ch == '#' || ch == '!' || ch == '[' || ch.is_whitespace());
+    let name_end = inner
+        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .unwrap_or(inner.len());
+    let (name, rest) = inner.split_at(name_end);
+    if !BUILTIN_ATTRIBUTES.contains(&name) || rest.trim_start().starts_with("::") {
+        return true;
+    }
+    name == "derive"
+        && rest
+            .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+            .filter(|word| !word.is_empty())
+            .any(|word| !BUILTIN_DERIVES.contains(&word))
+}
+
+/// Whether `node` is a non-builtin attribute or derive on the function
+/// `owner` or on an item in its body (#7692). An unread expansion may
+/// declare a local `struct Kind` with `const A`, which a pattern compares
+/// by value. Builtin attributes on a sibling function cannot reach the
+/// match, so they are not read. An import that shadows a builtin makes
+/// every such attribute unread.
+fn owner_attr_may_emit_items(node: &ra_ap_syntax::SyntaxNode, owner: &str, source: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let Some(attr) = ast::Attr::cast(node.clone()) else {
+        return false;
+    };
+    if !attribute_may_emit_items(&attr) && !imports_may_shadow_builtins(source, true) {
+        return false;
+    }
+    let owner = owner.strip_prefix("r#").unwrap_or(owner);
+    node.ancestors().filter_map(ast::Fn::cast).any(|function| {
+        function.name().is_some_and(|name| {
+            let text = name.text();
+            text.strip_prefix("r#").unwrap_or(text) == owner
+        })
+    })
 }
 
 /// Whether a file may hold items the index never reads: an item-level
@@ -2186,50 +2346,10 @@ fn imported_enum_variants(
 /// one), or an import that may shadow a builtin. An unparsable file may.
 fn may_expand_items(source: &str) -> bool {
     use ra_ap_syntax::{AstNode, ast};
-    const BUILTIN_ATTRIBUTES: &[&str] = &[
-        "allow",
-        "cfg",
-        "cold",
-        "deny",
-        "deprecated",
-        "derive",
-        "doc",
-        "expect",
-        "forbid",
-        "ignore",
-        "inline",
-        "must_use",
-        "no_mangle",
-        "non_exhaustive",
-        "repr",
-        "should_panic",
-        "test",
-        "track_caller",
-        "warn",
-    ];
-    const BUILTIN_DERIVES: &[&str] = &[
-        "Clone",
-        "Copy",
-        "Debug",
-        "Default",
-        "Eq",
-        "Hash",
-        "Ord",
-        "PartialEq",
-        "PartialOrd",
-    ];
     // A glob, or an import named like a builtin, may shadow the prelude's
     // attribute or derive (`use pm::Clone; #[derive(Clone)]`), and a
     // `cfg_attr` may apply any attribute, so neither is read as builtin.
-    let shadowed = flattened_use_paths(source).iter().any(|import| {
-        let name = import
-            .alias
-            .as_deref()
-            .unwrap_or_else(|| import.path.rsplit("::").next().unwrap_or_default());
-        let name = name.strip_prefix("r#").unwrap_or(name);
-        name == "*" || BUILTIN_ATTRIBUTES.contains(&name) || BUILTIN_DERIVES.contains(&name)
-    });
-    if shadowed {
+    if imports_shadow_builtin_macros(source) {
         return true;
     }
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
@@ -2241,25 +2361,7 @@ fn may_expand_items(source: &str) -> bool {
                 ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind())
             });
         }
-        let Some(attr) = ast::Attr::cast(node) else {
-            return false;
-        };
-        let text = attr.syntax().text().to_string();
-        let inner = text.trim_start_matches(|ch: char| {
-            ch == '#' || ch == '!' || ch == '[' || ch.is_whitespace()
-        });
-        let name_end = inner
-            .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-            .unwrap_or(inner.len());
-        let (name, rest) = inner.split_at(name_end);
-        if !BUILTIN_ATTRIBUTES.contains(&name) || rest.trim_start().starts_with("::") {
-            return true;
-        }
-        name == "derive"
-            && rest
-                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
-                .filter(|word| !word.is_empty())
-                .any(|word| !BUILTIN_DERIVES.contains(&word))
+        ast::Attr::cast(node).is_some_and(|attr| attribute_may_emit_items(&attr))
     })
 }
 
@@ -3308,6 +3410,54 @@ fn whole_word_offsets(text: &str, word: &str) -> Vec<usize> {
 }
 
 /// The distinct line starts of the lines holding `offsets`, in order.
+/// Whether the owner name at `offset` is a call (`name(`, `.name(`) or a
+/// plain value use: an operand right after `=`, `(`, `,`, `&` or `[` that
+/// ends at `;`, `)`, `,` or `]` and does not sit in a pattern. Anything else
+/// (a `let`/`fn`/`use` binding, a closure parameter, a tuple or variant
+/// pattern such as `let (price_cents, _) = ..`, a path segment) may rebind
+/// or shadow the name, so the reading cannot trust a call that follows it.
+fn is_call_or_plain_value_use(masked: &str, offset: usize, name: &str) -> bool {
+    let after = masked[offset + name.len()..].trim_start();
+    if after.starts_with('(') {
+        return true;
+    }
+    let before = masked[..offset].trim_end();
+    let value_position = before.ends_with(['(', ',', '&', '['])
+        || (before.ends_with('=')
+            && !["==", "!=", "<=", ">="]
+                .iter()
+                .any(|operator| before.ends_with(operator)));
+    value_position
+        && after.starts_with([';', ')', ',', ']'])
+        && !in_binding_pattern(masked, offset, offset + name.len())
+}
+
+/// Whether the word spanning `start..end` may sit in a binding pattern. The
+/// reading is deliberately coarse, since withholding credit is the safe
+/// direction: a single `|` since the previous `;` may open closure
+/// parameters, and a plain `=`, a `=>` or an ` in ` before the next `;`,
+/// at any brace depth, may end a `let`, `if let`, `match` arm or `for`
+/// pattern (`let (a, S { b }) = ..`, `S { a: (b, _), .. } => ..`).
+fn in_binding_pattern(masked: &str, start: usize, end: usize) -> bool {
+    let statement_start = masked[..start].rfind(';').map_or(0, |index| index + 1);
+    let prefix = &masked[statement_start..start];
+    if prefix.replace("||", "").contains('|') {
+        return true;
+    }
+    let rest = &masked[end..];
+    let rest = &rest[..rest.find(';').unwrap_or(rest.len())];
+    let bytes = rest.as_bytes();
+    let binds = bytes.iter().enumerate().any(|(index, byte)| {
+        *byte == b'='
+            && index
+                .checked_sub(1)
+                .and_then(|previous| bytes.get(previous))
+                .is_none_or(|previous| !matches!(previous, b'=' | b'!' | b'<' | b'>'))
+            && bytes.get(index + 1).is_none_or(|next| *next != b'=')
+    });
+    binds || rest.split_whitespace().any(|word| word == "in")
+}
+
 fn line_starts_of(text: &str, offsets: &[usize]) -> Vec<usize> {
     let mut starts = offsets
         .iter()
@@ -3330,14 +3480,14 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.to_string().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: crate::analysis::facts::FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -3345,6 +3495,7 @@ mod tests {
 
     fn arm_probe(expression: &str, line: usize) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:src_lib_rs:{line}:match_arm")),
             location: SourceLocation::new("src/lib.rs", line, 1),
             owner: Some(SymbolId("src/lib.rs::reason".to_string())),
@@ -3365,12 +3516,13 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.to_string().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 
@@ -3541,7 +3693,7 @@ mod tests {
             text: text.into(),
         };
         let mut test = test_with("fn t() {\n    check(0, 1);\n}\n");
-        test.calls = vec![call_fact()];
+        test.calls = vec![call_fact()].into();
         let selects = |test: &TestSummary| selector.loan_selects(test, assertion_text, &loan);
         assert!(
             selects(&test),
@@ -4018,6 +4170,59 @@ mod tests {
             judged(Some(&declared), "Other::A"),
             Some(ArmSelection::Unknown)
         );
+        Ok(())
+    }
+
+    /// #7692: an unread attribute or derive on the owner, or on an item in
+    /// its body, may declare a local `Kind` whose `A` is a constant.
+    #[test]
+    fn an_owner_attr_or_body_derive_that_may_declare_kind_is_unread() -> Result<(), String> {
+        let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(KIND, "f"))
+            .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
+        let judged = |source: &str| {
+            uncased_selection_of(&resolve_with(&selector, Some(source)), "f(Kind::A)")
+        };
+        let declared = format!("pub enum Kind {{\n    A,\n    B,\n}}\n{KIND}");
+        assert_eq!(judged(&declared), Some(ArmSelection::SelectsOther));
+        // Builtin attributes and standard derives expand to no item, so the
+        // uncased read stands; a sibling function's proc-macro attribute
+        // cannot reach the match.
+        for source in [
+            format!("pub enum Kind {{ A, B }}\n#[inline]\n{KIND}"),
+            format!("pub enum Kind {{ A, B }}\n#[must_use]\n{KIND}"),
+            format!("pub enum Kind {{ A, B }}\n#[shadowing_attr]\npub fn g() {{}}\n{KIND}"),
+        ] {
+            assert_eq!(
+                judged(&source),
+                Some(ArmSelection::SelectsOther),
+                "{source}"
+            );
+        }
+        let local_body = "pub fn f(k: Kind) -> i32 {\n    #[derive(Clone)]\n    struct Local;\n    match k {\n        Kind::A => 1,\n        _ => 0,\n    }\n}\n";
+        assert_eq!(
+            judged(&format!("pub enum Kind {{ A, B }}\n{local_body}")),
+            Some(ArmSelection::SelectsOther)
+        );
+        // A glob of the enum's own variants cannot name an attribute macro.
+        assert_eq!(
+            judged(&format!(
+                "pub enum Kind {{ A, B }}\nuse Kind::*;\n#[inline]\n{KIND}"
+            )),
+            Some(ArmSelection::SelectsOther)
+        );
+        // Each source below declares `enum Kind { A, B }` too, so the
+        // refusal is the unread expansion: `Kind::A` may be a constant.
+        for source in [
+            format!("pub enum Kind {{ A, B }}\n#[shadowing_attr]\n{KIND}"),
+            format!("pub enum Kind {{ A, B }}\n#[cfg_attr(all(), shadowing)]\n{KIND}"),
+            format!("use pm::inline;\npub enum Kind {{ A, B }}\n#[inline]\n{KIND}"),
+            format!(
+                "pub enum Kind {{ A, B }}\n{}",
+                local_body.replace("#[derive(Clone)]", "#[derive(Shadowing)]")
+            ),
+        ] {
+            assert_eq!(judged(&source), Some(ArmSelection::Unknown), "{source}");
+        }
         Ok(())
     }
 

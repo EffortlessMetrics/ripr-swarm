@@ -324,3 +324,86 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (25)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (26)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (27)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (28)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (29)
+
+Reason:
+RIPR-SPEC-0115: plain-words next step drops the internal analyzer route name (#15309)
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (30)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_transitive_reach_same_name_other_type (31)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_transitive_reach_same_name_other_type --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

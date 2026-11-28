@@ -5,10 +5,6 @@
 # with a reason; an entry whose row credits again fails `verdict-corpus check` until the entry is deleted (#10341).
 
 [[entry]]
-case = "py-bands-positional-band-outside"
-reason = "Measured row that abstains while its tests discriminate; accepted when main added it (migrated from the retired ceiling, #10222)."
-
-[[entry]]
 case = "py-hostile-dynamic-dispatch"
 reason = "Tests discriminate the change but ripr abstains; accepted baseline carried over from the retired missed_credit_ceiling line (#10222). Delete this file when the row credits."
 

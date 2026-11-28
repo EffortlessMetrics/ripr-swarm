@@ -6,8 +6,9 @@
 
 use crate::output::review_comments_receipt::{
     CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM, REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
-    REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY, ReviewCommentsReceiptLimitation,
-    ReviewCommentsRunReceipt,
+    REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY, REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM,
+    REVIEW_GUIDANCE_INDEX_RECOMPUTE_REPAIR_ROUTE, REVIEW_GUIDANCE_OVERSIZED_LIMITATION_CATEGORY,
+    ReviewCommentsReceiptLimitation, ReviewCommentsRunReceipt,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -19,6 +20,10 @@ use std::time::Duration;
 /// Mutable review-comments run receipt with lifecycle orchestration.
 pub(crate) struct ReviewCommentsReceiptRun {
     receipt: ReviewCommentsRunReceipt,
+    /// Shell-ready absolute `--root` for the timeout recovery command. The
+    /// receipt's `root_identity` is a normalized identity, not a replayable
+    /// argument, so the analyzed directory is kept separately.
+    recovery_root: String,
 }
 
 impl Deref for ReviewCommentsReceiptRun {
@@ -67,7 +72,11 @@ impl ReviewCommentsReceiptRun {
         let base_sha = resolve_revision(root, base, remaining(resolve_started.elapsed()));
         let head_sha = resolve_revision(root, head, remaining(resolve_started.elapsed()));
         let reusable_cache_identity = reusable_cache_identity(&root_identity, &base_sha, &head_sha);
+        let recovery_root = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.display().to_string()),
+        );
         Self {
+            recovery_root,
             receipt: ReviewCommentsRunReceipt {
                 schema_version: REVIEW_COMMENTS_RECEIPT_SCHEMA_VERSION,
                 status: "in_progress",
@@ -120,14 +129,43 @@ impl ReviewCommentsReceiptRun {
         self.receipt.missing_artifacts.clear();
     }
 
+    /// The repair route a timeout in `active_phase` records, shared by the
+    /// receipt limitation and the CLI error so the two cannot drift.
+    ///
+    /// A `canonical_analysis` timeout names the two routes that avoid paying
+    /// for the same phase again (#12940): `ripr check` on the same base, which
+    /// runs canonical analysis without the review-guidance second stage, and a
+    /// narrower diff. The check command pins the analyzed root (a member-scoped
+    /// run must not widen to the enclosing workspace) and `--committed` (a
+    /// dirty head checkout must not change the reviewed range). A larger
+    /// timeout stays listed last because the phase restarts from the
+    /// beginning ([`CANONICAL_ANALYSIS_NOT_RESUMABLE_NON_CLAIM`]).
+    /// No claim is made that `ripr check` finishes inside the same budget.
+    pub(crate) fn timeout_repair_route(&self, active_phase: &str) -> String {
+        if active_phase == "canonical_analysis" {
+            format!(
+                "run `ripr check --root {root} --base {base} --committed --json` at the head \
+                 checkout ({head}) for findings without review guidance, or narrow \
+                 --base/--head to a smaller diff; a larger --timeout-ms restarts \
+                 canonical_analysis from the beginning",
+                root = self.recovery_root,
+                base = crate::agent::loop_commands::shell_arg(&self.receipt.base_sha),
+                head = self.receipt.head_sha,
+            )
+        } else {
+            "rerun review-comments with a larger configured timeout".to_string()
+        }
+    }
+
     pub fn limited_timeout(&mut self, active_phase: &str) {
+        let repair_route = self.timeout_repair_route(active_phase);
         self.receipt.status = "limited_timeout";
         self.receipt.active_phase = Some(active_phase.to_string());
         self.receipt
             .limitations
             .push(ReviewCommentsReceiptLimitation {
                 category: "analysis_timeout".to_string(),
-                repair_route: "rerun review-comments with a larger configured timeout".to_string(),
+                repair_route,
             });
         self.terminalize_non_claims();
         if active_phase == "canonical_analysis" {
@@ -139,7 +177,7 @@ impl ReviewCommentsReceiptRun {
         }
     }
 
-    pub fn failed(&mut self, active_phase: &str, error: &str) {
+    pub fn failed(&mut self, active_phase: &str, category: &str, error: &str) {
         self.receipt.status = "failed";
         self.receipt.active_phase = Some(active_phase.to_string());
         let repair_route = if error.trim().is_empty() {
@@ -150,7 +188,7 @@ impl ReviewCommentsReceiptRun {
         self.receipt
             .limitations
             .push(ReviewCommentsReceiptLimitation {
-                category: "analysis_failed".to_string(),
+                category: category.to_string(),
                 repair_route,
             });
         self.terminalize_non_claims();
@@ -162,6 +200,27 @@ impl ReviewCommentsReceiptRun {
     /// The named limitation lets a consumer classify incomplete guidance. Status stays `failed` (the receipt
     /// vocabulary has no third terminal failure kind), and the limitation
     /// category carries the classification.
+    /// Records that guidance took the compatibility recompute route because no
+    /// valid prepared workspace handoff was available (#4692).
+    pub fn index_recompute_compatibility(&mut self, reason: &'static str) {
+        self.receipt
+            .limitations
+            .push(ReviewCommentsReceiptLimitation {
+                category: REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY.to_string(),
+                repair_route: format!("{REVIEW_GUIDANCE_INDEX_RECOMPUTE_REPAIR_ROUTE}: {reason}"),
+            });
+        if !self
+            .receipt
+            .non_claims
+            .iter()
+            .any(|claim| claim == REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM)
+        {
+            self.receipt
+                .non_claims
+                .push(REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM.to_string());
+        }
+    }
+
     pub fn oversized(&mut self, active_phase: &str, error: &str) {
         self.receipt.status = "failed";
         self.receipt.active_phase = Some(active_phase.to_string());
@@ -407,6 +466,25 @@ mod tests {
         receipt.limited_timeout("canonical_analysis");
         let value = serde_json::to_value(&*receipt).map_err(|err| err.to_string())?;
         assert_eq!(value["canonical_analysis_evaluated_seams"], 7);
+        // #12940: name `ripr check` on the recorded base and a narrower diff,
+        // not only a larger budget that restarts the same phase.
+        let route = value["limitations"][0]["repair_route"]
+            .as_str()
+            .ok_or("repair_route must be a string")?;
+        let root =
+            crate::agent::loop_commands::shell_arg(&crate::agent::loop_commands::bound_root(
+                &std::env::current_dir()
+                    .map_err(|err| err.to_string())?
+                    .display()
+                    .to_string(),
+            ));
+        let check_route = format!(
+            "run `ripr check --root {root} --base {} --committed --json` at the head checkout ({})",
+            receipt.base_sha, receipt.head_sha
+        );
+        assert!(route.starts_with(&check_route), "{route}");
+        assert!(route.contains("narrow --base/--head"), "{route}");
+        assert_eq!(route, receipt.timeout_repair_route("canonical_analysis"));
         let claims = value["non_claims"]
             .as_array()
             .ok_or("non_claims must be an array")?;
@@ -422,6 +500,10 @@ mod tests {
         earlier.phase("diff_discovery", "language_facts");
         earlier.limited_timeout("language_facts");
         let value = serde_json::to_value(&*earlier).map_err(|err| err.to_string())?;
+        assert_eq!(
+            value["limitations"][0]["repair_route"],
+            "rerun review-comments with a larger configured timeout"
+        );
         assert!(value.get("canonical_analysis_evaluated_seams").is_none());
         assert!(
             !earlier
@@ -433,7 +515,7 @@ mod tests {
         // A failure in the same phase is not a timeout.
         let mut failed = sample_receipt();
         failed.phase("language_facts", "canonical_analysis");
-        failed.failed("canonical_analysis", "read failed");
+        failed.failed("canonical_analysis", "analysis_failed", "read failed");
         assert!(
             !failed
                 .non_claims
@@ -600,7 +682,11 @@ mod tests {
 
         let failure_path = dir.join("failed.json");
         let mut failure = sample_receipt();
-        failure.failed("canonical_comparison", "canonical comparison failed");
+        failure.failed(
+            "canonical_comparison",
+            "analysis_failed",
+            "canonical comparison failed",
+        );
         assert_eq!(failure.status, "failed");
         assert_eq!(
             failure.active_phase.as_deref(),
@@ -846,6 +932,29 @@ mod tests {
             "receipt file should exist after write_atomic"
         );
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn index_recompute_compatibility_records_named_limitation() -> Result<(), String> {
+        let mut receipt = sample_receipt();
+        receipt.index_recompute_compatibility("test_reason");
+        assert!(
+            receipt
+                .limitations
+                .iter()
+                .any(|entry| entry.category == REVIEW_GUIDANCE_INDEX_RECOMPUTE_LIMITATION_CATEGORY),
+            "{:?}",
+            receipt.limitations
+        );
+        assert!(
+            receipt
+                .non_claims
+                .iter()
+                .any(|claim| claim == REVIEW_GUIDANCE_INDEX_RECOMPUTE_NON_CLAIM),
+            "{:?}",
+            receipt.non_claims
+        );
         Ok(())
     }
 }

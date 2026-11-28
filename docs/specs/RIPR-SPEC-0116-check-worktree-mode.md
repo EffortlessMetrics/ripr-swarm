@@ -62,11 +62,13 @@ head it analyzed.
   dirty tree reads the working tree. CI checkouts are clean, so CI runs keep
   the committed-history read unchanged.
 - **Submodule inclusion.** Both existing tracked-change status probes and
-  the shared diff byte owner pin `--ignore-submodules=none` (#8209). Git's
-  submodule ignore preferences cannot hide an unstaged pointer from default
-  source selection or doctor guidance, nor suppress the existing skipped-pointer
-  notice after a worktree or committed diff is loaded. Child contents remain
-  outside analysis.
+  the shared diff byte owner pin `--ignore-submodules=dirty` (#8209, #15101).
+  Git's submodule ignore preferences cannot hide an unstaged pointer from
+  default source selection or doctor guidance, nor suppress the existing
+  skipped-pointer notice after a worktree or committed diff is loaded. Git
+  does not examine a submodule's working tree, so uncommitted edits inside a
+  submodule neither select the worktree source nor appear as a pointer change.
+  Child contents remain outside analysis.
 - **`--committed`** forces the committed-history read on a dirty tree. It is
   rejected with `--worktree`, `--diff`, `--candidate-tree`, `--gap-ledger`,
   and repo-scope formats, none of which has a live diff source to choose.
@@ -85,6 +87,14 @@ head it analyzed.
   working-tree diff, and give the repair (`git add -N <path>` or stage them).
   The note never suggests `--worktree`, which is already in effect. An
   untracked test file is still read as test evidence on a working-tree run.
+  The disclosure leaves out an untracked file that neither the adapter's diff
+  loop nor its workspace walk would read even when tracked (an installed
+  `node_modules/` tree, a generated name, a configured excluded pattern):
+  `git add -N` cannot make it analyzable, so it does not count as unanalyzed
+  working-tree source and does not withhold the repair start. A path declared
+  in `handwritten_files` stays disclosed, and so does an untracked
+  TypeScript/JavaScript file under `docs/`, which is skipped as changed scope
+  but still indexed as test evidence.
 - **Empty working-tree read.** When a working-tree read finds no changed
   files, the no-scope note, safe next action and GitHub warning describe the
   working-tree read (the merge base of the base and `HEAD` to the working
@@ -106,6 +116,14 @@ head it analyzed.
   `git add -N <paths>` then `ripr check --worktree`, or pass `--diff PATH``
   line directly after `head:` (#11159). It is display-only and absent on a
   working-tree read and when no untracked routed file was left out.
+- **Gitignored routed files.** Gitignored routed files are excluded from
+  analysis and disclosed in the human and GitHub notes and the JSON
+  `ignored_working_tree_source_paths` list, with the `git add -f -N` repair.
+  Dependency and build-output trees are not disclosed (#13597): a path with a
+  `node_modules`, `.venv`, `venv`, `site-packages`, `bower_components` or
+  `vendor` component, or whose first component is `dist` or `build`, stays
+  excluded but is not listed, so the repair is never offered for vendored
+  code.
 - **LSP and library callers are unchanged.** The LSP already reads the
   working tree for every refresh (`check_workspace_worktree_*`), and the
   public `check_workspace*` library entry points keep their committed-history
@@ -114,6 +132,43 @@ head it analyzed.
 This supersedes the original non-goal "Changing default `ripr check`
 semantics" and the compatibility rule that `--base <rev>` without
 `--worktree` always reads committed history.
+
+## Amendment (shipped Git hook entries, #14337/#14348)
+
+The repository-root `.pre-commit-hooks.yaml` ships two advisory hook entries
+built on these input modes. Their contract is:
+
+- **`ripr` (stages `pre-commit`, `pre-merge-commit`, `manual`).** Runs
+  `ripr check --worktree --base HEAD --quiet` from the repository root, so it
+  analyzes the tracked change being committed against `HEAD`.
+- **`ripr-push` (stage `pre-push`).** Runs `ripr check --committed --quiet`,
+  so it analyzes the branch's committed history against the default base and
+  leaves staged and unstaged edits out. It is the branch against its base, not
+  the exact pushed ref range.
+- **Both** set `pass_filenames: false` (the entry chooses its own diff
+  source), exit 0 on findings (advisory), and keep `ripr progress` lines out
+  of the hook log through `--quiet`.
+
+The manifest test runs each entry through the built binary on a fixture
+branch that has one committed and one further staged boundary edit.
+
+## Amendment (first commit and oversized diffs, #15398)
+
+- **Unborn `HEAD`.** `ripr check --worktree --base HEAD` on a branch with no
+  commits yet diffs the staged and worktree content against the empty tree,
+  since that content is the change being committed. The exception is narrow:
+  only the literal base `HEAD`, only with `--worktree`, and only when Git
+  establishes the branch is unborn. Any other base, `--base HEAD` without
+  `--worktree`, a damaged or unreadable `HEAD`, and the default base keep the
+  original refusal (exit 2). No base or merge-base commit is reported.
+- **Oversized diffs.** A `diff_scope_oversized` refusal stays exit 2, because
+  ripr did not analyze the diff, and its message names `SKIP=ripr git commit
+  ...` and the hook `args:` for `--path`/`--exclude`.
+
+Tests: `commit_hook_entry_analyzes_the_first_commit_instead_of_refusing_an_unborn_head`,
+`unborn_head_keeps_other_bases_refused` and
+`oversized_first_commit_refusal_names_the_hook_bypass_and_scoping` in
+`crates/ripr/tests/pre_commit_hook_manifest.rs`.
 
 ## Problem
 
@@ -319,6 +374,10 @@ that untracked source was analyzed.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke.rs::check_gitignored_files_are_disclosed_not_silent`
+- `crates/ripr/src/analysis/committed_source/tests.rs::vendored_dependency_paths_are_not_user_sources`
+  - gitignored user sources are disclosed with the force intent-to-add
+  repair; gitignored dependency and build-output trees are not listed.
 - `crates/ripr/tests/hostile_repos.rs::submodule_ignore_settings_cannot_hide_pointer_changes`
 - `crates/ripr/tests/hostile_repos.rs::non_utf8_tracked_path_recovery_works_in_every_mode`
 - `crates/ripr/tests/hostile_repos.rs::non_utf8_untracked_path_recovery_is_a_filesystem_rename`
@@ -421,6 +480,10 @@ that untracked source was analyzed.
 - `crates/ripr/src/analysis/diff/load.rs::tests::uncommitted_change_detector_counts_tracked_edits_not_untracked_files`
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_name_ref_short_commits_and_the_head_source`
 - `crates/ripr/src/output/analyzed_revisions.rs::tests::labels_disclose_a_distinct_merge_base_and_unresolved_commits`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::manifest_lists_the_commit_and_push_hooks_on_separate_stages_without_filenames`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::commit_hook_entry_runs_quietly_and_sees_the_staged_change`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::push_hook_entry_runs_quietly_and_sees_the_committed_change`
+- `crates/ripr/tests/pre_commit_hook_manifest.rs::without_quiet_the_same_entry_writes_progress_lines`
 
 ## Implementation Mapping
 

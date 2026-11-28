@@ -98,10 +98,29 @@ what to do next (a flag to pass, a command to run, a file to create). The
 
 The cue is a clause that starts with an action (`pass ...`, `run ...`, `set
 ...`), or a named command, flag or `--help`. It proves the message offers
-something to do, not that it is the right thing. Existing messages without a
-cue are listed per source file in `policy/refusal-next-step.d/`; fixing one
-means deleting its line (`RIPR_PRUNE_REFUSAL_BASELINE=1` drops fixed lines and
-never adds any). Tracking: #11539.
+something to do, not that it is the right thing. Any new message without a cue
+fails; `crates/ripr/tests/cli_error_message_snapshots.rs` pins the exact text
+of the argument refusals.
+
+The scan reads all production code in a file: it skips each `#[cfg(test)]`
+item, and judges each message on the text inside its own call. Before #14163
+it stopped at the first `#[cfg(test)]` in a file and read on to the next `;`,
+so a test-only import near the top hid the rest of the file and a message in
+expression position could borrow the next statement's cue. The messages that
+became visible are listed in `policy/refusal-next-step.d/`, one fragment per
+source file. The list only shrinks: fixing a message means deleting its line,
+and a line whose message is fixed or gone fails the test until it is removed.
+Tracking: #11539, #13688, #14163.
+
+The one exception is a scanner-coverage fix, which may add rows once, in the
+same PR that widens the scan, and only for messages the scan could not see
+before. #16394 is such a fix. Before it, the scan stopped at the `{` of a
+block-bodied closure (`.map_err(|e| { format!(..) })`, the shape rustfmt uses
+for a long message), so those messages were never judged. That PR records the
+real gaps it newly sees. The same PR also stopped counting three shapes as
+missing a cue. A `\` line continuation is folded before the check. A next step
+passed as its own argument to fill a trailing `{}` counts. A step after
+`, then` counts. Ordinary changes still only shrink the list.
 
 ## Baseline ceilings
 

@@ -1,0 +1,1486 @@
+//! #12716: a pinned literal that tells neither version of the owner apart.
+//!
+//! An owner-return pin credits a test that compares the owner's call with a
+//! literal. A literal pinned to the value the owner returned before the diff
+//! discriminates the change: the test passes before and fails after. So does a
+//! literal pinned to the value it returns after. A literal that is neither,
+//! `assert_eq!(checked_div(17, 5), Ok(9))` against a tail that moved from
+//! `Ok(4)` to `Ok(3)`, fails on both versions and cannot notice the change.
+//!
+//! This module answers one question over a deliberately closed subset: does
+//! the owner, before and after the diff, run on the call's literal arguments,
+//! provably return something other than the pinned value? Anything it cannot
+//! evaluate, including a diff with no old line, answers "no evidence" and
+//! leaves today's reading untouched, so the actionability flip stays
+//! fail-closed and no shape it cannot judge gains a refusal.
+//!
+//! The subset:
+//! - the owner is `fn name(p: int, ..) -> .. { guards; tail }` where every
+//!   parameter is a plain `ident: <one integer type>`;
+//! - a guard is `if COND { return RET; }`, a `COND` being comparisons of
+//!   integer expressions joined by `&&` / `||`;
+//! - an integer expression is decimal literals and parameters joined by
+//!   `+ - * / %`, unary `-` and parentheses, checked in the parameter type;
+//! - `RET` and the tail are an integer expression, `Ok(expr)`, `Some(expr)`,
+//!   `Err(..)` or `None`.
+//!
+//! An overflow, a division by zero, a suffixed or non-decimal literal, a
+//! statement of any other kind, a name that is not a parameter and any call
+//! argument that is not a plain decimal literal make the answer "no evidence".
+//! The shared `value_transfer` evaluator is untyped and credit-only, so it
+//! cannot say that `u8` arithmetic overflowed; this one is typed.
+
+/// A value the closed subset can compute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Outcome {
+    Plain(i128),
+    Ok(i128),
+    Some(i128),
+    /// `Err(..)`: the payload is not evaluated.
+    Err,
+    None,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Token {
+    Ident(String),
+    Int(String),
+    Sym(&'static str),
+}
+
+const SYMBOLS: [&str; 20] = [
+    "==", "!=", "<=", ">=", "&&", "||", "(", ")", "{", "}", "<", ">", "+", "-", "*", "/", "%", ",",
+    ";", ":",
+];
+
+fn lex(text: &str) -> Option<Vec<Token>> {
+    let bytes = text.as_bytes();
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if byte.is_ascii_whitespace() {
+            at += 1;
+        } else if byte.is_ascii_alphabetic() || byte == b'_' {
+            let start = at;
+            while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                at += 1;
+            }
+            tokens.push(Token::Ident(text[start..at].to_string()));
+        } else if byte.is_ascii_digit() {
+            let start = at;
+            while at < bytes.len() && (bytes[at].is_ascii_digit() || bytes[at] == b'_') {
+                at += 1;
+            }
+            // A suffix (`3u8`), a radix prefix (`0x1`) or a float tail
+            // changes the type or the value this reader assumes.
+            if at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'.') {
+                return None;
+            }
+            let digits = &text[start..at];
+            if digits.contains('_') {
+                return None;
+            }
+            tokens.push(Token::Int(digits.to_string()));
+        } else {
+            let rest = &text[at..];
+            // `->` is the one two-byte symbol only the signature uses.
+            if rest.starts_with("->") {
+                tokens.push(Token::Sym("->"));
+                at += 2;
+                continue;
+            }
+            let symbol = SYMBOLS.iter().find(|symbol| rest.starts_with(**symbol))?;
+            tokens.push(Token::Sym(symbol));
+            at += symbol.len();
+        }
+    }
+    Some(tokens)
+}
+
+/// The inclusive range of a built-in integer type. `usize` / `isize` take the
+/// 32-bit range so a result beyond it, which another target could wrap, is not
+/// evaluated; `u128` stops at `i128::MAX` for the same reason.
+fn range_of(ty: &str) -> Option<(i128, i128)> {
+    Some(match ty {
+        "i8" => (i8::MIN.into(), i8::MAX.into()),
+        "i16" => (i16::MIN.into(), i16::MAX.into()),
+        "i32" | "isize" => (i32::MIN.into(), i32::MAX.into()),
+        "i64" => (i64::MIN.into(), i64::MAX.into()),
+        "i128" => (i128::MIN, i128::MAX),
+        "u8" => (0, u8::MAX.into()),
+        "u16" => (0, u16::MAX.into()),
+        "u32" | "usize" => (0, u32::MAX.into()),
+        "u64" => (0, u64::MAX.into()),
+        "u128" => (0, i128::MAX),
+        _ => return None,
+    })
+}
+
+#[derive(Clone, Debug)]
+enum Expr {
+    Literal(i128),
+    Param(usize),
+    Negate(Box<Expr>),
+    Binary(Box<Expr>, char, Box<Expr>),
+}
+
+#[derive(Clone, Debug)]
+enum Cond {
+    Compare(Expr, &'static str, Expr),
+    And(Box<Cond>, Box<Cond>),
+    Or(Box<Cond>, Box<Cond>),
+}
+
+#[derive(Clone, Debug)]
+enum Ret {
+    Plain(Expr),
+    Ok(Expr),
+    Some(Expr),
+    Err,
+    None,
+}
+
+/// The owner as the closed subset reads it.
+#[derive(Clone, Debug)]
+pub(super) struct ClosedOwner {
+    parameters: Vec<String>,
+    range: (i128, i128),
+    guards: Vec<(Cond, Ret)>,
+    tail: Ret,
+}
+
+struct Parser<'a> {
+    tokens: &'a [Token],
+    at: usize,
+    parameters: &'a [String],
+}
+
+impl<'a> Parser<'a> {
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.at)
+    }
+
+    fn eat_sym(&mut self, symbol: &str) -> bool {
+        if matches!(self.peek(), Some(Token::Sym(found)) if *found == symbol) {
+            self.at += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn eat_ident(&mut self, word: &str) -> bool {
+        if matches!(self.peek(), Some(Token::Ident(found)) if found == word) {
+            self.at += 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expr(&mut self) -> Option<Expr> {
+        let mut left = self.term()?;
+        loop {
+            let operator = if self.eat_sym("+") {
+                '+'
+            } else if self.eat_sym("-") {
+                '-'
+            } else {
+                return Some(left);
+            };
+            left = Expr::Binary(Box::new(left), operator, Box::new(self.term()?));
+        }
+    }
+
+    fn term(&mut self) -> Option<Expr> {
+        let mut left = self.unary()?;
+        loop {
+            let operator = if self.eat_sym("*") {
+                '*'
+            } else if self.eat_sym("/") {
+                '/'
+            } else if self.eat_sym("%") {
+                '%'
+            } else {
+                return Some(left);
+            };
+            left = Expr::Binary(Box::new(left), operator, Box::new(self.unary()?));
+        }
+    }
+
+    fn unary(&mut self) -> Option<Expr> {
+        if self.eat_sym("-") {
+            return Some(Expr::Negate(Box::new(self.unary()?)));
+        }
+        if self.eat_sym("(") {
+            let inner = self.expr()?;
+            return self.eat_sym(")").then_some(inner);
+        }
+        let token = self.peek()?.clone();
+        self.at += 1;
+        match token {
+            Token::Int(digits) => digits.parse().ok().map(Expr::Literal),
+            Token::Ident(name) => self
+                .parameters
+                .iter()
+                .position(|parameter| *parameter == name)
+                .map(Expr::Param),
+            Token::Sym(_) => None,
+        }
+    }
+
+    fn compare(&mut self) -> Option<Cond> {
+        let left = self.expr()?;
+        let operator = ["==", "!=", "<=", ">=", "<", ">"]
+            .into_iter()
+            .find(|operator| self.eat_sym(operator))?;
+        Some(Cond::Compare(left, operator, self.expr()?))
+    }
+
+    fn and(&mut self) -> Option<Cond> {
+        let mut left = self.compare()?;
+        while self.eat_sym("&&") {
+            left = Cond::And(Box::new(left), Box::new(self.compare()?));
+        }
+        Some(left)
+    }
+
+    fn cond(&mut self) -> Option<Cond> {
+        let mut left = self.and()?;
+        while self.eat_sym("||") {
+            left = Cond::Or(Box::new(left), Box::new(self.and()?));
+        }
+        Some(left)
+    }
+
+    /// The balanced `( .. )` that follows, skipped; every token in it was
+    /// lexed, so a string or a macro inside already refused the owner.
+    fn skip_group(&mut self) -> Option<()> {
+        if !self.eat_sym("(") {
+            return None;
+        }
+        let mut depth = 1usize;
+        while depth > 0 {
+            match self.peek()? {
+                Token::Sym("(") => depth += 1,
+                Token::Sym(")") => depth -= 1,
+                _ => {}
+            }
+            self.at += 1;
+        }
+        Some(())
+    }
+
+    fn ret(&mut self) -> Option<Ret> {
+        if self.eat_ident("Err") {
+            self.skip_group()?;
+            return Some(Ret::Err);
+        }
+        if self.eat_ident("None") {
+            return Some(Ret::None);
+        }
+        for wrapper in ["Ok", "Some"] {
+            if self.eat_ident(wrapper) {
+                if !self.eat_sym("(") {
+                    return None;
+                }
+                let payload = self.expr()?;
+                if !self.eat_sym(")") {
+                    return None;
+                }
+                return Some(if wrapper == "Ok" {
+                    Ret::Ok(payload)
+                } else {
+                    Ret::Some(payload)
+                });
+            }
+        }
+        self.expr().map(Ret::Plain)
+    }
+}
+
+impl ClosedOwner {
+    /// [`Self::read`] of an owner's current text, read once per run scope
+    /// (#11738). The owner-return pin reads the current owner for every
+    /// changed line it pins and every repo seam it audits, so a long owner
+    /// with many changed lines paid a mask and lex of its whole text each
+    /// time. The reading is a pure function of the text and the name, which
+    /// key the entry. A reconstructed pre-change text is new for every
+    /// changed line and is still read by [`Self::read`] directly.
+    pub(super) fn read_current(definition: &str, name: &str) -> Option<Self> {
+        crate::analysis::syntax::run_memo::memoize_with(
+            crate::analysis::syntax::run_memo::Product::ClosedOwnerRead,
+            0,
+            name,
+            definition,
+            || std::rc::Rc::new(Self::read(definition, name)),
+        )
+        .as_ref()
+        .clone()
+    }
+
+    /// Read `definition` (the owner's `fn` text) as the closed subset, or
+    /// `None` when any part of it is outside it.
+    pub(super) fn read(definition: &str, name: &str) -> Option<Self> {
+        #[cfg(test)]
+        CLOSED_OWNER_READS.with(|reads| reads.set(reads.get() + 1));
+        let masked = crate::analysis::extract::mask_comments_and_strings(definition);
+        // Attributes and visibility before `fn` are not part of the subset's
+        // concern: the reading starts at the `fn <name>` item itself.
+        let item = masked.find(&format!("fn {name}"))?;
+        let masked = &masked[item..];
+        let open = masked.find('{')?;
+        let close = masked.rfind('}')?;
+        // Mismatched braces (a `}` before the first `{`) leave no body to slice.
+        if close <= open {
+            return None;
+        }
+        let signature = lex(&masked[..open])?;
+        let fn_at = 0;
+        if signature.get(fn_at + 1) != Some(&Token::Ident(name.to_string()))
+            || signature.get(fn_at + 2) != Some(&Token::Sym("("))
+        {
+            return None;
+        }
+        let mut at = fn_at + 3;
+        let mut parameters = Vec::new();
+        let mut parameter_type: Option<String> = None;
+        while signature.get(at) != Some(&Token::Sym(")")) {
+            let (Some(Token::Ident(parameter)), Some(Token::Sym(":")), Some(Token::Ident(ty))) = (
+                signature.get(at),
+                signature.get(at + 1),
+                signature.get(at + 2),
+            ) else {
+                return None;
+            };
+            range_of(ty)?;
+            // Mixed integer types need casts, which the subset does not read.
+            if parameter_type.as_ref().is_some_and(|seen| seen != ty) || parameter == "self" {
+                return None;
+            }
+            parameter_type = Some(ty.clone());
+            parameters.push(parameter.clone());
+            at += 3;
+            match signature.get(at) {
+                Some(Token::Sym(",")) => at += 1,
+                Some(Token::Sym(")")) => {}
+                _ => return None,
+            }
+        }
+        let range = range_of(parameter_type.as_deref()?)?;
+        // Only `-> <type>` may follow the parameter list: no generics, no
+        // `where`, no lifetimes.
+        if signature.get(at + 1) != Some(&Token::Sym("->")) {
+            return None;
+        }
+        let body = lex(&masked[open + 1..close])?;
+        let mut parser = Parser {
+            tokens: &body,
+            at: 0,
+            parameters: &parameters,
+        };
+        let mut guards = Vec::new();
+        let mut tail = None;
+        while parser.eat_ident("if") {
+            let cond = parser.cond()?;
+            if !parser.eat_sym("{") {
+                return None;
+            }
+            if parser.eat_ident("return") {
+                let ret = parser.ret()?;
+                if !(parser.eat_sym(";") && parser.eat_sym("}")) {
+                    return None;
+                }
+                guards.push((cond, ret));
+                continue;
+            }
+            // #14387: a tail `if C { A } else if D { B } else { E }` runs as
+            // the guards `C -> A`, `D -> B` and the tail `E`: each branch
+            // block holds only its value, and the chain ends the body.
+            let ret = parser.ret()?;
+            if !(parser.eat_sym("}") && parser.eat_ident("else")) {
+                return None;
+            }
+            guards.push((cond, ret));
+            if parser.peek() == Some(&Token::Ident("if".to_string())) {
+                continue;
+            }
+            if !parser.eat_sym("{") {
+                return None;
+            }
+            let last = parser.ret()?;
+            if !parser.eat_sym("}") {
+                return None;
+            }
+            tail = Some(last);
+            break;
+        }
+        let tail = match tail {
+            Some(tail) => tail,
+            None => parser.ret()?,
+        };
+        (parser.at == body.len()).then_some(Self {
+            parameters,
+            range,
+            guards,
+            tail,
+        })
+    }
+
+    fn eval(&self, expr: &Expr, arguments: &[i128]) -> Option<i128> {
+        let (low, high) = self.range;
+        let value = match expr {
+            Expr::Literal(value) => *value,
+            Expr::Param(position) => *arguments.get(*position)?,
+            Expr::Negate(inner) => self.eval(inner, arguments)?.checked_neg()?,
+            Expr::Binary(left, operator, right) => {
+                let (left, right) = (self.eval(left, arguments)?, self.eval(right, arguments)?);
+                match operator {
+                    '+' => left.checked_add(right)?,
+                    '-' => left.checked_sub(right)?,
+                    '*' => left.checked_mul(right)?,
+                    '/' => left.checked_div(right)?,
+                    '%' => left.checked_rem(right)?,
+                    _ => return None,
+                }
+            }
+        };
+        (low..=high).contains(&value).then_some(value)
+    }
+
+    fn holds(&self, cond: &Cond, arguments: &[i128]) -> Option<bool> {
+        Some(match cond {
+            Cond::Compare(left, operator, right) => {
+                let (left, right) = (self.eval(left, arguments)?, self.eval(right, arguments)?);
+                match *operator {
+                    "==" => left == right,
+                    "!=" => left != right,
+                    "<=" => left <= right,
+                    ">=" => left >= right,
+                    "<" => left < right,
+                    ">" => left > right,
+                    _ => return None,
+                }
+            }
+            // Both sides are evaluated even when the first decides: a side
+            // the subset cannot read must not be skipped over.
+            Cond::And(left, right) => {
+                let (left, right) = (self.holds(left, arguments)?, self.holds(right, arguments)?);
+                left && right
+            }
+            Cond::Or(left, right) => {
+                let (left, right) = (self.holds(left, arguments)?, self.holds(right, arguments)?);
+                left || right
+            }
+        })
+    }
+
+    fn outcome(&self, ret: &Ret, arguments: &[i128]) -> Option<Outcome> {
+        Some(match ret {
+            Ret::Plain(expr) => Outcome::Plain(self.eval(expr, arguments)?),
+            Ret::Ok(expr) => Outcome::Ok(self.eval(expr, arguments)?),
+            Ret::Some(expr) => Outcome::Some(self.eval(expr, arguments)?),
+            Ret::Err => Outcome::Err,
+            Ret::None => Outcome::None,
+        })
+    }
+
+    fn run(&self, arguments: &[i128]) -> Option<Outcome> {
+        if arguments.len() != self.parameters.len()
+            || arguments
+                .iter()
+                .any(|argument| !(self.range.0..=self.range.1).contains(argument))
+        {
+            return None;
+        }
+        for (cond, ret) in &self.guards {
+            if self.holds(cond, arguments)? {
+                return self.outcome(ret, arguments);
+            }
+        }
+        self.outcome(&self.tail, arguments)
+    }
+
+    /// Whether the owner, called as `call` (`name(17, 5)`), provably returns
+    /// something other than the pinned `expected` (`Ok(4)`). `false` is "no
+    /// evidence": the call or the expected value is outside the subset, or
+    /// they agree.
+    pub(super) fn provably_differs(&self, name: &str, call: &str, expected: &str) -> bool {
+        let Some(arguments) = call_arguments(call, name) else {
+            return false;
+        };
+        let (Some(returned), Some(pinned)) = (self.run(&arguments), literal_outcome(expected))
+        else {
+            return false;
+        };
+        match (returned, pinned) {
+            (Outcome::Ok(a), Outcome::Ok(b))
+            | (Outcome::Some(a), Outcome::Some(b))
+            | (Outcome::Plain(a), Outcome::Plain(b)) => a != b,
+            // The owner's own exit is the other variant of the pinned one.
+            (Outcome::Err | Outcome::None, Outcome::Ok(_) | Outcome::Some(_)) => true,
+            (Outcome::Ok(_), Outcome::Some(_))
+            | (Outcome::Some(_), Outcome::Ok(_))
+            | (Outcome::Plain(_), _)
+            | (_, Outcome::Plain(_)) => false,
+            // The payload of an `Err(..)` is not evaluated, and a variant the
+            // owner returns matches a pin on that variant.
+            (Outcome::Err | Outcome::None, Outcome::Err | Outcome::None)
+            | (Outcome::Ok(_) | Outcome::Some(_), Outcome::Err | Outcome::None) => false,
+        }
+    }
+}
+
+/// The owner before and after the diff's changed line.
+#[derive(Clone, Debug)]
+pub(super) struct ClosedChange {
+    after: ClosedOwner,
+    before: ClosedOwner,
+}
+
+impl ClosedChange {
+    /// Both versions of `definition`, the second with line `changed_line`
+    /// (0-based within the definition) replaced by the diff's old text.
+    pub(super) fn read(
+        definition: &str,
+        name: &str,
+        changed_line: usize,
+        before: &str,
+    ) -> Option<Self> {
+        // One old line replaces one physical line; a multi-line old text could
+        // build an owner unrelated to the real one.
+        if before.trim().is_empty() || before.contains('\n') {
+            return None;
+        }
+        let mut lines: Vec<&str> = definition.lines().collect();
+        *lines.get_mut(changed_line)? = before.trim_end();
+        Some(Self {
+            after: ClosedOwner::read_current(definition, name)?,
+            before: ClosedOwner::read(&lines.join("\n"), name)?,
+        })
+    }
+
+    /// #12394 item 5: the two versions of one struct field's initializer,
+    /// each read as a scalar owner over the same integer parameters, so a
+    /// pinned value for `field` that neither version computes for `call` is
+    /// provably unpinned. `field_ty` is the field's declared integer type; the
+    /// parameters must have the same range, since the subset checks arithmetic
+    /// in one type. The initializer is the text after `field:` on the changed
+    /// line (`before` for the old version); anything outside the closed subset
+    /// answers `None` and keeps today's reading.
+    pub(super) fn read_field(
+        definition: &str,
+        name: &str,
+        changed_line: usize,
+        before: &str,
+        field: &str,
+        field_ty: &str,
+    ) -> Option<Self> {
+        if before.trim().is_empty() || before.contains('\n') {
+            return None;
+        }
+        let after_line = definition.lines().nth(changed_line)?;
+        Some(Self {
+            after: scalar_field_owner(
+                definition,
+                name,
+                changed_line,
+                after_line,
+                true,
+                field,
+                field_ty,
+            )?,
+            before: scalar_field_owner(
+                definition,
+                name,
+                changed_line,
+                before,
+                false,
+                field,
+                field_ty,
+            )?,
+        })
+    }
+
+    /// #12808: both versions of a one-field integer tuple struct owner whose
+    /// changed tail is `T(e)` / `Self(e)`, lowered to the scalar subset: every
+    /// `T`-typed parameter (and `self`) becomes the field's integer, `p.0`
+    /// becomes `p`, and the constructor wrapper is dropped. Anything else in
+    /// the owner stays outside the subset and answers `None`.
+    pub(super) fn read_tuple(
+        definition: &str,
+        name: &str,
+        changed_line: usize,
+        before: &str,
+        tuple: &TupleOwner<'_>,
+    ) -> Option<Self> {
+        if before.trim().is_empty() || before.contains('\n') {
+            return None;
+        }
+        let mut lines: Vec<&str> = definition.lines().collect();
+        *lines.get_mut(changed_line)? = before.trim_end();
+        Some(Self {
+            after: ClosedOwner::read(&lower_tuple_owner(definition, name, tuple)?, name)?,
+            before: ClosedOwner::read(&lower_tuple_owner(&lines.join("\n"), name, tuple)?, name)?,
+        })
+    }
+
+    /// Whether the two versions return different values for some small
+    /// operand vector, so the change is a real behavior change a test could
+    /// notice with other operands, not a rewrite equal on every input
+    /// (`a + b` to `b + a`), which the corpus labels credited.
+    pub(super) fn versions_differ_somewhere(&self) -> bool {
+        const PROBES: [i128; 5] = [1, 2, 3, 5, -2];
+        let arity = self.after.parameters.len();
+        if arity == 0 || arity > 3 || self.before.parameters.len() != arity {
+            return false;
+        }
+        let total = PROBES.len().pow(arity as u32);
+        (0..total).any(|mut code| {
+            let arguments: Vec<i128> = (0..arity)
+                .map(|_| {
+                    let value = PROBES[code % PROBES.len()];
+                    code /= PROBES.len();
+                    value
+                })
+                .collect();
+            matches!(
+                (self.after.run(&arguments), self.before.run(&arguments)),
+                (Some(after), Some(before)) if after != before
+            )
+        })
+    }
+
+    /// Whether both versions provably return the same value for `call` (the
+    /// lowered `name(0, 0)`): a test cannot tell them apart whatever it pins.
+    pub(super) fn versions_agree(&self, name: &str, call: &str) -> bool {
+        let Some(arguments) = call_arguments(call, name) else {
+            return false;
+        };
+        matches!(
+            (self.after.run(&arguments), self.before.run(&arguments)),
+            (Some(after), Some(before)) if after == before
+        )
+    }
+
+    /// The owner as it stands, standing in for both versions when there is no
+    /// diff (the repo-wide audit, #12394 item 3): a literal the current owner
+    /// provably does not return is unpinned.
+    pub(super) fn current(definition: &str, name: &str) -> Option<Self> {
+        let owner = ClosedOwner::read_current(definition, name)?;
+        Some(Self {
+            before: owner.clone(),
+            after: owner,
+        })
+    }
+
+    /// #14387: whether an exact pin of `expected` on `call` provably tells the
+    /// two versions apart: both run on the call's literal arguments, they
+    /// return different values, and `expected` is one of the two, so the pin
+    /// passes on one version and fails on the other. `false` is "no
+    /// evidence": an argument or the pinned value outside the subset, an
+    /// unevaluated `Err(..)` payload, or versions that agree.
+    pub(super) fn pin_discriminates(&self, name: &str, call: &str, expected: &str) -> bool {
+        let Some(arguments) = call_arguments(call, name) else {
+            return false;
+        };
+        let (Some(after), Some(before), Some(pinned)) = (
+            self.after.run(&arguments),
+            self.before.run(&arguments),
+            literal_outcome(expected),
+        ) else {
+            return false;
+        };
+        // An `Err(..)` payload is not evaluated, so two `Err` exits may still
+        // differ, and an `Err` pin cannot be matched to either one.
+        if [after, before, pinned].contains(&Outcome::Err) {
+            return false;
+        }
+        after != before && (pinned == after || pinned == before)
+    }
+
+    /// Whether `expected` is a value neither version provably returns for
+    /// `call`. `false` is "no evidence", or a version agrees with the pin.
+    pub(super) fn provably_unpinned(&self, name: &str, call: &str, expected: &str) -> bool {
+        self.after.provably_differs(name, call, expected)
+            && self.before.provably_differs(name, call, expected)
+    }
+}
+
+/// The owner `fn name(<its parameters>) -> field_ty { <initializer of field on
+/// line> }`: the struct field read as the scalar the subset evaluates. The
+/// straight-line `let name = expr;` bindings before the changed line are
+/// substituted into the initializer, so `let n = n + 1;` above
+/// `retries: n + 1` reads as `(n + 1) + 1`. Any other statement before the
+/// changed line (a guard, a mutation, a typed or `mut` binding) leaves the
+/// owner unread, since the initializer would then name a value this reader
+/// does not know.
+fn scalar_field_owner(
+    definition: &str,
+    name: &str,
+    changed_line: usize,
+    line: &str,
+    source_line: bool,
+    field: &str,
+    field_ty: &str,
+) -> Option<ClosedOwner> {
+    let range = range_of(field_ty)?;
+    // The diff's removed side arrives as the probe's own text with the trailing
+    // comma already stripped (`retries: n + 2`), so only a source line is held
+    // to carrying its own terminator. A removed line that was itself wrapped
+    // cannot be told from that fragment; the source line still has to be
+    // terminated, so a wrapped initializer on the new side is never read.
+    let mut initializer = field_initializer(line, field, !source_line)?;
+    let masked = crate::analysis::extract::mask_comments_and_strings(definition);
+    let item = masked.find(&format!("fn {name}"))?;
+    let signature_end = masked[item..].find(')')? + item;
+    let lines: Vec<&str> = masked.lines().collect();
+    let signature_line = masked[..item].matches('\n').count();
+    let open_line = (signature_line..lines.len()).find(|at| lines[*at].contains('{'))?;
+    // Statements are scanned from the line after the opening brace, so anything
+    // sharing that line (`{ let n = n + 1;`) would be skipped and the field read
+    // from the unrebound parameter. Such an owner is not read.
+    if !lines[open_line].trim_end().ends_with('{') {
+        return None;
+    }
+    let mut bindings: Vec<(String, String)> = Vec::new();
+    let mut in_literal = false;
+    for text in lines.get(open_line + 1..changed_line).unwrap_or_default() {
+        let text = text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if !in_literal && let Some(binding) = text.strip_prefix("let ") {
+            let (bound, expr) = binding.split_once('=')?;
+            let (bound, expr) = (bound.trim(), expr.trim().strip_suffix(';')?.trim());
+            if !is_identifier(bound) || expr.is_empty() || expr.contains(['=', '{', ';']) {
+                return None;
+            }
+            let expr = substitute(expr, &bindings);
+            bindings.retain(|(known, _)| known != bound);
+            bindings.push((bound.to_string(), expr));
+            continue;
+        }
+        // The first other line must open the literal the changed line is in;
+        // the lines after it are field initializers and may bind nothing.
+        if !in_literal {
+            let keyword = text.split_whitespace().next().unwrap_or("");
+            if !text.contains('{')
+                || matches!(
+                    keyword,
+                    "if" | "match" | "while" | "for" | "loop" | "unsafe" | "return" | "fn"
+                )
+            {
+                return None;
+            }
+            in_literal = true;
+        }
+        let assigns = text
+            .replace("==", "")
+            .replace("!=", "")
+            .replace("<=", "")
+            .replace(">=", "")
+            .contains('=');
+        if text.contains("let ") || assigns {
+            return None;
+        }
+    }
+    initializer = substitute(&initializer, &bindings);
+    let source = format!(
+        "{} ) -> {field_ty} {{ {initializer} }}",
+        masked[item..signature_end].trim_end()
+    );
+    let owner = ClosedOwner::read(&source, name)?;
+    (owner.range == range && owner.guards.is_empty() && matches!(owner.tail, Ret::Plain(_)))
+        .then_some(owner)
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// `text` with each identifier a binding names replaced, once and in one pass,
+/// by that binding's parenthesized expression.
+fn substitute(text: &str, bindings: &[(String, String)]) -> String {
+    let mut out = String::new();
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at].is_ascii_alphabetic() || bytes[at] == b'_' {
+            let start = at;
+            while at < bytes.len() && (bytes[at].is_ascii_alphanumeric() || bytes[at] == b'_') {
+                at += 1;
+            }
+            let word = &text[start..at];
+            match bindings.iter().find(|(known, _)| known == word) {
+                Some((_, expr)) => {
+                    out.push('(');
+                    out.push_str(expr);
+                    out.push(')');
+                }
+                None => out.push_str(word),
+            }
+        } else {
+            out.push(bytes[at] as char);
+            at += 1;
+        }
+    }
+    out
+}
+
+/// The text of `field`'s initializer on `line`: after `field:` up to the
+/// top-level `,` or the bracket that closes the literal. A line with a string,
+/// a char, a comment or a second mention of the field is not read.
+fn field_initializer(line: &str, field: &str, may_end_unterminated: bool) -> Option<String> {
+    if line.contains(['"', '\'']) || line.contains("//") || line.contains("/*") {
+        return None;
+    }
+    let bytes = line.as_bytes();
+    let mut found = None;
+    let mut from = 0;
+    while let Some(offset) = line[from..].find(field) {
+        let start = from + offset;
+        let end = start + field.len();
+        from = end;
+        let before_ok =
+            start == 0 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
+        let rest = line[end..].trim_start();
+        if before_ok && rest.starts_with(':') && !rest.starts_with("::") {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(&rest[1..]);
+        }
+    }
+    let rest = found?;
+    let mut depth = 0usize;
+    // The initializer must end on this line. Reaching the end of the line
+    // without a top-level `,` or closing bracket means the expression may
+    // continue on the next line (rustfmt wraps `retries: n` / `+ 1,`), and a
+    // truncated initializer would be judged as the whole one.
+    let mut stop = None;
+    for (at, byte) in rest.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth == 0 => {
+                stop = Some(at);
+                break;
+            }
+            b')' | b']' | b'}' => depth -= 1,
+            b',' if depth == 0 => {
+                stop = Some(at);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let text = match stop {
+        Some(stop) => &rest[..stop],
+        None if may_end_unterminated => rest,
+        None => return None,
+    }
+    .trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// `name(17, 5)` (optionally with a trailing comma and line breaks) as
+/// integer arguments. Anything else, a method receiver, a path, a name or an
+/// expression argument included, is not read.
+fn call_arguments(call: &str, name: &str) -> Option<Vec<i128>> {
+    let tokens = lex(call)?;
+    let mut tokens = tokens.iter().peekable();
+    if tokens.next()? != &Token::Ident(name.to_string()) || tokens.next()? != &Token::Sym("(") {
+        return None;
+    }
+    let mut arguments = Vec::new();
+    loop {
+        match tokens.next()? {
+            Token::Sym(")") => break,
+            Token::Sym("-") => match tokens.next()? {
+                Token::Int(digits) => arguments.push(-digits.parse::<i128>().ok()?),
+                _ => return None,
+            },
+            Token::Int(digits) => arguments.push(digits.parse().ok()?),
+            _ => return None,
+        }
+        match tokens.next()? {
+            Token::Sym(",") => {}
+            Token::Sym(")") => break,
+            _ => return None,
+        }
+    }
+    tokens.next().is_none().then_some(arguments)
+}
+
+/// The pinned value as a literal: `4`, `-4`, `Ok(4)`, `Some(4)`, `Err(..)`
+/// or `None`. An `Err(..)` pin is read without its payload.
+fn literal_outcome(expected: &str) -> Option<Outcome> {
+    let tokens = lex(expected)?;
+    let signed = |tokens: &[Token]| -> Option<i128> {
+        match tokens {
+            [Token::Int(digits)] => digits.parse().ok(),
+            [Token::Sym("-"), Token::Int(digits)] => digits.parse::<i128>().ok().map(|n| -n),
+            _ => None,
+        }
+    };
+    match tokens.as_slice() {
+        [Token::Ident(word)] if word == "None" => Some(Outcome::None),
+        [
+            Token::Ident(word),
+            Token::Sym("("),
+            inner @ ..,
+            Token::Sym(")"),
+        ] => match word.as_str() {
+            "Ok" => signed(inner).map(Outcome::Ok),
+            "Some" => signed(inner).map(Outcome::Some),
+            "Err" => Some(Outcome::Err),
+            _ => None,
+        },
+        other => signed(other).map(Outcome::Plain),
+    }
+}
+
+/// The tuple struct an owner is lowered over (#12808).
+pub(super) struct TupleOwner<'a> {
+    /// The struct's name, as the owner's tail and parameters spell it.
+    pub(super) type_name: &'a str,
+    /// The field's built-in integer type.
+    pub(super) inner: &'a str,
+    /// Whether `Self` and a bare `self` receiver name `type_name`.
+    pub(super) self_is_type: bool,
+}
+
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// `text` with each `word` followed by `suffix` (and not part of a longer
+/// path or identifier) replaced by `replacement`.
+fn replace_word(text: &str, word: &str, suffix: &str, replacement: &str) -> String {
+    let needle = format!("{word}{suffix}");
+    let bytes = text.as_bytes();
+    let mut out = String::new();
+    let mut from = 0;
+    while let Some(offset) = text[from..].find(&needle) {
+        let start = from + offset;
+        let end = start + needle.len();
+        let before_ok = start == 0
+            || !(is_word_byte(bytes[start - 1]) || matches!(bytes[start - 1], b'.' | b':'));
+        let after_ok = suffix.ends_with('(') || end >= bytes.len() || !is_word_byte(bytes[end]);
+        out.push_str(&text[from..start]);
+        out.push_str(if before_ok && after_ok {
+            replacement
+        } else {
+            &needle
+        });
+        from = end;
+    }
+    out.push_str(&text[from..]);
+    out
+}
+
+/// The owner as `fn name(p: int, ..) -> int { <body> }`.
+fn lower_tuple_owner(definition: &str, name: &str, tuple: &TupleOwner<'_>) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(definition);
+    let item = masked.find(&format!("fn {name}"))?;
+    let masked = &masked[item..];
+    let open = masked.find('{')?;
+    let close = masked.rfind('}')?;
+    if close <= open {
+        return None;
+    }
+    let signature = &masked[..open];
+    let params_open = signature.find('(')?;
+    let params_close = signature.rfind(')')?;
+    if params_close < params_open || signature[..params_open].trim() != format!("fn {name}") {
+        return None;
+    }
+    let returned = signature[params_close + 1..]
+        .trim()
+        .strip_prefix("->")?
+        .trim();
+    let names_type = |ty: &str| ty == tuple.type_name || (tuple.self_is_type && ty == "Self");
+    if !names_type(returned) {
+        return None;
+    }
+    let mut body = masked[open + 1..close].to_string();
+    let mut lowered = Vec::new();
+    let mut lowered_names: Vec<&str> = Vec::new();
+    for parameter in signature[params_open + 1..params_close].split(',') {
+        let parameter = parameter.trim();
+        if parameter.is_empty() {
+            continue;
+        }
+        let (parameter_name, replacement) = if parameter == "self" {
+            if !tuple.self_is_type {
+                return None;
+            }
+            ("self", "self_")
+        } else {
+            let (parameter_name, ty) = parameter.split_once(':')?;
+            let parameter_name = parameter_name.trim();
+            if !names_type(ty.trim())
+                || parameter_name.is_empty()
+                || !parameter_name.bytes().all(is_word_byte)
+            {
+                return None;
+            }
+            (parameter_name, parameter_name)
+        };
+        body = replace_word(&body, parameter_name, ".0", replacement);
+        // `self` lowers to `self_`: a parameter already named `self_`, or a
+        // repeated name, would alias two operands.
+        if parameter_name == "self_" || lowered_names.contains(&replacement) {
+            return None;
+        }
+        lowered_names.push(replacement);
+        lowered.push(format!("{replacement}: {}", tuple.inner));
+    }
+    body = replace_word(&body, "Self", "(", "(");
+    body = replace_word(&body, tuple.type_name, "(", "(");
+    Some(format!(
+        "fn {name}({}) -> {} {{{body}}}",
+        lowered.join(", "),
+        tuple.inner
+    ))
+}
+
+/// The call `Money(0).add(Money(1))` or `plus(Money(0), Money(1))` of owner
+/// `name` as the scalar call `name(0, 1)`, when every operand is a literal
+/// `type_name(<literal>)`.
+pub(super) fn lower_tuple_call(call: &str, name: &str, type_name: &str) -> Option<String> {
+    let call = call.trim();
+    let masked = crate::analysis::extract::mask_comments_and_strings(call);
+    let literal = |operand: &str| -> Option<String> {
+        let rest = operand.trim().strip_prefix(type_name)?.trim_start();
+        let inner = rest.strip_prefix('(')?.strip_suffix(')')?;
+        Some(inner.trim().to_string())
+    };
+    let split = |text: &str| -> Vec<String> {
+        let mut items = Vec::new();
+        let (mut depth, mut start) = (0usize, 0usize);
+        for (at, byte) in text.bytes().enumerate() {
+            match byte {
+                b'(' => depth += 1,
+                b')' => depth = depth.saturating_sub(1),
+                b',' if depth == 0 => {
+                    items.push(text[start..at].to_string());
+                    start = at + 1;
+                }
+                _ => {}
+            }
+        }
+        if !text[start..].trim().is_empty() {
+            items.push(text[start..].to_string());
+        }
+        items
+    };
+    let mut operands = Vec::new();
+    let arguments = if let Some(rest) = masked.strip_prefix(&format!("{name}(")) {
+        rest.strip_suffix(')')?
+    } else {
+        let marker = format!(".{name}(");
+        let at = masked.find(&marker)?;
+        if masked[at + 1..].contains(&marker) {
+            return None;
+        }
+        operands.push(literal(&masked[..at])?);
+        masked[at + marker.len()..].strip_suffix(')')?
+    };
+    for operand in split(arguments) {
+        operands.push(literal(&operand)?);
+    }
+    Some(format!("{name}({})", operands.join(", ")))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many owner texts this thread has read as the closed subset.
+    static CLOSED_OWNER_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod read_current_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DIV: &str = "pub fn checked_div(a: u32, b: u32) -> Result<u32, ()> {\n    if b == 0 {\n        return Err(());\n    }\n    Ok(a / b)\n}\n";
+
+    fn differs(definition: &str, name: &str, call: &str, expected: &str) -> bool {
+        ClosedOwner::read(definition, name)
+            .is_some_and(|owner| owner.provably_differs(name, call, expected))
+    }
+
+    const CONFIG: &str =
+        "pub fn config(n: u32) -> Result<Config, ()> {\n    Ok(Config { retries: n + 1 })\n}\n";
+
+    fn field_change(before: &str, ty: &str) -> Option<ClosedChange> {
+        ClosedChange::read_field(CONFIG, "config", 1, before, "retries", ty)
+    }
+
+    /// #12394 item 5: a struct field's initializer is read as a scalar owner.
+    #[test]
+    fn a_field_initializer_is_unpinned_only_when_neither_version_computes_it() {
+        let change = field_change("    Ok(Config { retries: n + 2 })", "u32");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        assert!(change.provably_unpinned("config", "config(2)", "9"));
+        // The new value (3) and the old value (4) each tell the versions apart.
+        assert!(!change.provably_unpinned("config", "config(2)", "3"));
+        assert!(!change.provably_unpinned("config", "config(2)", "4"));
+        // A call outside the subset, or a non-decimal pin, is no evidence.
+        assert!(!change.provably_unpinned("config", "config(n)", "9"));
+        assert!(!change.provably_unpinned("config", "config(2)", "limit"));
+    }
+
+    /// #12865 review: rustfmt wraps a long initializer with the operator on the
+    /// next line, so a changed line that ends without a terminator may be only
+    /// the head of the expression. It is not read, instead of read as `n`.
+    #[test]
+    fn a_wrapped_initializer_is_not_read_as_its_first_line() {
+        let wrapped = "pub fn config(n: u32) -> Result<Config, ()> {\n    Ok(Config {\n        retries: n\n            + 1,\n    })\n}\n";
+        let change = ClosedChange::read_field(
+            wrapped,
+            "config",
+            2,
+            "        retries: n + 2,",
+            "retries",
+            "u32",
+        );
+        assert!(change.is_none());
+    }
+
+    /// #12865 review: a statement on the opening-brace line is not scanned, so the
+    /// field would be read from the unrebound parameter. The owner is not read.
+    #[test]
+    fn a_statement_on_the_opening_brace_line_leaves_the_owner_unread() {
+        let owner = "pub fn config(n: u32) -> Result<Config, ()> { let n = n + 1;\n    Ok(Config { retries: n + 1 })\n}\n";
+        let change = ClosedChange::read_field(
+            owner,
+            "config",
+            1,
+            "    Ok(Config { retries: n + 2 })",
+            "retries",
+            "u32",
+        );
+        assert!(change.is_none());
+    }
+
+    #[test]
+    fn a_field_initializer_outside_the_subset_is_not_read() {
+        // A different integer type for the field than for the parameters.
+        assert!(field_change("    Ok(Config { retries: n + 2 })", "u8").is_none());
+        // A non-integer field type, a string, a call, a second mention.
+        assert!(field_change("    Ok(Config { retries: n + 2 })", "String").is_none());
+        assert!(field_change("    Ok(Config { retries: \"a\" })", "u32").is_none());
+        assert!(field_change("    Ok(Config { retries: f(n) })", "u32").is_none());
+        assert!(field_change("    Ok(Config { retries: n, retries: 1 })", "u32").is_none());
+        // A multi-line old text, or none.
+        assert!(field_change("", "u32").is_none());
+        assert!(field_change("a\nb", "u32").is_none());
+    }
+
+    /// #12865 review: a `let n = n + 1;` above the field rebinds the
+    /// parameter, so the field reads through it in both directions.
+    #[test]
+    fn a_straight_line_rebinding_is_resolved_into_the_field() {
+        let owner = "pub fn config(n: u32) -> Result<Config, ()> {\n    let n = n + 1;\n    Ok(Config { retries: n + 1 })\n}\n";
+        let read = |definition: &str, changed_line, before: &str| {
+            ClosedChange::read_field(definition, "config", changed_line, before, "retries", "u32")
+        };
+        let change = read(owner, 2, "    Ok(Config { retries: n + 2 })");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        // config(2): new (2 + 1) + 1 = 4, old (2 + 1) + 2 = 5.
+        assert!(!change.provably_unpinned("config", "config(2)", "4"));
+        assert!(!change.provably_unpinned("config", "config(2)", "5"));
+        // 3 is what the changed line alone would compute, and no version does.
+        assert!(change.provably_unpinned("config", "config(2)", "3"));
+        // A second binding sees the first; a later one shadows an earlier name.
+        let chained = "pub fn config(n: u32) -> Result<Config, ()> {\n    let a = n + 1;\n    let n = a * 2;\n    Ok(Config { retries: n + 1 })\n}\n";
+        let Some(chained) = read(chained, 3, "    Ok(Config { retries: n + 2 })") else {
+            return;
+        };
+        // config(2): a = 3, n = 6, new 7, old 8.
+        assert!(!chained.provably_unpinned("config", "config(2)", "7"));
+        assert!(!chained.provably_unpinned("config", "config(2)", "8"));
+        assert!(chained.provably_unpinned("config", "config(2)", "4"));
+        // Anything else before the field leaves the owner unread: a guard, a
+        // mutation, a `mut` or typed binding, a binding inside the literal.
+        for before_field in [
+            "    if n == 0 {\n        return Err(());\n    }\n",
+            "    n += 1;\n",
+            "    let mut n = n + 1;\n",
+            "    let n: u32 = n + 1;\n",
+            "    let n = n + 1; let m = 2;\n",
+        ] {
+            let definition = format!(
+                "pub fn config(n: u32) -> Result<Config, ()> {{\n{before_field}    Ok(Config {{ retries: n + 1 }})\n}}\n"
+            );
+            let changed = 1 + before_field.matches('\n').count();
+            assert!(
+                read(&definition, changed, "    Ok(Config { retries: n + 2 })").is_none(),
+                "{before_field:?}"
+            );
+        }
+    }
+
+    const REBOUND: &str = "pub fn config(n: u32) -> Result<Config, ()> {\n    let n = n + 1;\n    Ok(Config { retries: n + 1 })\n}\n";
+
+    /// #12865 review: a `let` above the literal rebinds the parameter the
+    /// field reads, so the versions are `(n + 1) + 1` and `(n + 1) + 2`.
+    #[test]
+    fn a_rebinding_above_the_field_is_resolved_not_ignored() {
+        let change = ClosedChange::read_field(
+            REBOUND,
+            "config",
+            2,
+            "    Ok(Config { retries: n + 2 })",
+            "retries",
+            "u32",
+        );
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        // config(2): new 4, old 5. 3 (the value read without the `let`) and 9
+        // are neither; 4 and 5 each tell the versions apart.
+        assert!(change.provably_unpinned("config", "config(2)", "3"));
+        assert!(change.provably_unpinned("config", "config(2)", "9"));
+        assert!(!change.provably_unpinned("config", "config(2)", "4"));
+        assert!(!change.provably_unpinned("config", "config(2)", "5"));
+    }
+
+    #[test]
+    fn a_statement_the_reader_cannot_follow_leaves_the_owner_unread() {
+        let read = |body: &str| {
+            let definition = format!(
+                "pub fn config(n: u32) -> Result<Config, ()> {{\n{body}    Ok(Config {{ retries: n + 1 }})\n}}\n"
+            );
+            let line = definition.lines().count() - 2;
+            ClosedChange::read_field(
+                &definition,
+                "config",
+                line,
+                "    Ok(Config { retries: n + 2 })",
+                "retries",
+                "u32",
+            )
+            .is_some()
+        };
+        assert!(read(""));
+        assert!(read("    let m = n * 2;\n"));
+        // A guard, a mutation, a `mut` or typed binding, a block value.
+        assert!(!read("    if n == 0 {\n        return Err(());\n    }\n"));
+        assert!(!read("    let mut n = n;\n"));
+        assert!(!read("    let n: u32 = n + 1;\n"));
+        assert!(!read("    let n = { n + 1 };\n"));
+        assert!(!read("    n += 1;\n"));
+    }
+
+    #[test]
+    fn the_initializer_stops_at_the_literal_s_closing_bracket_or_comma() {
+        let read = |line, field| field_initializer(line, field, true);
+        let read_source = |line, field| field_initializer(line, field, false);
+        assert_eq!(
+            read("Ok(Config { retries: n + 1 })", "retries").as_deref(),
+            Some("n + 1")
+        );
+        assert_eq!(
+            read("    retries: (n + 1) * 2,", "retries").as_deref(),
+            Some("(n + 1) * 2")
+        );
+        // A longer field name is another field.
+        assert_eq!(read("Ok(Config { max_retries: 4 })", "retries"), None);
+        assert_eq!(read("retries::new(1)", "retries"), None);
+        // An initializer that reaches the end of the line unterminated may
+        // continue on the next one (`retries: n` then `+ 1,`), so it is not read.
+        assert_eq!(read_source("    retries: n", "retries"), None);
+        assert_eq!(
+            read_source("    retries: n // wrapped below", "retries"),
+            None
+        );
+        // The removed side is the probe's text, comma already stripped.
+        assert_eq!(read("retries: n + 2", "retries").as_deref(), Some("n + 2"));
+    }
+
+    #[test]
+    fn a_wrong_literal_provably_differs_and_the_right_one_does_not() {
+        assert!(differs(DIV, "checked_div", "checked_div(17, 5)", "Ok(4)"));
+        assert!(!differs(DIV, "checked_div", "checked_div(17, 5)", "Ok(3)"));
+    }
+
+    #[test]
+    fn a_guard_exit_is_the_other_variant() {
+        assert!(differs(DIV, "checked_div", "checked_div(17, 0)", "Ok(0)"));
+        assert!(!differs(
+            DIV,
+            "checked_div",
+            "checked_div(17, 0)",
+            "Err(())"
+        ));
+    }
+
+    #[test]
+    fn multi_line_calls_read_like_single_line_ones() {
+        assert!(differs(
+            DIV,
+            "checked_div",
+            "checked_div(\n    17,\n    5,\n)",
+            "Ok(4)"
+        ));
+    }
+
+    #[test]
+    fn anything_outside_the_subset_is_no_evidence() {
+        // overflow in the parameter type
+        let add = "fn add(a: u8, b: u8) -> u8 {\n    a + b\n}\n";
+        assert!(!differs(add, "add", "add(200, 100)", "7"));
+        assert!(differs(add, "add", "add(2, 3)", "6"));
+        // division by zero without a guard
+        let div = "fn q(a: u32, b: u32) -> u32 {\n    a / b\n}\n";
+        assert!(!differs(div, "q", "q(1, 0)", "9"));
+        // a suffixed literal, a name, an expression argument
+        assert!(!differs(
+            DIV,
+            "checked_div",
+            "checked_div(17u32, 5)",
+            "Ok(4)"
+        ));
+        assert!(!differs(DIV, "checked_div", "checked_div(x, 5)", "Ok(4)"));
+        assert!(!differs(
+            DIV,
+            "checked_div",
+            "checked_div(16 + 1, 5)",
+            "Ok(4)"
+        ));
+        // a method call, a cast, a let, a loop in the owner
+        for body in [
+            "a.pow(2)",
+            "(a as u32) + b",
+            "let c = a + b;\n    c",
+            "for _ in 0..a {}\n    a",
+        ] {
+            let owner = format!("fn f(a: u32, b: u32) -> u32 {{\n    {body}\n}}\n");
+            assert!(!differs(&owner, "f", "f(1, 2)", "99"), "{body}");
+        }
+        // mixed parameter types, a generic, a receiver
+        assert!(ClosedOwner::read("fn f(a: u32, b: u64) -> u64 { a }", "f").is_none());
+        assert!(ClosedOwner::read("fn f<T>(a: u32) -> u32 { a }", "f").is_none());
+        assert!(ClosedOwner::read("fn f(&self, a: u32) -> u32 { a }", "f").is_none());
+    }
+
+    #[test]
+    fn a_pinned_variant_the_owner_returns_is_not_a_mismatch() {
+        let half = "fn half(n: u32) -> Option<u32> {\n    if n % 2 == 1 {\n        return None;\n    }\n    Some(n / 2)\n}\n";
+        assert!(differs(half, "half", "half(4)", "Some(3)"));
+        assert!(!differs(half, "half", "half(4)", "Some(2)"));
+        assert!(differs(half, "half", "half(5)", "Some(2)"));
+        assert!(!differs(half, "half", "half(5)", "None"));
+        // a plain literal against a wrapped return does not compile
+        assert!(!differs(half, "half", "half(4)", "3"));
+    }
+
+    #[test]
+    fn signed_arithmetic_truncates_toward_zero() {
+        let neg = "fn q(a: i32, b: i32) -> i32 {\n    a / b\n}\n";
+        assert!(!differs(neg, "q", "q(-7, 2)", "-3"));
+        assert!(differs(neg, "q", "q(-7, 2)", "-4"));
+        let rem = "fn r(a: i32, b: i32) -> i32 {\n    a % b\n}\n";
+        assert!(!differs(rem, "r", "r(-7, 2)", "-1"));
+    }
+
+    #[test]
+    fn mismatched_braces_are_no_evidence_not_a_panic() {
+        assert!(ClosedOwner::read("fn f(a: u32) -> u32 } a {", "f").is_none());
+        assert!(ClosedOwner::read("fn f(a: u32) -> u32 {", "f").is_none());
+    }
+
+    #[test]
+    fn a_literal_neither_version_returns_is_unpinned() {
+        // The tail moved from `Ok(a / b + 1)` (4 for 17, 5) to `Ok(a / b)` (3).
+        let change = ClosedChange::read(DIV, "checked_div", 4, "    Ok(a / b + 1)");
+        assert!(change.is_some(), "both versions are in the subset");
+        let Some(change) = change else { return };
+        let unpinned = |expected: &str| {
+            change.provably_unpinned("checked_div", "checked_div(17, 5)", expected)
+        };
+        assert!(!unpinned("Ok(3)"), "the new value");
+        assert!(!unpinned("Ok(4)"), "the old value");
+        assert!(unpinned("Ok(9)"));
+        // an old line outside the subset reads no evidence
+        assert!(ClosedChange::read(DIV, "checked_div", 4, "    Ok(a.pow(2))").is_none());
+        // a multi-line or empty old text is not one replaced line
+        assert!(
+            ClosedChange::read(DIV, "checked_div", 4, "    let c = 1;\n    Ok(a / b + c)")
+                .is_none()
+        );
+        assert!(ClosedChange::read(DIV, "checked_div", 4, "  ").is_none());
+    }
+
+    /// #14387: an exact pin tells the versions apart only at an input where
+    /// they differ, and only when it names one of the two results.
+    #[test]
+    fn a_pin_discriminates_only_where_the_versions_differ_and_it_names_one() {
+        let after = "pub fn discount(total: u32) -> u32 {\n    if total > 500 {\n        return 1;\n    }\n    if total >= 100 {\n        return total / 5;\n    }\n    0\n}\n";
+        let change = ClosedChange::read(after, "discount", 5, "        return total / 10;");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        // 200 takes the changed guard: 20 before, 40 after.
+        assert!(change.pin_discriminates("discount", "discount(200)", "20"));
+        assert!(change.pin_discriminates("discount", "discount(200)", "40"));
+        // A value neither version returns, an earlier guard, the tail.
+        assert!(!change.pin_discriminates("discount", "discount(200)", "99"));
+        assert!(!change.pin_discriminates("discount", "discount(600)", "1"));
+        assert!(!change.pin_discriminates("discount", "discount(50)", "0"));
+        // Arguments the subset does not read, and an out-of-range one.
+        assert!(!change.pin_discriminates("discount", "discount(n)", "20"));
+        assert!(!change.pin_discriminates("discount", "discount(100 + 100)", "20"));
+        assert!(!change.pin_discriminates("discount", "discount(-1)", "0"));
+        // An `Err` exit's payload is not evaluated, so it never discriminates.
+        let errs = ClosedChange::read(DIV, "checked_div", 2, "        return Err(1);");
+        assert!(errs.is_some_and(|errs| !errs.pin_discriminates(
+            "checked_div",
+            "checked_div(4, 0)",
+            "Err(())"
+        )));
+    }
+
+    /// #14387: a tail `if`/`else if`/`else` chain reads as guards and a tail,
+    /// so a changed branch value discriminates where its branch runs.
+    #[test]
+    fn a_tail_if_else_chain_reads_as_guards_and_a_tail() {
+        let after = "pub fn rate(t: u32) -> u32 {\n    if t > 500 {\n        1\n    } else if t >= 100 {\n        t / 5\n    } else {\n        0\n    }\n}\n";
+        let change = ClosedChange::read(after, "rate", 4, "        t / 10");
+        assert!(change.is_some(), "premise: both versions read");
+        let Some(change) = change else {
+            return;
+        };
+        assert!(change.pin_discriminates("rate", "rate(200)", "40"));
+        assert!(change.pin_discriminates("rate", "rate(200)", "20"));
+        assert!(!change.pin_discriminates("rate", "rate(600)", "1"));
+        assert!(!change.pin_discriminates("rate", "rate(50)", "0"));
+        // A chain without a final `else`, or a branch holding more than its
+        // value, is outside the subset.
+        for outside in [
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        1\n    } else if t > 2 {\n        2\n    }\n}\n",
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        t;\n        1\n    } else {\n        0\n    }\n}\n",
+            "pub fn rate(t: u32) -> u32 {\n    if t > 5 {\n        1\n    } else {\n        0\n    }\n    2\n}\n",
+        ] {
+            assert!(ClosedOwner::read(outside, "rate").is_none(), "{outside}");
+        }
+    }
+}

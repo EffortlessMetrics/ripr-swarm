@@ -245,3 +245,55 @@ fn a_generated_predicate_beside_a_constant_return_keeps_the_limit() -> Result<()
     }
     Ok(())
 }
+
+/// #12779: `use claims::assert_ok_eq as ok_eq;` hides the `assert_` spelling the
+/// limit keys on, but the test still asserts, so the finding names the limit
+/// instead of reading as a gap that asks for an assertion.
+#[test]
+fn a_renamed_assertion_import_reads_as_the_macro_limit_not_a_gap() -> Result<(), String> {
+    let renamed = "    use claims::assert_ok_eq as ok_eq;\n\n    #[test]\n    fn renamed_pin() {\n        ok_eq!(surcharge(100), 110);\n    }\n";
+    let found = findings(renamed)?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "expected the macro limit for a renamed assertion import, got {:?}",
+            summary(&found)
+        ));
+    }
+    // A brace list renames the same way.
+    let braced = renamed.replace(
+        "use claims::assert_ok_eq as ok_eq;",
+        "use claims::{assert_err, assert_ok_eq as ok_eq};",
+    );
+    let found = findings(&braced)?;
+    if !found.iter().any(limited) {
+        return Err(format!(
+            "expected the macro limit for a braced rename, got {:?}",
+            summary(&found)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_rename_of_something_that_is_not_an_assertion_keeps_the_gap() -> Result<(), String> {
+    let controls = [
+        // The original is not an assertion macro, so the rename names nothing.
+        "    use helpers::check as ok_eq;\n\n    #[test]\n    fn renamed_pin() {\n        ok_eq!(surcharge(100), 110);\n    }\n",
+        // The import renames one macro, the test invokes another.
+        "    use claims::assert_ok_eq as ok_eq;\n\n    #[test]\n    fn renamed_pin() {\n        other!(surcharge(100), 110);\n    }\n",
+        // The rename exists but the test never invokes it.
+        "    use claims::assert_ok_eq as ok_eq;\n\n    #[test]\n    fn renamed_pin() {\n        let _ = surcharge(100);\n    }\n",
+        // The same invocation with no import at all.
+        "    #[test]\n    fn renamed_pin() {\n        ok_eq!(surcharge(100), 110);\n    }\n",
+    ];
+    for tests in controls {
+        let found = findings(tests)?;
+        if found.iter().any(limited) {
+            return Err(format!(
+                "control got the macro limit: {tests}\n{:?}",
+                summary(&found)
+            ));
+        }
+    }
+    Ok(())
+}

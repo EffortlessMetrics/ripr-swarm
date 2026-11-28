@@ -1,0 +1,14 @@
+{
+  "subject_id": "authored-arbitrary-shapes-arbitrary",
+  "origin": "authored",
+  "version_label": "authored 2026-11-08; #11545 arbitrary-crate Arbitrary generator and derive(Arbitrary) product type; labeled against arbitrary 1.5.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {"path": "Cargo.lock", "sha256": "ed1c63256acebaa8bd19f9d7fff5d238b5d558459fd1425eb538adffa6508884"},
+    {"path": "Cargo.toml", "sha256": "1ae0714e6fcd458ff7b6b5a045a85bf1cd1f8ffc8f0b3f82af4608da8019eabf"},
+    {"path": "src/lib.rs", "sha256": "f0c276d59d8e5aa54d684aa3fbd140703d00947512424c31e980901682899654"},
+    {"path": "src/shapes.rs", "sha256": "19c16af0b6b517a7e0d9e234258c5bedf9987e409117d4306a462ddcfc4e8dbd"},
+    {"path": "tests/gap.rs", "sha256": "0295d30b8e6e4ba0185929cd8810fda3159bbf26cd2f4f0d26665f24c59bb72f"}
+  ]
+}

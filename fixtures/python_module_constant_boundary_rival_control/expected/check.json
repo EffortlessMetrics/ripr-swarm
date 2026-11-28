@@ -1,0 +1,175 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_module_constant_boundary_rival_control/input",
+  "config_path": "<cwd>/fixtures/python_module_constant_boundary_rival_control/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":1,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:704025fc807e171636b16ed0220224a4eeac07742fc0a3bb51cd7562dbb8d68c","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:svc_a_src_pricing.py:python_preview:ecc92bfc",
+      "canonical_gap_id": "gap:python:svc/a/src/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:svc/a/src/pricing.py:discounted_total:predicate_boundary:predicate:amount>=discount_threshold",
+        "language": "python",
+        "file": "svc/a/src/pricing.py",
+        "owner": "discounted_total",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount>=discount_threshold"
+
+      },
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:svc_a_src_pricing.py:python_preview:ecc92bfc",
+        "family": "predicate",
+        "delta": "control",
+        "file": "svc/a/src/pricing.py",
+        "line": 5,
+        "expression": "    if amount >= DISCOUNT_THRESHOLD:",
+        "owner": "python:svc/a/src/pricing.py::discounted_total"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"3 related Python test(s) found for owner `discounted_total`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python predicate can alter branch selection: `if amount >= DISCOUNT_THRESHOLD:`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 3 related Python test(s) found for owner `discounted_total`", "infection yes: Changed Python predicate can alter branch selection: `if amount >= DISCOUNT_THRESHOLD:`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator yes: Related Python test uses an `exact_value` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: if amount >= DISCOUNT_THRESHOLD: (line 5)", "related test svc/b/tests/test_pricing.py:9 test_above uses strong exact value oracle: assert discounted_total(20_000) == 18_000", "related test svc/b/tests/test_pricing.py:13 test_at uses strong exact value oracle: assert discounted_total(pricing.DISCOUNT_THRESHOLD) == 9_000", "related test svc/b/tests/test_pricing.py:5 test_below uses strong exact value oracle: assert discounted_total(5_000) == 5_000", "source function argument value amount = 5000 at line 6", "source function argument value amount = 20000 at line 10", "source function argument value amount = 10000 at line 14", "source function argument value amount == DISCOUNT_THRESHOLD at line 14"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if amount >= DISCOUNT_THRESHOLD:","line":5}
+      ],
+      "evidence": ["owner: discounted_total", "owner_kind: function", "test_framework: pytest (test_above)", "test_verify_command: python -m pytest svc/b/tests/test_pricing.py::test_above (test_above)", "related_test_relation: syntactic_call (test_above)", "test_oracle: exact_value strong (test_above)", "test_framework: pytest (test_at)", "test_verify_command: python -m pytest svc/b/tests/test_pricing.py::test_at (test_at)", "related_test_relation: syntactic_call (test_at)", "test_oracle: exact_value strong (test_at)", "test_oracle_shape: field_assertion (test_at)", "test_framework: pytest (test_below)", "test_verify_command: python -m pytest svc/b/tests/test_pricing.py::test_below (test_below)", "related_test_relation: syntactic_call (test_below)", "test_oracle: exact_value strong (test_below)"],
+      "missing": ["Related Python test reaches `discounted_total` with an `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value check."],
+      "assertion_texts": {
+        "6": "assert discounted_total(5_000) == 5_000",
+        "10": "assert discounted_total(20_000) == 18_000",
+        "14": "assert discounted_total(pricing.DISCOUNT_THRESHOLD) == 9_000"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 6,
+            "value": "amount = 5000",
+            "context": "function_argument"
+          },
+          {
+            "line": 10,
+            "value": "amount = 20000",
+            "context": "function_argument"
+          },
+          {
+            "line": 14,
+            "value": "amount = 10000",
+            "context": "function_argument"
+          },
+          {
+            "line": 14,
+            "value": "amount == DISCOUNT_THRESHOLD",
+            "context": "function_argument",
+            "provenance": "assert discounted_total(pricing.DISCOUNT_THRESHOLD) == 9_000 | amount = 10000; module constant DISCOUNT_THRESHOLD = 10000 at line 1"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 6,
+          "value": "amount = 5000",
+          "context": "function_argument"
+        },
+        {
+          "line": 10,
+          "value": "amount = 20000",
+          "context": "function_argument"
+        },
+        {
+          "line": 14,
+          "value": "amount = 10000",
+          "context": "function_argument"
+        },
+        {
+          "line": 14,
+          "value": "amount == DISCOUNT_THRESHOLD",
+          "context": "function_argument",
+          "provenance": "assert discounted_total(pricing.DISCOUNT_THRESHOLD) == 9_000 | amount = 10000; module constant DISCOUNT_THRESHOLD = 10000 at line 1"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 3,
+      "related_tests": [
+        {
+          "name": "test_above",
+          "file": "svc/b/tests/test_pricing.py",
+          "line": 9,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert discounted_total(20_000) == 18_000"
+        },
+        {
+          "name": "test_at",
+          "file": "svc/b/tests/test_pricing.py",
+          "line": 13,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert discounted_total(pricing.DISCOUNT_THRESHOLD) == 9_000"
+        },
+        {
+          "name": "test_below",
+          "file": "svc/b/tests/test_pricing.py",
+          "line": 5,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert discounted_total(5_000) == 5_000"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "suggested_next_action": "Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed behavior.",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "amount, DISCOUNT_THRESHOLD",
+      "observed_sink": "assert discounted_total(20_000) == 18_000",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["svc/a/src/pricing.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"svc/a/src/pricing.py","digest":"sha256:80c1b9f79b9f035e746c189304c2c27f3021854fd5e3ff4517e83ba16cdd76f4"}]}
+}

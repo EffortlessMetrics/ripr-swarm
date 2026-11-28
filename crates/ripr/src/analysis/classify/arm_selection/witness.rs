@@ -318,6 +318,7 @@ mod tests {
     use crate::domain::{DeltaKind, ProbeFamily, ProbeId, SourceLocation, SymbolId};
 
     fn owner(body: &str) -> FunctionSummary {
+        use crate::analysis::facts::SharedFactSlice;
         FunctionSummary {
             id: SymbolId("src/lib.rs::reason".into()),
             name: "reason".into(),
@@ -325,14 +326,14 @@ mod tests {
             start_line: 1,
             end_line: body.lines().count(),
             body: body.to_string().into(),
-            calls: Vec::new(),
+            calls: SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: SharedFactSlice::empty(),
             source_role: crate::analysis::facts::FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: SharedFactSlice::empty(),
+            let_bindings: SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -340,6 +341,7 @@ mod tests {
 
     fn match_probe(line: usize, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:src_lib_rs:{line}:match_arm")),
             location: SourceLocation::new("src/lib.rs", line, 1),
             owner: Some(SymbolId("src/lib.rs::reason".into())),

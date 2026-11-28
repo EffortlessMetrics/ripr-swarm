@@ -29,6 +29,10 @@ Plan item:
 Governing issue or accepted claim:
 Acceptance delta (one sentence):
 
+<!-- A ripr <-> ripr-swarm sync merge with the `history-sync` label also adds the
+two History-sync source and destination base lines described in
+docs/MERGE_FLOW.md (History-sync route). Other PRs leave them out. -->
+
 ## Candidate Relationships
 
 Candidate branch (GitHub PR head is authoritative after publication):
@@ -171,7 +175,10 @@ normal CI cannot validate the revert, document that explicitly.
 
 ## Gates
 
-- [ ] `cargo fmt --check`
+- [ ] Formatting: `cargo fmt --check`; on native Windows, run `cargo xtask precommit`
+  from the repository root instead. Its bounded formatting step avoids OS error 206
+  from direct `cargo fmt`. Check this box only after formatting passes. If a later
+  precommit check fails, report it separately; the full precommit run did not pass.
 - [ ] `cargo check --workspace --all-targets`
 - [ ] `cargo test --workspace`
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`

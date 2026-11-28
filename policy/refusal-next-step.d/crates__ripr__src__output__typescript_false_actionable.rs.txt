@@ -1,0 +1,2 @@
+crates/ripr/src/output/typescript_false_actionable.rs|case {case_index} missing or non-boolean field {} .
+crates/ripr/src/output/typescript_false_actionable.rs|case {case_index} missing or non-string field {} .

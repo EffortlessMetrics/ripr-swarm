@@ -2,8 +2,9 @@
 //! whose required check is the written field. Only an exact read of that field
 //! on the binding that ran the owner grades it; a sibling read, a read on
 //! another binding, a later write or no read never does. No case here starts a
-//! repair: a field write has no start policy, so `check` and `repair` give the
-//! same specific refusal that names the field check.
+//! repair: the only field-write start is a weak relational read (#11870, see
+//! `repair_check_recommended_start.rs`), so for these shapes `check` and
+//! `repair` give the same specific refusal that names the field check.
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -135,6 +136,19 @@ fn setter_with_no_read_of_the_field_names_the_field_check() -> Result<(), String
         COUNTER_OLD,
         COUNTER_NEW,
         "use fw::Counter;\n\n#[test]\nfn bumps() {\n    let mut c = Counter::default();\n    c.bump();\n}\n",
+    )
+}
+
+#[test]
+fn no_read_beside_an_asserting_neighbour_is_not_a_repair_start() -> Result<(), String> {
+    // #6485: the reads-nothing test classifies `reachable_unrevealed` even
+    // beside a file neighbour that asserts another field; it holds no weak
+    // read to strengthen, so neither command starts a repair.
+    assert_field_check_refusal(
+        "no-read-beside-neighbour",
+        COUNTER_OLD,
+        COUNTER_NEW,
+        "use fw::Counter;\n\n#[test]\nfn labels() {\n    let c = Counter::default();\n    assert_eq!(c.label, 0);\n}\n\n#[test]\nfn bumps() {\n    let mut c = Counter::default();\n    c.bump();\n}\n",
     )
 }
 

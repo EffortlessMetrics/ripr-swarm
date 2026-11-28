@@ -6,7 +6,7 @@ Owner: product-analysis
 
 Created: 2026-08-31
 
-Linked issues: #3609, #8850
+Linked issues: #3609, #7838, #8850
 
 Linked PRs: #3611
 
@@ -39,6 +39,15 @@ and a literal `%FF` could retain the reserved byte-escape spelling there.
 - native `Path` values remain the authority for filesystem access and lexical
   confinement.
 
+`stable_source_path_text` is the source-file identity projection used before
+human source-path rendering. It shares the `%` and invalid-byte rules of
+`stable_native_path_text`, but on Unix it renders a literal backslash byte as
+`%5C` instead of collapsing it to `/`. On Windows, native backslashes remain
+separators and render as slashes. `display_source_path` uses this encoder so
+observed-value rows keep distinct Unix names such as
+`src/odd\receipt.rs` and `src/odd/receipt.rs`. General surfaces that still
+call `stable_path_text` keep slash normalization unchanged.
+
 Git's C-quoted path input must preserve native identity before this projection,
 including the named `\a`, `\b`, `\v`, and `\f` escapes for bytes `07`, `08`,
 `0B`, and `0C`. These bytes are legal Unix filename characters; this does not
@@ -61,6 +70,14 @@ the three characters `%FF` renders as `%25FF`.
 
 - a cross-platform unit test proves literal `%` becomes `%25`;
 - a Unix unit test proves an invalid byte and literal `%FF` remain distinct;
+- Unix unit tests prove `stable_source_path_text` keeps literal backslashes
+  distinct from directory separators, round-trips through
+  `decode_stable_path_text`, and leaves `stable_path_text` display collapse
+  unchanged;
+- a Windows unit test proves native separator normalization for
+  `stable_source_path_text`;
+- a Unix unit test proves human source-value rows preserve the distinct
+  encoded paths;
 - the existing diff-path regression continues to prove native Unix bytes are
   preserved through parsing and downstream path consumers.
 - Real Git CLI fixtures retain named control-byte paths, distinct from unchanged
@@ -104,11 +121,25 @@ the three characters `%FF` renders as `%25FF`.
 2. On Unix, native `pricing_\xFF.rs` renders as `pricing_%FF.rs`.
 3. On Unix, the two inputs above have different textual identities.
 4. Existing slash normalization and native-path confinement are unchanged.
+5. On Unix, `src/odd\receipt.rs` encodes as `src/odd%5Creceipt.rs` in
+   `stable_source_path_text` and human source-value rows, while
+   `src/odd/receipt.rs` stays `src/odd/receipt.rs`; the two identities differ.
+6. On Windows, `tests\receipt.rs` encodes as `tests/receipt.rs` through
+   `stable_source_path_text`.
+7. A consumer that opens a file named by stable path text decodes it first: a
+   Rust source file `src/100%.rs` (gap file `src/100%25.rs`) gets the same
+   repair start and edit-cage rules as `src/lib.rs`. A seam packet path that
+   decodes to a literal backslash refuses instead of naming another file. A
+   TypeScript or Python gap-ledger packet carries native spellings and is read
+   as written; a Rust gap-ledger packet carries stable path text and decodes.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/mod.rs::tests::stable_path_text_escapes_reserved_percent_on_every_platform`
 - `crates/ripr/src/analysis/mod.rs::tests::stable_path_text_keeps_invalid_byte_encoding_distinct_from_literal_escape`
+- `crates/ripr/src/analysis/mod.rs::tests::stable_source_path_text_preserves_literal_backslashes_before_display`
+- `crates/ripr/src/analysis/mod.rs::tests::stable_source_path_text_normalizes_native_separators_on_windows`
+- `crates/ripr/src/output/observed_values.rs::tests::human_source_value_line_preserves_literal_backslash_paths`
 - `crates/ripr/src/analysis/diff/load.rs::tests::given_quote_path_disabled_repo_when_diff_loaded_then_raw_byte_and_mimic_names_stay_distinct`
 - `crates/ripr/src/analysis/diff/path.rs::tests::named_c_control_escapes_keep_native_path_identity`
 - `crates/ripr/src/analysis/diff/path.rs::tests::quoted_whitespace_old_headers_keep_plain_file_sections_separate`
@@ -121,10 +152,16 @@ the three characters `%FF` renders as `%25FF`.
 - `crates/ripr/tests/cli_smoke/portable_diff_paths.rs::plain_patch_json_keeps_portable_locations_and_exact_crlf_provenance`
 - `crates/ripr/tests/cli_smoke/diff_selection.rs::git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory`
 - `crates/ripr/tests/native_path_roots.rs::equivalent_root_spellings_preserve_analysis_identity_and_repeated_json`
+- `crates/ripr/tests/user_journeys.rs::rust_repair_closes_when_the_source_file_name_has_a_percent`
+- `crates/ripr/src/app/repair_attempt/mod.rs::tests::cage_policy_decodes_a_percent_escaped_packet_path`
 
 ## Implementation Mapping
 
-- `crates/ripr/src/analysis/mod.rs` owns the shared textual projection.
+- `crates/ripr/src/analysis/mod.rs` owns `stable_path_text`,
+  `stable_source_path_text`, and the shared native encoder.
+- `crates/ripr/src/output/path.rs::display_source_path` and
+  `crates/ripr/src/output/observed_values.rs` render human source paths through
+  the source-file projection.
 - `crates/ripr/src/analysis/diff/path.rs` owns the C-quoted decoder feeding
   native path identity into the projection; its `DecodedPath` split (valid
   text vs Unix raw bytes) is the byte-preserving source this contract
@@ -133,6 +170,10 @@ the three characters `%FF` renders as `%25FF`.
   symbol identity so distinct raw-byte files keep distinct owners.
 - `crates/ripr/src/app/check_artifact.rs` renders non-UTF-8 finding paths
   through the projection at the artifact boundary.
+- `crates/ripr/src/app/task_first.rs` (check-screen repair route) and
+  `crates/ripr/src/app/repair_attempt/mod.rs::edit_cage_policy_from_packet`
+  decode gap and seam-packet path text with `decode_stable_path_text` before
+  opening a file or building edit-cage rules.
 - `crates/ripr/src/analysis/language/rust/mod.rs`,
   `crates/ripr/src/analysis/probes/ids.rs`, and
   `crates/ripr/src/output/path.rs` consume that projection for their existing

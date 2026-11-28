@@ -41,12 +41,19 @@
         "observe": {"state":"no","confidence":"medium","summary":"Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion found on related tests"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach parse_unit: blank_input_is_unknown", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(UnitError::Blank)", "observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect", "discriminator no: No assertion found on related tests", "local flow reaches error variant: Result::Err(UnitError::Blank) (line 11)", "related test src/lib.rs:20 blank_input_is_unknown uses no oracle: assert_eq!(parse_unit(\"\"), Err(UnitError::Unknown));", "source enum variant value UnitError::Unknown at line 21", "source function argument value raw = \"\" at line 21", "missing discriminator UnitError::Blank: No exact error variant assertion for UnitError::Blank"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(UnitError::Blank)","line":11}
       ],
       "evidence": ["Complete propagation witness reaches error variant: Result::Err(UnitError::Blank)", "No assertion found on related tests", "Reachable tests can plausibly activate this changed behavior", "Related tests appear to reach parse_unit: blank_input_is_unknown", "Related tests were found, but no assertion appears to observe the changed value, error, field, or effect"],
-      "missing": ["Missing discriminator value: UnitError::Blank", "No detected assertion observes the changed value, error, field, or effect", "No exact error variant discriminator was detected", "No relevant oracle was detected"],
+      "missing": ["Missing check value: UnitError::Blank", "No detected assertion observes the changed value, error, field, or effect", "No exact error variant discriminator was detected", "No relevant oracle was detected"],
       "assertion_texts": {
         "21": "assert_eq!(parse_unit(\"\"), Err(UnitError::Unknown));"
       },
@@ -145,12 +152,19 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"weak","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"medium"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach parse_unit: blank_input_is_unknown", "infection weak: No related test call selects arm `_ =>`; observed `raw` values: `\"\"`", "propagation yes: Changed behavior appears to influence match arm result: _ =>", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches match arm result: _ => (line 11)", "related test src/lib.rs:20 blank_input_is_unknown uses strong exact error variant oracle: assert_eq!(parse_unit(\"\"), Err(UnitError::Unknown));", "source enum variant value UnitError::Unknown at line 21", "source function argument value raw = \"\" at line 21", "missing discriminator _: No related test call selects arm `_ =>`; observed `raw` values: `\"\"`"],
       "flow_sinks": [
         {"kind":"match_arm","text":"_ =>","line":11}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Changed behavior appears to influence match arm result: _ =>", "Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "No related test call selects arm `_ =>`; observed `raw` values: `\"\"`", "Related tests appear to reach parse_unit: blank_input_is_unknown"],
-      "missing": ["Missing discriminator value: _", "No strong discriminator was detected"],
+      "missing": ["Missing check value: _", "No strong discriminator was detected"],
       "assertion_texts": {
         "21": "assert_eq!(parse_unit(\"\"), Err(UnitError::Unknown));"
       },

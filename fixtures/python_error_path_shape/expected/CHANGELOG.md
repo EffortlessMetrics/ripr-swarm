@@ -732,3 +732,84 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_error_path_shape (33)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_error_path_shape (34)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_error_path_shape (35)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_error_path_shape (36)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_error_path_shape (37)
+
+Reason:
+RIPR-SPEC-0238: a builtin TypeError to ValueError swap pinned by pytest.raises(ValueError) reads as an exact error variant (#13869)
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — python_error_path_shape (38)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_error_path_shape (39)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_error_path_shape --reason "..."`
+
+Updated:
+- `expected/human.txt`

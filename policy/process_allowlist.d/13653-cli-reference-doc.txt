@@ -1,0 +1,2 @@
+crates/ripr/tests/cli_reference_doc.rs|Command::new|1|cli-tests|#13653: runs the built ripr binary (`--help`, `help --json`, `help <command>`) to regenerate the CLI reference. No shell, network, or repository mutation.
+crates/ripr/tests/cli_reference_doc.rs|use std::process::Command|1|cli-tests|#13653: imports the spawner for the invocation above.

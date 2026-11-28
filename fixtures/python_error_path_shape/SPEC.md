@@ -35,11 +35,15 @@ The Python preview adapter:
 
 - finds the `require_positive` function owner,
 - classifies the changed line as an `error_path` / `control` probe,
-- records `pytest.raises(...)` as broad error evidence,
+- records `pytest.raises(ValueError)` as an exact error variant: the swap is
+  between two disjoint builtins and the literal input reaches the raise
+  (RIPR-SPEC-0238 rule 6, #13869),
 - emits Python preview metadata.
 
 ## Must Not
 
 - Execute pytest.
-- Resolve exception inheritance or runtime imports.
-- Treat broad error evidence as a strong discriminator.
+- Resolve exception inheritance beyond the fixed builtin hierarchy, or runtime
+  imports.
+- Treat broad error evidence (`pytest.raises(Exception)`) as a strong
+  discriminator.

@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0436"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0436-dx-scoreboard-workload-identity-pairing.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #13177 defines the workload identity pairing rule for scoreboard trends, which no existing spec governs."

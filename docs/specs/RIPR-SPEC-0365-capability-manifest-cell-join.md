@@ -114,7 +114,7 @@ symbols, but a traceability-check pass does not prove those symbols ran.
   fields; `check_capabilities` retains the earlier-validation guard.
 - `xtask/src/policy/capability_cells.rs::check_capability_cells` owns the bounded
   producer invocation; `cell_join_violations` owns envelope and exact-set checks.
-- `crates/ripr/src/domain/language_capability.rs` owns the semantic table and
+- `crates/ripr-contract/src/domain/language_capability.rs` owns the semantic table and
   identity construction; `crates/ripr/src/output/language_capabilities.rs`
   owns its JSON envelope. This join does not replace those owners.
 - `metrics/capabilities.toml` supplies explicit claims;

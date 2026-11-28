@@ -3,6 +3,7 @@
 //! `exposed` when no related test input separates the two thresholds, the same
 //! gap the `predicate` finding on that line already names.
 
+use ripr::domain::StageState;
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -184,7 +185,72 @@ fn inputs_far_from_the_threshold_do_not_expose_the_returned_comparison() -> Resu
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
+        "{return_value:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn unseen_inputs_do_not_expose_the_returned_comparison() -> Result<(), String> {
+    // #13040: `x > 100` becomes `x >= 100`; only input 100 separates them.
+    // Inputs ripr cannot see (env var, local helper) must not derive
+    // infect=yes/exposed for return_value while predicate reads unknown.
+    for (name, test) in [
+        (
+            "env_true",
+            "use thr::thr;\n\n#[test]\nfn t() {\n    let v = std::env::var(\"X\").unwrap().len() as i32;\n    assert_eq!(thr(v), true);\n}\n",
+        ),
+        (
+            "env_false",
+            "use thr::thr;\n\n#[test]\nfn t() {\n    let v = std::env::var(\"X\").unwrap().len() as i32;\n    assert_eq!(thr(v), false);\n}\n",
+        ),
+        (
+            "helper_true",
+            "use thr::thr;\n\nfn read_input() -> i32 { 7 }\n\n#[test]\nfn t() {\n    let v = read_input();\n    assert_eq!(thr(v), true);\n}\n",
+        ),
+        (
+            "helper_false",
+            "use thr::thr;\n\nfn read_input() -> i32 { 7 }\n\n#[test]\nfn t() {\n    let v = read_input();\n    assert_eq!(thr(v), false);\n}\n",
+        ),
+    ] {
+        let findings = findings("    x >= 100", "    x > 100", test)?;
+        let predicate =
+            family(&findings, "predicate").map_err(|error| format!("{name}: {error}"))?;
+        assert_eq!(
+            predicate.class,
+            ExposureClass::InfectionUnknown,
+            "{name} predicate setup must be nonempty/unknown: {predicate:?}"
+        );
+        let return_value =
+            family(&findings, "return_value").map_err(|error| format!("{name}: {error}"))?;
+        assert_eq!(
+            return_value.ripr.infect.state,
+            StageState::Unknown,
+            "{name} return_value must not derive infect=yes from unseen input: {return_value:?}"
+        );
+        assert_eq!(
+            return_value.class,
+            ExposureClass::InfectionUnknown,
+            "{name} return_value: {return_value:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_visible_boundary_input_keeps_the_operator_change_exposed() -> Result<(), String> {
+    // Positive control for #13040: 100 is true under `>= 100`, false under
+    // `> 100`, so a visible literal at the boundary separates the versions.
+    let findings = findings(
+        "    x >= 100",
+        "    x > 100",
+        "use thr::thr;\n\n#[test]\nfn at() {\n    assert!(thr(100));\n}\n\n#[test]\nfn below() {\n    assert!(!thr(99));\n}\n",
+    )?;
+    let return_value = family(&findings, "return_value")?;
+    assert_eq!(
+        return_value.class,
+        ExposureClass::Exposed,
         "{return_value:?}"
     );
     Ok(())
@@ -223,7 +289,7 @@ fn a_returned_compound_predicate_keeps_the_return_value_reading() -> Result<(), 
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -245,7 +311,7 @@ fn an_operator_change_keeps_the_return_value_reading() -> Result<(), String> {
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -275,7 +341,7 @@ fn an_explicit_return_is_read_at_its_boundary_like_the_tail_form() -> Result<(),
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -300,7 +366,7 @@ fn an_explicit_return_followed_by_a_tab_is_read_at_its_boundary() -> Result<(), 
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -341,7 +407,7 @@ fn an_explicit_return_operator_change_keeps_the_return_value_reading() -> Result
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -361,7 +427,7 @@ fn an_explicit_return_of_a_compound_value_keeps_the_return_value_reading() -> Re
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         "{return_value:?}"
     );
     Ok(())
@@ -376,7 +442,7 @@ fn assert_gap_named(findings: &[Finding], named: bool) -> Result<(), String> {
             .ripr
             .infect
             .summary
-            .contains("equality-boundary discriminator is missing"),
+            .contains("equality-boundary check is missing"),
         named,
         "{return_value:?}"
     );
@@ -1595,5 +1661,257 @@ fn a_bare_call_with_no_placeable_owner_identity_reads_infection_unknown() -> Res
         let results = remapped_package_case(test)?;
         assert_identity_unresolved(&results)?;
     }
+    Ok(())
+}
+
+#[test]
+fn computed_local_boundary_and_unseen_input_delegate_unknown() -> Result<(), String> {
+    let findings = findings_after(
+        "    let threshold = x + 1;\n",
+        "    x >= threshold",
+        "    x > threshold",
+        "use thr::thr;\n#[test]\nfn t() { let v = std::env::var(\"X\").unwrap().len() as i32; assert_eq!(thr(v), true); }\n",
+    )?;
+    let predicate = family(&findings, "predicate")?;
+    assert_eq!(
+        predicate.ripr.infect.state,
+        StageState::Unknown,
+        "{predicate:?}"
+    );
+    let returned = family(&findings, "return_value")?;
+    assert_eq!(
+        returned.ripr.infect.state,
+        StageState::Unknown,
+        "{returned:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn compound_return_masks_are_not_exposed() -> Result<(), String> {
+    let cases = [
+        (
+            "label: &str, on: bool",
+            "label == \"alpha\" && on",
+            "label == \"beta\" && on",
+            "assert_eq!(thr(\"alpha\", false), false);\nassert_eq!(thr(\"beta\", false), false);",
+        ),
+        (
+            "label: &str, on: bool",
+            "on && label == \"alpha\"",
+            "on && label == \"beta\"",
+            "assert_eq!(thr(\"alpha\", false), false);\nassert_eq!(thr(\"beta\", false), false);",
+        ),
+        (
+            "label: &str, on: bool",
+            "label == \"alpha\" || on",
+            "label == \"beta\" || on",
+            "assert_eq!(thr(\"alpha\", true), true);\nassert_eq!(thr(\"beta\", true), true);",
+        ),
+        (
+            "label: &str, on: bool",
+            "on || label == \"alpha\"",
+            "on || label == \"beta\"",
+            "assert_eq!(thr(\"alpha\", true), true);\nassert_eq!(thr(\"beta\", true), true);",
+        ),
+        (
+            "x: i32, on: bool",
+            "x > 5 && on",
+            "x >= 5 && on",
+            "assert_eq!(thr(5, false), false);",
+        ),
+        (
+            "x: i32, on: bool",
+            "on && x > 5",
+            "on && x >= 5",
+            "assert_eq!(thr(5, false), false);",
+        ),
+        (
+            "x: i32, on: bool",
+            "x > 5 || on",
+            "x >= 5 || on",
+            "assert_eq!(thr(5, true), true);",
+        ),
+        (
+            "x: i32, on: bool",
+            "on || x > 5",
+            "on || x >= 5",
+            "assert_eq!(thr(5, true), true);",
+        ),
+    ];
+    for (parameters, old, new, body) in cases {
+        let test = format!("use thr::thr;\n#[test]\nfn t() {{\n{body}\n}}\n");
+        let findings = findings_with_parameter(
+            parameters,
+            "",
+            "",
+            &format!("    {new}"),
+            &format!("    {old}"),
+            &test,
+        )?;
+        let predicate = family(&findings, "predicate")?;
+        let returned = family(&findings, "return_value")?;
+        assert_ne!(
+            predicate.class,
+            ExposureClass::Exposed,
+            "{new}: {predicate:?}"
+        );
+        assert_ne!(
+            returned.class,
+            ExposureClass::Exposed,
+            "{new}: {returned:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn compound_return_unmasked_boundary_keeps_the_baseline_reading() -> Result<(), String> {
+    let cases = [
+        (
+            "x > 5 && on",
+            "x >= 5 && on",
+            "assert_eq!(thr(5, true), true);",
+            ExposureClass::Exposed,
+        ),
+        (
+            "x > 5 || on",
+            "x >= 5 || on",
+            "assert_eq!(thr(5, false), true);",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "x > 5 && on",
+            "x >= 5 && on",
+            "assert_eq!(thr(5, false), false);\nassert_eq!(thr(5, true), true);",
+            ExposureClass::Exposed,
+        ),
+    ];
+    for (old, new, body, expected) in cases {
+        let test = format!("use thr::thr;\n#[test]\nfn t() {{\n{body}\n}}\n");
+        let findings = findings_with_parameter(
+            "x: i32, on: bool",
+            "",
+            "",
+            &format!("    {new}"),
+            &format!("    {old}"),
+            &test,
+        )?;
+        let predicate = family(&findings, "predicate")?;
+        let returned = family(&findings, "return_value")?;
+        assert_eq!(
+            predicate.class,
+            ExposureClass::PropagationUnknown,
+            "{new}: {predicate:?}"
+        );
+        assert_eq!(returned.class, expected, "{new}: {returned:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn compound_string_return_pairs_the_reachable_qualified_call() -> Result<(), String> {
+    let findings = findings_with_parameter(
+        "label: &str, on: bool",
+        "",
+        "",
+        r#"    label == "beta" && on"#,
+        r#"    label == "alpha" && on"#,
+        r#"#[test]
+fn t() {
+    assert_eq!(thr::thr("beta", false), false);
+    assert_eq!(thr::thr("beta", true), true);
+}
+"#,
+    )?;
+    let returned = family(&findings, "return_value")?;
+    assert_eq!(returned.class, ExposureClass::Exposed, "{returned:?}");
+    Ok(())
+}
+
+#[test]
+fn bare_boolean_pin_pairs_only_the_reachable_comparison() -> Result<(), String> {
+    for (assertion, expected) in [
+        ("assert!(thr(5, true));", ExposureClass::Exposed),
+        (
+            "let v = thr(5, true);\nassert_eq!(v, true);",
+            ExposureClass::Exposed,
+        ),
+        (
+            "assert!(!thr(5, false));",
+            ExposureClass::PropagationUnknown,
+        ),
+    ] {
+        let test = format!("use thr::thr;\n#[test]\nfn t() {{\n{assertion}\n}}\n");
+        let findings = findings_with_parameter(
+            "x: i32, on: bool",
+            "",
+            "",
+            "    x >= 5 && on",
+            "    x > 5 && on",
+            &test,
+        )?;
+        let returned = family(&findings, "return_value")?;
+        assert_eq!(returned.class, expected, "{returned:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn masked_boundary_is_not_rescued_by_an_unmasked_non_boundary_call() -> Result<(), String> {
+    let test = "use thr::thr;\n#[test]\nfn t() {\nassert_eq!(thr(5, false), false);\nassert_eq!(thr(9, true), true);\n}\n";
+    let findings = findings_with_parameter(
+        "x: i32, on: bool",
+        "",
+        "",
+        "    x >= 5 && on",
+        "    x > 5 && on",
+        test,
+    )?;
+    let predicate = family(&findings, "predicate")?;
+    let returned = family(&findings, "return_value")?;
+    assert_ne!(predicate.class, ExposureClass::Exposed, "{predicate:?}");
+    assert_ne!(returned.class, ExposureClass::Exposed, "{returned:?}");
+    Ok(())
+}
+
+#[test]
+fn compound_return_with_unknown_gate_does_not_claim_propagation() -> Result<(), String> {
+    let test = "use thr::thr;\n#[test]\nfn t() {\nlet on = std::hint::black_box(false);\nassert_eq!(thr(5, on), false);\n}\n";
+    let findings = findings_with_parameter(
+        "x: i32, on: bool",
+        "",
+        "",
+        "    x >= 5 && on",
+        "    x > 5 && on",
+        test,
+    )?;
+    let predicate = family(&findings, "predicate")?;
+    let returned = family(&findings, "return_value")?;
+    assert_ne!(predicate.class, ExposureClass::Exposed, "{predicate:?}");
+    assert_ne!(returned.class, ExposureClass::Exposed, "{returned:?}");
+    assert_ne!(
+        returned.ripr.propagate.state,
+        StageState::Yes,
+        "{returned:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn unobserved_discriminating_call_does_not_borrow_another_calls_oracle() -> Result<(), String> {
+    let test = "use thr::thr;\n#[test]\nfn t() {\nlet _ = thr(5, true);\nassert_eq!(thr(9, true), true);\n}\n";
+    let findings = findings_with_parameter(
+        "x: i32, on: bool",
+        "",
+        "",
+        "    x >= 5 && on",
+        "    x > 5 && on",
+        test,
+    )?;
+    let predicate = family(&findings, "predicate")?;
+    let returned = family(&findings, "return_value")?;
+    assert_ne!(predicate.class, ExposureClass::Exposed, "{predicate:?}");
+    assert_ne!(returned.class, ExposureClass::Exposed, "{returned:?}");
     Ok(())
 }

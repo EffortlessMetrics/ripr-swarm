@@ -154,3 +154,112 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (13)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (14)
+
+Reason:
+RIPR-SPEC-0122: the digest drops the generic Why unknown hint when the rust_indirect_owner_call_unresolved Analyzer limit and Next step already name the reason, keeping the first-view check on fastrand-2.3.0 within the 60-line read budget (#11519)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (15)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (16)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (17)
+
+Reason:
+RIPR-SPEC-0197: a same-name path qualifier is not the owner passed as a function value, so the indirect-owner limit no longer withholds the weak-oracle gap
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_owner (18)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_nested_use_owner (19)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_nested_use_owner (20)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_nested_use_owner (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_nested_use_owner --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

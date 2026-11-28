@@ -287,8 +287,10 @@ fn multiline_literals_use_complete_unshared_layout_without_spacing_loss() {
                 super::super::JsonPointerWording::CheckFlag,
             );
             let commands = format!(
-                "Drill in:\n  ripr explain {}\n  ripr context --at {}\n",
-                finding.id, finding.id
+                "Drill in:\n  {}\n  ripr explain {}\n  ripr context --at {}\n",
+                crate::output::human::FINDING_ID_COMMAND_LABEL,
+                finding.id,
+                finding.id
             );
             assert_eq!(expected.matches(&body).count(), 1);
             expected = expected.replacen(&body, &(body.clone() + &commands), 1);

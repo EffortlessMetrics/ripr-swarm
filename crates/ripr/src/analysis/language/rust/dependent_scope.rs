@@ -150,15 +150,15 @@ impl DependentScopeMode {
     fn from_env_value(value: Result<String, std::env::VarError>) -> Result<Self, String> {
         match value {
             Err(std::env::VarError::NotPresent) => Ok(Self::Auto),
-            Err(std::env::VarError::NotUnicode(_)) => {
-                Err(format!("{DEPENDENT_SCOPE_ENV} must be valid UTF-8"))
-            }
+            Err(std::env::VarError::NotUnicode(_)) => Err(format!(
+                "{DEPENDENT_SCOPE_ENV} must be valid UTF-8; set it to `auto`, `named` or `full`, or unset it to use `auto`"
+            )),
             Ok(raw) => match raw.trim() {
                 "" | "auto" => Ok(Self::Auto),
                 "named" => Ok(Self::NameAdmitted),
                 "full" => Ok(Self::Full),
                 other => Err(format!(
-                    "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `{other}`"
+                    "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `{other}`; set one of those, or unset it to use `auto`"
                 )),
             },
         }
@@ -299,15 +299,26 @@ impl AdmissionQuery {
         // Calling it per changed-span owner re-parsed crates/ripr on every
         // doctor.rs / cli_smoke.rs function and hung PR evidence at 3600s.
         let unseen = classify::UnseenReachNames::build(index);
-        for facts in index.files().values() {
-            if facts.source.contains("macro_rules") {
-                query
-                    .empty_macro_names
-                    .extend(crate::analysis::syntax::local_empty_macro_names(
-                        &facts.source,
-                    ));
-            }
-        }
+        // Each file's parse is independent and the answer is a name set, so
+        // the scan fans out over the rayon pool; the union is order-free.
+        let macro_sources: Vec<&str> = index
+            .files()
+            .values()
+            .map(|facts| facts.data().source.as_ref())
+            .filter(|source| source.contains("macro_rules"))
+            .collect();
+        query.empty_macro_names.extend(
+            macro_sources
+                .par_iter()
+                .fold(BTreeSet::new, |mut acc, source| {
+                    acc.extend(crate::analysis::syntax::local_empty_macro_names(source));
+                    acc
+                })
+                .reduce(BTreeSet::new, |mut left, right| {
+                    left.extend(right);
+                    left
+                }),
+        );
         for (file, lines) in changed_lines {
             query
                 .package_prefixes
@@ -762,7 +773,7 @@ pub(super) fn admit_dependents(
                 loaded.push((file, bytes));
             }
         }
-        let scanned: Vec<Result<Option<FileTokens>, String>> = loaded
+        let scanned: Vec<Result<Option<(FileTokens, bool)>, String>> = loaded
             .par_iter()
             .map(|(file, bytes)| {
                 cancellation::with_optional_token(token.as_ref(), || {
@@ -771,7 +782,17 @@ pub(super) fn admit_dependents(
                         .iter()
                         .any(|registration| registration.target == **file);
                     let admit = !core_only && (harness_target || query.admits(bytes));
-                    Ok((!admit).then(|| FileTokens::scan(bytes)))
+                    // The routing probe parses the file, so it runs here on
+                    // the worker beside the token scan, not on the serial
+                    // fold below.
+                    Ok((!admit).then(|| {
+                        (
+                            FileTokens::scan(bytes),
+                            crate::analysis::workspace::withheld_source_disables_crate_root_routing(
+                                file, bytes,
+                            ),
+                        )
+                    }))
                 })
             })
             .collect();
@@ -784,10 +805,8 @@ pub(super) fn admit_dependents(
                     }
                     admitted.push((*file).clone());
                 }
-                Some(file_tokens) => {
-                    if crate::analysis::workspace::withheld_source_disables_crate_root_routing(
-                        file, bytes,
-                    ) {
+                Some((file_tokens, disables_routing)) => {
+                    if disables_routing {
                         withheld_routing_disabled = true;
                     }
                     let id = u32::try_from(withheld.len()).map_err(|err| {
@@ -1672,12 +1691,12 @@ mod tests {
                 })
                 .collect(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -1714,12 +1733,14 @@ mod tests {
                     line: 1,
                     name: "relay".to_string(),
                     text: "relay".into(),
-                }],
+                }]
+                .into(),
                 assertions: Vec::new(),
-                literals: Vec::new(),
-                attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+                generated: None,
             }],
             ..Default::default()
         });
@@ -1903,14 +1924,14 @@ mod tests {
                     start_line: start,
                     end_line: start,
                     body: String::new().into(),
-                    calls: Vec::new(),
+                    calls: crate::analysis::facts::SharedFactSlice::empty(),
                     returns: Vec::new(),
-                    literals: Vec::new(),
+                    literals: crate::analysis::facts::SharedFactSlice::empty(),
                     source_role: FunctionSourceRole::Production,
-                    attrs: Vec::new(),
+                    attrs: crate::analysis::facts::SharedFactSlice::empty(),
                     impl_attrs: Vec::new(),
-                    nested_fn_names: Vec::new(),
-                    let_bindings: Vec::new(),
+                    nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                    let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                     item: Default::default(),
                     impl_context: Default::default(),
                 });
@@ -2145,7 +2166,7 @@ mod tests {
     }
 
     #[test]
-    fn withheld_macro_bindings_saturate_on_a_foreign_glob() {
+    fn withheld_macro_bindings_saturate_only_on_an_every_name_site() {
         let packages = BTreeSet::from(["core".to_string()]);
         let mut bindings = classify::WithheldMacroBindings::default();
         // A crate root's private glob reaches only its own crate, so it is
@@ -2160,7 +2181,10 @@ mod tests {
         let path = Path::new("e/src/util.rs");
         assert!(!bindings.absorb(path, "fn plain() {}", &packages, &none));
         assert!(!bindings.absorb(path, "use core::prelude::*;", &packages, &none));
-        assert!(bindings.absorb(path, "use proptest::prelude::*;", &packages, &none));
+        // A foreign glob cannot rebind a core prelude macro (#16060), so a
+        // later file may still bind one and the fold goes on.
+        assert!(!bindings.absorb(path, "use proptest::prelude::*;", &packages, &none));
+        assert!(bindings.absorb(path, "#[macro_use]\nextern crate other;", &packages, &none));
         assert!(bindings.absorb(path, "fn plain() {}", &packages, &none));
     }
 
@@ -2201,7 +2225,7 @@ mod tests {
         assert_eq!(
             DependentScopeMode::from_env_value(Ok("all".to_string())),
             Err(format!(
-                "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `all`"
+                "{DEPENDENT_SCOPE_ENV} must be `auto`, `named` or `full`, got `all`; set one of those, or unset it to use `auto`"
             ))
         );
     }

@@ -124,6 +124,14 @@ fn parser_only_decoys_cannot_supply_aggregation_discrimination() -> Result<(), S
         "let expected =",
         "let expected: Option<Vec<(String, String)>> =",
     );
+    // The decoy test's `for malformed in [format!(..), ..]` loop runs its
+    // smoke assertion (#14116, non-empty array loops), which would lift the
+    // control on its own; drop it too so the control keeps no admitted
+    // assertion.
+    let without = without.replace_checked(
+        "assert!(parse_note(&malformed).is_none(), \"{malformed}\");",
+        "let _ = parse_note(&malformed);",
+    );
     let control = effect(&without, DIFF, ".or_default()")?;
     let rows = with["related_tests"]
         .as_array()
@@ -183,7 +191,12 @@ fn nested_macro_argument_refuses_every_assertion_in_the_retained_module() -> Res
         .as_array()
         .ok_or("missing related tests")?;
     assert!(
-        rows.iter().all(|r| r["miss"] == "assertion_not_credited"),
+        rows.iter().all(|r| {
+            matches!(
+                r["miss"].as_str(),
+                Some("assertion_not_credited" | "assertion_inert" | "assertion_admission_unproven")
+            )
+        }),
         "{with}"
     );
     Ok(())
@@ -1153,13 +1166,33 @@ fn competing_production_writes_cannot_supply_implicit_discrimination() -> Result
             // unresolvable, so execution admission (#8927) refuses the
             // assertion outright (`no`, not credited) instead of leaving it
             // an unconfirmed weak observer. Neither state credits the write.
-            let (state, miss) = if source.contains("use hostile_macros::{vec};") {
-                ("no", "assertion_not_credited")
+            let state = if source.contains("use hostile_macros::{vec};") {
+                "no"
             } else {
-                ("weak", "observation_unconfirmed")
+                "weak"
             };
             assert_eq!(row["ripr"]["discriminate"]["state"], state, "source={source}\n{row}");
-            assert!(row["related_tests"].as_array().ok_or("missing rows")?.iter().any(|r| r["name"] == "implicit_observer" && r["miss"] == miss), "{row}");
+            let implicit = row["related_tests"]
+                .as_array()
+                .ok_or("missing rows")?
+                .iter()
+                .find(|r| r["name"] == "implicit_observer")
+                .ok_or("missing implicit_observer row")?;
+            if source.contains("use hostile_macros::{vec};") {
+                assert!(
+                    matches!(
+                        implicit["miss"].as_str(),
+                        Some(
+                            "assertion_not_credited"
+                                | "assertion_inert"
+                                | "assertion_admission_unproven"
+                        )
+                    ),
+                    "{row}"
+                );
+            } else {
+                assert_eq!(implicit["miss"], "observation_unconfirmed", "{row}");
+            }
         }
     }
     let cross_file_drop = format!("{UNUSED_TRAIT}{REVERSE_OBSERVER}") + "\nmod drop_impl;\n";

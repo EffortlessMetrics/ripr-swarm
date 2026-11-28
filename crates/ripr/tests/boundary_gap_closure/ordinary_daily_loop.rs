@@ -487,6 +487,10 @@ fn process_observation_pid() -> Result<u32, String> {
         .map_err(|error| format!("parse process observation identity: {error}"))
 }
 
+/// `errno` for "No such process" on Linux.
+#[cfg(target_os = "linux")]
+const ESRCH: i32 = 3;
+
 #[cfg(target_os = "linux")]
 fn process_stopped(pid: u32) -> Result<bool, String> {
     match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
@@ -498,6 +502,10 @@ fn process_stopped(pid: u32) -> Result<bool, String> {
             Ok(matches!(state, "Z" | "X"))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        // A task that exits while its `/proc/<pid>/stat` is being read answers
+        // ESRCH (3), which Rust does not classify as `NotFound` (ENOENT, 2).
+        // The process is gone, so it is stopped (#12874, #12878).
+        Err(error) if error.raw_os_error() == Some(ESRCH) => Ok(true),
         Err(error) => Err(format!("read process {pid}: {error}")),
     }
 }

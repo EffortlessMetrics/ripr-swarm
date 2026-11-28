@@ -308,7 +308,7 @@ fn an_already_unknown_finding_names_the_budget_and_drops_call_derived_absence() 
     assert_eq!(limit(&finding), Some("rust_call_fact_budget"));
     for line in &finding.missing {
         assert!(
-            !line.starts_with("No ") && !line.starts_with("Missing discriminator value"),
+            !line.starts_with("No ") && !line.starts_with("Missing check value"),
             "call-derived absence line remained: {line}"
         );
     }

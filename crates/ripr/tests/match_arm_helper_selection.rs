@@ -150,6 +150,18 @@ fn spades_are_black() {
 }
 "#;
 
+// #8467 finding 3: a macro whose definition is not in this file, invoked at
+// statement position with an item spelled in its arguments. The item lands in
+// the test body and shadows the imported owner for the call that follows.
+const STATEMENT_ITEM_MACRO_TEST: &str = r#"use match_arm_helper_selection::suit_color;
+
+#[test]
+fn spades_are_black() {
+    support::emit!(fn suit_color(_s: char) -> &'static str { "black" });
+    assert_eq!(suit_color('S'), "black");
+}
+"#;
+
 struct TempRepo {
     root: PathBuf,
 }
@@ -348,6 +360,83 @@ fn a_macro_defining_an_unrelated_fn_still_exposes_the_arm() -> Result<(), String
             "a macro that defines `other_helper` cannot shadow `suit_color`: {:?}",
             finding.ripr.reveal.discriminate
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_statement_macro_spelling_a_same_named_fn_does_not_expose_the_arm() -> Result<(), String> {
+    // Controls: the same statement macro spelling another item's name, a
+    // longer name, or calling the owner declares no `suit_color`.
+    let spelled = "support::emit!(fn suit_color(_s: char) -> &'static str { \"black\" });";
+    for replacement in [
+        "support::emit!(fn other_name(_s: char) -> &'static str { \"black\" });",
+        "support::emit!(fn suit_color_total(_s: char) -> &'static str { \"black\" });",
+        "support::emit!(suit_color('H'));",
+    ] {
+        let control = STATEMENT_ITEM_MACRO_TEST.replace(spelled, replacement);
+        assert_ne!(control, STATEMENT_ITEM_MACRO_TEST, "control must differ");
+        let repo = TempRepo::create(&control)?;
+        let control_output = repo.check()?;
+        let arms = changed_arms(&control_output)?;
+        assert!(!arms.is_empty(), "the changed arm must be analyzed");
+        for finding in arms {
+            assert_eq!(
+                finding.class,
+                ripr::ExposureClass::Exposed,
+                "control `{replacement}`: the import reaches the owner: {:?}",
+                finding.ripr.reveal.discriminate
+            );
+        }
+    }
+    for shadow in [
+        spelled,
+        "emit!(fn suit_color(_s: char) -> &'static str { \"black\" });",
+        "emit! { fn suit_color(_s: char) -> &'static str { \"black\" } }",
+        "emit!(const fn suit_color(_s: char) -> &'static str { \"black\" });",
+    ] {
+        let source = STATEMENT_ITEM_MACRO_TEST.replace(spelled, shadow);
+        assert!(source.contains(shadow), "the shadow must be present");
+        let repo = TempRepo::create(&source)?;
+        let output = repo.check()?;
+        let arms = changed_arms(&output)?;
+        assert!(!arms.is_empty(), "the changed arm must be analyzed");
+        for finding in arms {
+            assert_ne!(
+                finding.class,
+                ripr::ExposureClass::Exposed,
+                "`{shadow}` may put its own `suit_color` in the body; the call may not reach the owner: {:?}",
+                finding.ripr.reveal.discriminate
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_std_expression_macro_spelling_a_same_named_fn_still_exposes_the_arm() -> Result<(), String> {
+    // #8467 finding 7: `stringify!` expands to a string literal, so the item
+    // it spells is never defined. The same tokens handed to a macro whose
+    // expansion is unread withhold the credit (the test above).
+    let spelled = "support::emit!(fn suit_color(_s: char) -> &'static str { \"black\" });";
+    for replacement in [
+        "stringify!(fn suit_color(_s: char) -> &'static str { \"black\" });",
+        "std::stringify!(fn suit_color(_s: char) -> &'static str { \"black\" });",
+    ] {
+        let source = STATEMENT_ITEM_MACRO_TEST.replace(spelled, replacement);
+        assert_ne!(source, STATEMENT_ITEM_MACRO_TEST, "source must differ");
+        let repo = TempRepo::create(&source)?;
+        let output = repo.check()?;
+        let arms = changed_arms(&output)?;
+        assert!(!arms.is_empty(), "the changed arm must be analyzed");
+        for finding in arms {
+            assert_eq!(
+                finding.class,
+                ripr::ExposureClass::Exposed,
+                "`{replacement}` defines no item; the import reaches the owner: {:?}",
+                finding.ripr.reveal.discriminate
+            );
+        }
     }
     Ok(())
 }

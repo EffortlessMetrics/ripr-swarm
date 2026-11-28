@@ -1,0 +1,1762 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.effortlessmetrics.dev/ripr/rerun.schema.json",
+  "title": "RIPR Targeted Rerun Report",
+  "description": "The report `ripr rerun --json` writes to stdout (or to `--out`) when it can analyze the selected scope: the seams a changed test or a gap ledger record selects, recomputed from current source, with the file-fact cache work it took. `--before` adds static movement against an earlier report; `--check-parity` compares the selected seams with a full-pipeline run. A selector that names nothing usable is a `limited` report with a named `limitation`, not a refusal. Every claim is static evidence; nothing here establishes runtime mutation behavior or test adequacy. The refusal written with exit code 2 is `rerun-refusal.schema.json`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "state",
+    "selector",
+    "cache",
+    "seams",
+    "authority_boundary"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "ripr-targeted-rerun-v1"
+    },
+    "state": {
+      "description": "`current_state_only`: current evidence, no movement claim. `limited`: see `limitation`. Otherwise the `--before` movement state.",
+      "enum": [
+        "current_state_only",
+        "limited",
+        "closed",
+        "improved",
+        "unchanged",
+        "regressed"
+      ]
+    },
+    "selector": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/changed_test_selector"
+        },
+        {
+          "$ref": "#/$defs/gap_selector"
+        }
+      ]
+    },
+    "cache": {
+      "$ref": "#/$defs/cache"
+    },
+    "seams": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/seam"
+      }
+    },
+    "movement": {
+      "$ref": "#/$defs/movement"
+    },
+    "parity": {
+      "$ref": "#/$defs/parity"
+    },
+    "route": {
+      "$ref": "#/$defs/route"
+    },
+    "limitation": {
+      "description": "Why the report is `limited`. The kind is a stable snake_case name; `movement_indeterminate`, `before_artifact_*` and `full_pipeline_parity_*` come from `--before` and `--check-parity`, the others from the selector.",
+      "$ref": "#/$defs/limitation"
+    },
+    "scope_limitations": {
+      "description": "Per gap ledger record: anchors that could not be resolved or were resolved by owner. Only a gap selector writes it.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/scope_limitation"
+      }
+    },
+    "authority_boundary": {
+      "enum": [
+        "static evidence only; no before snapshot was supplied, so gap movement is not inferred",
+        "static before/after evidence only; movement does not establish runtime mutation behavior, correctness, coverage adequacy, or complete test quality",
+        "static evidence only; explicit before-state movement was unavailable, so no improvement, closure, unchanged, or regression claim is made"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "description": "`limitation` is present exactly when the report is `limited`.",
+      "if": {
+        "required": [
+          "limitation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "limited"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "state": {
+            "enum": [
+              "current_state_only",
+              "closed",
+              "improved",
+              "unchanged",
+              "regressed"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "description": "A movement section carries the report state and the before/after boundary; without one the state makes no movement claim.",
+      "if": {
+        "required": [
+          "movement"
+        ]
+      },
+      "then": {
+        "properties": {
+          "authority_boundary": {
+            "const": "static before/after evidence only; movement does not establish runtime mutation behavior, correctness, coverage adequacy, or complete test quality"
+          },
+          "state": {
+            "enum": [
+              "closed",
+              "improved",
+              "unchanged",
+              "regressed",
+              "limited"
+            ]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "authority_boundary": {
+            "enum": [
+              "static evidence only; no before snapshot was supplied, so gap movement is not inferred",
+              "static evidence only; explicit before-state movement was unavailable, so no improvement, closure, unchanged, or regression claim is made"
+            ]
+          },
+          "state": {
+            "enum": [
+              "current_state_only",
+              "limited"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "movement"
+        ],
+        "properties": {
+          "movement": {
+            "properties": {
+              "state": {
+                "const": "closed"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "closed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "movement"
+        ],
+        "properties": {
+          "movement": {
+            "properties": {
+              "state": {
+                "const": "improved"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "improved"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "movement"
+        ],
+        "properties": {
+          "movement": {
+            "properties": {
+              "state": {
+                "const": "unchanged"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "unchanged"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "movement"
+        ],
+        "properties": {
+          "movement": {
+            "properties": {
+              "state": {
+                "const": "regressed"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "regressed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "movement"
+        ],
+        "properties": {
+          "movement": {
+            "properties": {
+              "state": {
+                "const": "limited"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "state": {
+            "const": "limited"
+          }
+        }
+      }
+    },
+    {
+      "description": "A `limited` movement is `movement_indeterminate`.",
+      "if": {
+        "required": [
+          "movement"
+        ],
+        "properties": {
+          "movement": {
+            "properties": {
+              "state": {
+                "const": "limited"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "limitation"
+        ],
+        "properties": {
+          "limitation": {
+            "properties": {
+              "kind": {
+                "const": "movement_indeterminate"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "`movement_indeterminate` is only written after a before/after comparison, so it carries a movement section.",
+      "if": {
+        "required": [
+          "limitation"
+        ],
+        "properties": {
+          "limitation": {
+            "properties": {
+              "kind": {
+                "const": "movement_indeterminate"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "movement"
+        ]
+      }
+    },
+    {
+      "description": "An unusable `--before` artifact makes no movement claim.",
+      "if": {
+        "required": [
+          "limitation"
+        ],
+        "properties": {
+          "limitation": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "before_artifact_unavailable",
+                  "before_artifact_incompatible"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "authority_boundary": {
+            "const": "static evidence only; explicit before-state movement was unavailable, so no improvement, closure, unchanged, or regression claim is made"
+          }
+        },
+        "not": {
+          "required": [
+            "movement"
+          ]
+        }
+      },
+      "else": {
+        "properties": {
+          "authority_boundary": {
+            "enum": [
+              "static evidence only; no before snapshot was supplied, so gap movement is not inferred",
+              "static before/after evidence only; movement does not establish runtime mutation behavior, correctness, coverage adequacy, or complete test quality"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "description": "A `limited` parity result is the report's limitation.",
+      "if": {
+        "required": [
+          "parity"
+        ],
+        "properties": {
+          "parity": {
+            "properties": {
+              "state": {
+                "const": "limited"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "limitation"
+        ],
+        "properties": {
+          "limitation": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "full_pipeline_parity_incomplete",
+                  "full_pipeline_parity_mismatch",
+                  "full_pipeline_parity_input_mismatch"
+                ]
+              }
+            }
+          }
+        },
+        "not": {
+          "required": [
+            "movement"
+          ]
+        }
+      }
+    },
+    {
+      "description": "A `full_pipeline_parity_*` limitation is only written beside a `limited` parity result.",
+      "if": {
+        "required": [
+          "limitation"
+        ],
+        "properties": {
+          "limitation": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "full_pipeline_parity_incomplete",
+                  "full_pipeline_parity_mismatch",
+                  "full_pipeline_parity_input_mismatch"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "parity"
+        ],
+        "properties": {
+          "parity": {
+            "properties": {
+              "state": {
+                "const": "limited"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "Only a gap selector writes a route or scope limitations.",
+      "if": {
+        "properties": {
+          "selector": {
+            "properties": {
+              "kind": {
+                "const": "changed_test"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "allOf": [
+          {
+            "not": {
+              "required": [
+                "route"
+              ]
+            }
+          },
+          {
+            "not": {
+              "required": [
+                "scope_limitations"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "changed_test_selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "changed_test",
+        "selected_test_count",
+        "direct_call_names"
+      ],
+      "properties": {
+        "kind": {
+          "const": "changed_test"
+        },
+        "changed_test": {
+          "description": "The changed test file relative to the root, with `::<test>` when one test was named. Empty when `--changed-test` names the root itself; such a selector resolves to nothing and the report is `limited`.",
+          "type": "string"
+        },
+        "selected_test_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "direct_call_names": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "gap_selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "canonical_gap_id",
+        "gap_ledger",
+        "matched_record_count",
+        "recomputed_scope_count",
+        "selected_test_count",
+        "direct_call_names"
+      ],
+      "properties": {
+        "kind": {
+          "const": "canonical_gap"
+        },
+        "canonical_gap_id": {
+          "description": "The `--gap` value as given. Empty when `--gap \"\"` was passed; such a selector matches no ledger record and the report is `limited`.",
+          "type": "string"
+        },
+        "gap_ledger": {
+          "description": "The ledger path as given on the command line.",
+          "type": "string",
+          "minLength": 1
+        },
+        "matched_record_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recomputed_scope_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selected_test_count": {
+          "description": "A gap selector selects scopes, not tests, so this is always 0.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 0
+        },
+        "direct_call_names": {
+          "type": "array",
+          "maxItems": 0
+        }
+      }
+    },
+    "cache": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "reuse_state",
+        "file_fact_status",
+        "hits",
+        "misses",
+        "corrupt_ignored",
+        "stores",
+        "store_errors",
+        "store_failures",
+        "store_failures_dropped",
+        "recomputation_reasons",
+        "invalidation_status"
+      ],
+      "properties": {
+        "schema_version": {
+          "description": "The file-fact cache layer version, not this document's version.",
+          "type": "string",
+          "minLength": 1
+        },
+        "reuse_state": {
+          "description": "`not_run` when no selected scope was analyzed.",
+          "enum": [
+            "reused_file_facts",
+            "recomputed_file_facts",
+            "mixed_file_fact_reuse",
+            "not_run"
+          ]
+        },
+        "file_fact_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "misses": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "corrupt_ignored": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stores": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "store_errors": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "store_failures": {
+          "description": "Bounded rows behind `store_errors`, at most 32; the rows plus `store_failures_dropped` equal `store_errors`.",
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "stage",
+              "error"
+            ],
+            "properties": {
+              "path": {
+                "description": "Null when the path is not portable.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "stage": {
+                "type": "string",
+                "minLength": 1
+              },
+              "error": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "store_failures_dropped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "recomputation_reasons": {
+          "description": "Why work was recomputed: `selected_test_scope_recomputed`, `selected_gap_scopes_recomputed`, `corrupt_file_fact_ignored`, `file_fact_store_error`, `file_content_changed:<path>`, or `input_changed:<input>` for an input that differs from the `--before` artifact.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "invalidation_status": {
+          "description": "`workspace_input_changed` when `--before` named a changed input; `file_content_changed` when cached file facts were invalidated; otherwise `not_available`.",
+          "enum": [
+            "not_available",
+            "file_content_changed",
+            "workspace_input_changed"
+          ]
+        },
+        "input_fingerprint": {
+          "$ref": "#/$defs/input_fingerprint"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reuse_state": {
+                "const": "not_run"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "hits": {
+                "maximum": 0
+              },
+              "misses": {
+                "maximum": 0
+              },
+              "stores": {
+                "maximum": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "input_fingerprint": {
+      "description": "The workspace inputs the selected seams were computed from. `--before` compares it with the before artifact's fingerprint and names each changed input in `recomputation_reasons`; `--check-parity` compares it with the full pipeline's.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "analyzer_version",
+        "workspace_root_hash",
+        "files_content_hash",
+        "cfg_features_hash",
+        "config_hash",
+        "test_intent_hash",
+        "suppressions_hash",
+        "workspace_manifests_hash",
+        "lockfile_hash",
+        "toolchain_hash",
+        "seam_limit_key",
+        "selector_ledger_hash",
+        "graph_provenance"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "analyzer_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_root_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "files_content_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cfg_features_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "test_intent_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "suppressions_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_manifests_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lockfile_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "toolchain_hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seam_limit_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selector_ledger_hash": {
+          "description": "`not_applicable` for a changed-test selector; a hash of the gap ledger bytes for a gap selector.",
+          "type": "string",
+          "minLength": 1
+        },
+        "graph_provenance": {
+          "$ref": "#/$defs/graph_provenance"
+        }
+      }
+    },
+    "graph_provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "package_graph_status",
+        "package_graph_hash",
+        "package_graph_detail",
+        "feature_graph_status",
+        "feature_graph_hash",
+        "feature_graph_detail",
+        "external_dependency_graph_status",
+        "external_dependency_graph_detail",
+        "path_dependency_graph"
+      ],
+      "properties": {
+        "package_graph_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "package_graph_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "package_graph_detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "feature_graph_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "feature_graph_hash": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "feature_graph_detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "external_dependency_graph_status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "external_dependency_graph_detail": {
+          "type": "string"
+        },
+        "path_dependency_graph": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "detail",
+            "edge_count",
+            "connected_edge_count",
+            "adjacency"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "complete",
+                "limited",
+                "unavailable"
+              ]
+            },
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "edge_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "connected_edge_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "adjacency": {
+              "description": "Forward and reverse path-dependency neighbors keyed by repository-relative manifest path. Manifests with no path-dependency edge are absent.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/path_dependency_neighbors"
+              }
+            }
+          }
+        }
+      }
+    },
+    "path_dependency_neighbors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "forward",
+        "reverse"
+      ],
+      "properties": {
+        "forward": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "reverse": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "seam": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "canonical_gap_id",
+        "seam_id",
+        "file",
+        "line",
+        "owner",
+        "static_class",
+        "repair_route_readiness",
+        "related_tests",
+        "missing_discriminators"
+      ],
+      "properties": {
+        "canonical_gap_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "seam_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "owner": {
+          "description": "The production owner; a TypeScript seam with no named owner writes `typescript:<unknown>`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "static_class": {
+          "description": "The seam's static grip class, as the full pipeline names it.",
+          "type": "string",
+          "minLength": 1
+        },
+        "repair_route_readiness": {
+          "$ref": "#/$defs/repair_route_readiness"
+        },
+        "related_tests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "test_name",
+              "file",
+              "line",
+              "oracle_kind",
+              "oracle_strength",
+              "evidence_summary",
+              "relation_reason",
+              "relation_confidence"
+            ],
+            "properties": {
+              "test_name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "file": {
+                "type": "string",
+                "minLength": 1
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "oracle_kind": {
+                "type": "string",
+                "minLength": 1
+              },
+              "oracle_strength": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence_summary": {
+                "description": "Empty when the evidence is absent (a TypeScript gap rerun writes an empty string rather than null).",
+                "type": "string"
+              },
+              "relation_reason": {
+                "description": "Empty when the evidence is absent (a TypeScript gap rerun writes an empty string rather than null).",
+                "type": "string"
+              },
+              "relation_confidence": {
+                "description": "Empty when the evidence is absent (a TypeScript gap rerun writes an empty string rather than null).",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "missing_discriminators": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value",
+              "reason"
+            ],
+            "properties": {
+              "value": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "repair_route_readiness": {
+      "description": "The producer-owned repair route readiness for the seam, the same value the full pipeline computes for it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "seam_id",
+        "canonical_gap_id",
+        "required_evidence",
+        "present_evidence",
+        "missing_evidence",
+        "target_selection",
+        "test_target",
+        "proposed_oracle",
+        "current_oracle",
+        "authority_boundary"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "ready",
+            "already_gripped",
+            "policy_excluded",
+            "static_limitation"
+          ]
+        },
+        "seam_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canonical_gap_id": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "required_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "present_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "missing_evidence": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "target_selection": {
+          "description": "Where a test-only repair may land: an admitted existing test, a proposed new test, or `missing` when neither was admitted.",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "existing"
+              ],
+              "properties": {
+                "existing": {
+                  "$ref": "#/$defs/test_target"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "proposed"
+              ],
+              "properties": {
+                "proposed": {
+                  "$ref": "#/$defs/new_test_proposal"
+                }
+              }
+            },
+            {
+              "const": "missing"
+            }
+          ]
+        },
+        "test_target": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/test_target"
+            }
+          ]
+        },
+        "proposed_oracle": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "current_oracle": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "authority_boundary": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "test_target": {
+      "description": "An existing test the producer admitted as a safe place for a test-only repair.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "symbol_id",
+        "file",
+        "line",
+        "test_kind",
+        "relation",
+        "provenance",
+        "workspace_identity",
+        "currentness"
+      ],
+      "properties": {
+        "symbol_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "test_kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provenance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_identity": {
+          "type": "string",
+          "minLength": 1
+        },
+        "currentness": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "new_test_proposal": {
+      "description": "A new test the producer proposes; it is not an existing test.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "file",
+        "owner",
+        "provenance"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provenance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_identity": {
+          "description": "Omitted when the workspace authority could not name the identity.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "movement": {
+      "description": "`--before`: static movement of the selected seams against an earlier targeted rerun report.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "before",
+        "before_seam_count",
+        "matched_seam_count"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "closed",
+            "improved",
+            "unchanged",
+            "regressed",
+            "limited"
+          ]
+        },
+        "before": {
+          "description": "The `--before` artifact path.",
+          "type": "string",
+          "minLength": 1
+        },
+        "before_seam_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "matched_seam_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "parity": {
+      "description": "`--check-parity`: the selected seams compared with the same seams from a full-pipeline run. `matched` means no seam and no input differed and the full run was not capped.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "basis",
+        "targeted_seam_count",
+        "full_selected_seam_count",
+        "selected_seam_count",
+        "matched_seam_count",
+        "missing_from_targeted",
+        "unexpected_in_targeted",
+        "differing",
+        "mismatches",
+        "input_mismatches"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "matched",
+            "limited"
+          ]
+        },
+        "basis": {
+          "const": "selected_classified_seams"
+        },
+        "targeted_seam_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "full_selected_seam_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "selected_seam_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "matched_seam_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "missing_from_targeted": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "unexpected_in_targeted": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "differing": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parity_mismatch"
+          }
+        },
+        "mismatches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parity_mismatch"
+          }
+        },
+        "input_mismatches": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "input_fingerprint",
+              "input_fingerprint_unavailable",
+              "schema_version",
+              "analyzer_version",
+              "workspace_root_hash",
+              "files_content_hash",
+              "cfg_features_hash",
+              "config_hash",
+              "test_intent_hash",
+              "suppressions_hash",
+              "workspace_manifests_hash",
+              "lockfile_hash",
+              "toolchain_hash",
+              "seam_limit_key",
+              "selector_ledger_hash",
+              "package_graph_provenance",
+              "feature_graph_provenance",
+              "external_dependency_graph_provenance",
+              "package_graph_provenance_unavailable",
+              "feature_graph_provenance_unavailable"
+            ]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "matched"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "missing_from_targeted": {
+                "maxItems": 0
+              },
+              "unexpected_in_targeted": {
+                "maxItems": 0
+              },
+              "differing": {
+                "maxItems": 0
+              },
+              "mismatches": {
+                "maxItems": 0
+              },
+              "input_mismatches": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "parity_mismatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seam_id",
+        "fields"
+      ],
+      "properties": {
+        "seam_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fields": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "missing_from_targeted",
+              "unexpected_in_targeted",
+              "canonical_gap_id",
+              "static_class",
+              "file",
+              "line",
+              "owner",
+              "repair_route_readiness",
+              "related_tests",
+              "missing_discriminators"
+            ]
+          }
+        }
+      }
+    },
+    "route": {
+      "description": "The commands the matching gap ledger records name. Only a gap selector writes it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "verify_commands",
+        "receipt_command"
+      ],
+      "properties": {
+        "verify_commands": {
+          "description": "The ledger's legacy display strings, deduplicated in first-occurrence order but otherwise as written (an empty string included).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "receipt_command": {
+          "description": "Null when no record named one or the records named more than one.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "minLength": 1
+            }
+          ]
+        },
+        "verify_command_specs": {
+          "description": "Present only when matching ledger records carry typed specs.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "allOf": [
+              {
+                "$ref": "#/$defs/command_spec"
+              },
+              {
+                "properties": {
+                  "role": {
+                    "const": "verify"
+                  },
+                  "authority_boundary": {
+                    "const": "verification_route_only"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "receipt_command_spec": {
+          "description": "Present only when exactly one receipt route matched and it carries a typed spec.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/command_spec"
+            },
+            {
+              "properties": {
+                "role": {
+                  "const": "receipt"
+                },
+                "authority_boundary": {
+                  "const": "receipt_route_only"
+                }
+              }
+            }
+          ]
+        },
+        "receipt_command_conflict": {
+          "description": "Present when matching records named more than one receipt command.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/limitation"
+            },
+            {
+              "properties": {
+                "kind": {
+                  "const": "receipt_command_conflict"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "receipt_command_conflict"
+            ]
+          },
+          "then": {
+            "properties": {
+              "receipt_command": {
+                "type": "null"
+              }
+            },
+            "not": {
+              "required": [
+                "receipt_command_spec"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "receipt_command": {
+                "type": "null"
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "required": [
+                "receipt_command_spec"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "command_spec": {
+      "description": "A typed command route, the shape `repair-assurance.schema.json` publishes as `command_spec`.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "command_id",
+        "role",
+        "execution_mode",
+        "program",
+        "args",
+        "working_directory",
+        "env_set",
+        "env_passthrough",
+        "timeout_ms",
+        "stdin",
+        "cancellation",
+        "network",
+        "environment",
+        "expected_result_parser",
+        "expected_exit_codes",
+        "expected_writes",
+        "cost_class",
+        "platforms",
+        "authority_boundary",
+        "human_display"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1"
+        },
+        "command_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "enum": [
+            "verify",
+            "receipt",
+            "regeneration",
+            "inspection",
+            "targeted_rerun"
+          ]
+        },
+        "execution_mode": {
+          "enum": [
+            "direct",
+            "shell_required",
+            "manual"
+          ]
+        },
+        "program": {
+          "type": "string",
+          "minLength": 1
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "working_directory": {
+          "description": "Relative to the workspace root: no drive or scheme prefix, no leading separator and no `..` segment (the same constraint as `repair-assurance.schema.json`).",
+          "type": "string",
+          "pattern": "^(?![^\\\\/]+:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$"
+        },
+        "env_set": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "value"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "env_passthrough": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600000
+        },
+        "stdin": {
+          "enum": [
+            "null",
+            "declared"
+          ]
+        },
+        "cancellation": {
+          "enum": [
+            "allowed",
+            "not_allowed"
+          ]
+        },
+        "network": {
+          "enum": [
+            "forbidden",
+            "not_required",
+            "declared",
+            "unrestricted"
+          ]
+        },
+        "environment": {
+          "enum": [
+            "clean",
+            "declared",
+            "inherited"
+          ]
+        },
+        "expected_result_parser": {
+          "enum": [
+            "exit_code",
+            "declared_json",
+            "declared_text"
+          ]
+        },
+        "expected_exit_codes": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1
+        },
+        "expected_writes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cost_class": {
+          "enum": [
+            "unknown",
+            "pilot",
+            "check",
+            "projection_only",
+            "bounded_static_analysis",
+            "full_repo_analysis",
+            "compile_or_test",
+            "runtime_mutation_or_import"
+          ]
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "linux",
+              "macos",
+              "windows"
+            ]
+          },
+          "minItems": 1
+        },
+        "authority_boundary": {
+          "enum": [
+            "verification_route_only",
+            "receipt_route_only",
+            "regeneration_route_only",
+            "inspection_route_only",
+            "targeted_rerun_route_only"
+          ]
+        },
+        "human_display": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    },
+    "limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "scope_limitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "record_index",
+        "message"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "gap_anchor_unresolved",
+            "gap_scope_unresolved",
+            "gap_scope_anchor_adjusted"
+          ]
+        },
+        "record_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

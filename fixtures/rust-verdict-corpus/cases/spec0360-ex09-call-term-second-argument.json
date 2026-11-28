@@ -1,0 +1,69 @@
+{
+  "case_id": "spec0360-ex09-call-term-second-argument",
+  "subject_id": "authored-spec0360-9",
+  "diff": "cases/spec0360-ex09-call-term-second-argument.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "loop_accumulator",
+  "test_shape": "loop_accumulator_call_term_two_arguments",
+  "hard_case": "The accumulator term is a call with a second argument (`scale(*x, 2)`), outside the call terms ripr folds, so the finding keeps its `static_unknown` probe.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "t -= scale(*x, 2);",
+        "mutated_line": "t -= scale(*x, 2);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::scaled_total_of_three",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      },
+      {
+        "replacement": "t *= scale(*x, 2);",
+        "mutated_line": "t *= scale(*x, 2);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::scaled_total_of_three",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      },
+      {
+        "replacement": "t |= scale(*x, 2);",
+        "mutated_line": "t |= scale(*x, 2);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::scaled_total_of_three",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      },
+      {
+        "replacement": "t ^= scale(*x, 2);",
+        "mutated_line": "t ^= scale(*x, 2);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::scaled_total_of_three",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "total(&[1, 2, 3]) is 12 and every neighbour operator gives a different value, so all mutants fail the test, but a two-argument call term is not folded. Spec cells: RIPR-SPEC-0360 example 9 (a second argument keeps static_unknown).",
+  "labeling_observation": {
+    "ripr_commit": "99b377f5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0360#9"
+  ]
+}

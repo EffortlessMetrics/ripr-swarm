@@ -1,0 +1,7 @@
+diff --git a/src/lib.py b/src/lib.py
+--- a/src/lib.py
++++ b/src/lib.py
+@@ -1,2 +1,2 @@
+ def ok(a, b):
+-    return a > 0 and b > 0
++    return a > 0 or b > 0

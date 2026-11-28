@@ -43,11 +43,11 @@ test result is recorded, and the applicable verification command is available.
 
 ### Pair C: qualification versus final judgment
 
-These two inputs explicitly assume the installed legacy label route (explicit
-late qualification request followed by final judgment and protected squash);
-they do not claim that native merge-queue qualification is activated. After
-verified queue activation, the same judgment boundary applies through the
-native-queue procedure in [merge flow](../MERGE_FLOW.md).
+These two inputs separate PR qualification from final product/currentness
+judgment through the live native queue. Qualification can be complete while a
+material new finding leaves that judgment missing. After successful PR
+qualification and that final judgment, enqueue through the native-queue procedure
+in [merge flow](../MERGE_FLOW.md).
 
 **C1.** An explicit request has completed all applicable qualification. A newly
 arrived substantive review identifies a product-contract contradiction, with
@@ -55,7 +55,7 @@ no code change since the run. Final product/currentness judgment is absent.
 
 **C2.** The same exact reviewed/qualified subject has a fresh final judgment,
 all material findings dispositioned and all current applicable protections
-satisfied. Ordinary protected squash is authorized; there is no auto-merge.
+satisfied. Ordinary protected squash is authorized; there is no armed auto-merge wait.
 
 ### Pair D: delivery identity and authority
 
@@ -97,8 +97,8 @@ These are examiner expectations, not measured results.
 | A2 | Retain the old claim as unbound; execute the available focused test against recorded current inputs | Earlier HEAD alone does not identify dirty inputs; no fabricated reuse |
 | B1 | Inspect actual discrimination and the opaque path; record a precise limitation or analyzer defect if supported | Do not weaken/couple a useful test solely to make RIPR green; no universal correctness claim from one control |
 | B2 | Execute the applicable native verification and retain its outcome | Static movement is not test execution or mutation confirmation |
-| C1 | Withhold merge; investigate the new finding and refresh affected judgment/proof | Green qualification remains factual but is not final approval; no auto-merge |
-| C2 | Recheck expected head and current requirements, then use the authorized normal protected squash path on the installed legacy route | No routine second qualification merely to click merge; use the native-queue procedure only after verified activation; verify actual landing and remaining parent acceptance |
+| C1 | Withhold merge; investigate the new finding and refresh affected judgment/proof | Green qualification remains factual but is not final approval; no armed auto-merge wait |
+| C2 | Recheck expected head and current requirements, then use the authorized native-queue landing procedure | No routine second qualification merely to click merge; verify the queue run, actual landing and remaining parent acceptance |
 | D1 | Stop artifact admission and reconcile/requalify the changed bytes | Checkout proof and a receipt for another digest cannot qualify this upload |
 | D2 | Limit delivery to the authorized channel and perform its independent public verification through the existing owner | No all-channel completion from a stale comment; back-sync/release closeout remain governed separately |
 | E1 | Run a bounded M2 observation where supported; retain M1's failure and untested dimensions | A guidance edit or structural check is not improved harness behavior |

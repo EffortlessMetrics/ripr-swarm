@@ -6,7 +6,19 @@ use super::{
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-const JSON_CHECKSUM: &str = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14";
+/// serde_json releases whose `json!` expansion is audited for the closed
+/// literal grammar (RIPR-SPEC-0197): `src/macros.rs` is byte-identical across
+/// them. Each version is bound to its crates.io checksum.
+const AUDITED_JSON_RELEASES: &[(&str, &str)] = &[
+    (
+        "1.0.151",
+        "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
+    ),
+    (
+        "1.0.154",
+        "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6",
+    ),
+];
 
 /// An audited registry implementation under ordinary Cargo/cache integrity
 /// assumptions. The resolved dependency edge, not its spelling in a lockfile,
@@ -18,6 +30,12 @@ pub(crate) struct RegistryIdentity {
     metadata: serde_json::Value,
     package_id: String,
     manifest_digests: BTreeMap<PathBuf, String>,
+    /// Each metadata package's `manifest_path`, canonicalized once when the
+    /// identity is built, in `packages` order. `admits_manifest` used to
+    /// canonicalize every package path on every call; on a workspace whose
+    /// metadata lists hundreds of registry packages that made each per-file
+    /// question hundreds of syscalls (#14116).
+    canonical_manifest_paths: Vec<Option<PathBuf>>,
     proptest_target_configs: BTreeMap<PathBuf, String>,
     pub(crate) validation_digest: String,
 }
@@ -25,6 +43,7 @@ pub(crate) struct RegistryIdentity {
 pub(crate) type LiteralJsonIdentity = RegistryIdentity;
 
 const PROPTEST_CHECKSUM: &str = "4b45fcc2344c680f5025fe57779faef368840d0bd1f42f216291f0dc4ace4744";
+const BOLERO_CHECKSUM: &str = "327b100d52fa36bfa0008774e7ccfd6cce310fb9fcd7d05e90b0ef03a87dfa0a";
 
 pub(crate) fn eligible_proptest_root(root: &Path) -> bool {
     if !eligible_root(root, "proptest") {
@@ -84,6 +103,7 @@ pub(crate) fn locked_at_audited_version(root: &Path, name: &str, audited: &[&str
 /// The function macro, Just strategy and assertion failure path audited in
 /// proptest 1.11.0. Cargo/cache integrity has the same instrument assumptions
 /// as the other registry receipts; a matching spelling is never authority.
+#[cfg(test)]
 pub(crate) fn verified_proptest_identity(root: &Path) -> Option<RegistryIdentity> {
     verified_proptest_identity_result(root).ok().flatten()
 }
@@ -117,6 +137,34 @@ pub(crate) fn verified_proptest_identity_result(
         identity.proptest_target_configs = configurations;
         Some(identity)
     })())
+}
+
+pub(crate) fn eligible_bolero_root(root: &Path) -> bool {
+    if !eligible_root(root, "bolero") {
+        return false;
+    }
+    let Some(packages) = locked_packages(root, "bolero") else {
+        return false;
+    };
+    let [package] = packages.as_slice() else {
+        return false;
+    };
+    package.get("version").and_then(toml::Value::as_str) == Some("0.13.7")
+        && package.get("source").and_then(toml::Value::as_str) == Some(SOURCE)
+        && package.get("checksum").and_then(toml::Value::as_str) == Some(BOLERO_CHECKSUM)
+}
+
+pub(crate) fn verified_bolero_identity(root: &Path) -> Option<RegistryIdentity> {
+    verified_bolero_identity_result(root).ok().flatten()
+}
+
+pub(crate) fn verified_bolero_identity_result(
+    root: &Path,
+) -> Result<Option<RegistryIdentity>, MetadataProbeFailure> {
+    if !eligible_bolero_root(root) {
+        return Ok(None);
+    }
+    verified_registry_identity_result(root, "bolero", "0.13.7", BOLERO_CHECKSUM)
 }
 
 fn proptest_target_configurations(
@@ -475,6 +523,12 @@ impl RegistryIdentity {
         })
     }
 
+    pub(crate) fn admits_bolero_target(&self, root: &Path, file: &Path) -> bool {
+        self.crate_name == "bolero"
+            && snapshot(root).as_ref() == Some(&self.input_snapshot)
+            && self.admits_file(root, file)
+    }
+
     pub(crate) fn admits_file(&self, root: &Path, file: &Path) -> bool {
         let file = root.join(file);
         let Some(owner_manifest) = file
@@ -510,13 +564,9 @@ impl RegistryIdentity {
         };
         let owners: Vec<_> = packages
             .iter()
-            .filter(|p| {
-                p.get("manifest_path")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(|p| Path::new(p).canonicalize().ok())
-                    .as_deref()
-                    == Some(manifest)
-            })
+            .zip(&self.canonical_manifest_paths)
+            .filter(|(_, path)| path.as_deref() == Some(manifest))
+            .map(|(package, _)| package)
             .collect();
         let [owner] = owners.as_slice() else {
             return false;
@@ -601,15 +651,133 @@ impl RegistryIdentity {
     }
 }
 
-/// Initial scope: the analysis root declares serde_json itself or through its
-/// workspace dependency table. Other layouts remain unestablished.
+/// Cheap refusal before the metadata process: the analysis root declares
+/// serde_json itself or through its workspace dependency table, or (#14116) a
+/// workspace member the root manifest names declares it directly. Naming a
+/// dependency table grants nothing; the resolved edge of the importing file's
+/// own package stays the authority.
 pub(crate) fn eligible_json_root(root: &Path) -> bool {
-    eligible_root(root, "serde_json")
+    let Some(bytes) = read_optional(&root.join("Cargo.toml")).flatten() else {
+        return false;
+    };
+    match json_root_declaration(&bytes) {
+        JsonRootDeclaration::Declared => true,
+        JsonRootDeclaration::Members(members) => {
+            json_member_declares(&json_member_manifests(root, &members))
+        }
+    }
 }
 
+/// What the root manifest alone settles for [`eligible_json_root`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum JsonRootDeclaration {
+    /// The root names serde_json in a dependency table of its own.
+    Declared,
+    /// The root does not; these are its supported `workspace.members` entries
+    /// as written. Empty for no workspace, or a manifest that does not parse.
+    Members(Vec<String>),
+}
+
+/// Distinct member directories one eligibility query may read a manifest
+/// from. A larger workspace keeps the refusal rather than a partial reading.
+pub(super) const JSON_MEMBER_BUDGET: usize = 256;
+
+/// Directory entries one `prefix/*` member entry may list while looking for
+/// member directories. Plain files are listed but not charged as members.
+const JSON_MEMBER_SCAN_BUDGET: usize = 4096;
+
 /// Pure manifest parse behind [`eligible_json_root`]; callers own the read.
-pub(super) fn eligible_json_manifest_bytes(bytes: &[u8]) -> bool {
-    eligible_manifest_bytes(bytes, "serde_json")
+pub(super) fn json_root_declaration(bytes: &[u8]) -> JsonRootDeclaration {
+    if eligible_manifest_bytes(bytes, "serde_json") {
+        return JsonRootDeclaration::Declared;
+    }
+    let members = parse(bytes)
+        .as_ref()
+        .and_then(|manifest| manifest.get("workspace"))
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+        .map(|members| {
+            members
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .filter(|member| supported_member_entry(member))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    JsonRootDeclaration::Members(members)
+}
+
+/// A member entry the prefilter reads: `/`-separated plain components under
+/// the root, optionally ending in one `*` component (`crates/*`). Any other
+/// glob, `.` or `..` anywhere, an empty component or an absolute path is left
+/// unread.
+fn supported_member_entry(member: &str) -> bool {
+    let literal = member.strip_suffix("/*").unwrap_or(member);
+    // `Path::components` drops interior `.` and repeated separators, so the
+    // written segments are checked first.
+    literal
+        .split('/')
+        .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+        && !literal.contains(['*', '?', '[', ']', '{', '}'])
+        && Path::new(literal)
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
+}
+
+/// Current bytes of each present member manifest, in a stable order. Entries
+/// that name the same directory are read once. `None` is an unreadable member
+/// directory or manifest, more than [`JSON_MEMBER_BUDGET`] member directories,
+/// or a `prefix/*` listing over [`JSON_MEMBER_SCAN_BUDGET`] entries.
+pub(super) fn json_member_manifests(root: &Path, members: &[String]) -> Option<Vec<Vec<u8>>> {
+    let mut directories = std::collections::BTreeSet::new();
+    for member in members {
+        let Some(parent) = member.strip_suffix("/*") else {
+            directories.insert(root.join(member));
+            continue;
+        };
+        let entries = match std::fs::read_dir(root.join(parent)) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+        };
+        for (listed, entry) in entries.enumerate() {
+            if listed >= JSON_MEMBER_SCAN_BUDGET {
+                return None;
+            }
+            let path = entry.ok()?.path();
+            if path.is_dir() {
+                directories.insert(path);
+            }
+        }
+    }
+    if directories.len() > JSON_MEMBER_BUDGET {
+        return None;
+    }
+    let mut manifests = Vec::new();
+    for directory in directories {
+        if let Some(bytes) = read_optional(&directory.join("Cargo.toml"))? {
+            manifests.push(bytes);
+        }
+    }
+    Some(manifests)
+}
+
+/// Whether one of the member manifests read by [`json_member_manifests`]
+/// names serde_json in its own normal or dev dependency table.
+pub(super) fn json_member_declares(manifests: &Option<Vec<Vec<u8>>>) -> bool {
+    manifests.as_ref().is_some_and(|manifests| {
+        manifests.iter().any(|bytes| {
+            parse(bytes).is_some_and(|manifest| {
+                ["dependencies", "dev-dependencies"].iter().any(|table| {
+                    manifest
+                        .get(table)
+                        .and_then(|table| table.get("serde_json"))
+                        .is_some()
+                })
+            })
+        })
+    })
 }
 
 fn eligible_root(root: &Path, crate_name: &str) -> bool {
@@ -650,8 +818,36 @@ pub(super) fn json_manifest_digests(
     Some(digests)
 }
 
+/// The canonical `manifest_path` of every metadata package, in order; `None`
+/// for one that no longer resolves, which then matches no owner manifest.
+fn canonical_manifest_paths(metadata: &serde_json::Value) -> Option<Vec<Option<PathBuf>>> {
+    Some(
+        metadata
+            .get("packages")?
+            .as_array()?
+            .iter()
+            .map(|package| {
+                package
+                    .get("manifest_path")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|path| Path::new(path).canonicalize().ok())
+            })
+            .collect(),
+    )
+}
+
 pub(crate) fn verified_json_identity(root: &Path) -> Option<LiteralJsonIdentity> {
-    verified_registry_identity(root, "serde_json", "1.0.151", JSON_CHECKSUM)
+    // The lockfile only selects which audited release to prove; the resolved
+    // metadata edge and checksum checks below remain the authority.
+    let packages = locked_packages(root, "serde_json")?;
+    let [package] = packages.as_slice() else {
+        return None;
+    };
+    let locked = package.get("version").and_then(toml::Value::as_str)?;
+    let (version, checksum) = AUDITED_JSON_RELEASES
+        .iter()
+        .find(|(version, _)| *version == locked)?;
+    verified_registry_identity(root, "serde_json", version, checksum)
 }
 
 fn verified_registry_identity(
@@ -675,7 +871,13 @@ fn verified_registry_identity_result(
     version: &str,
     checksum: &str,
 ) -> Result<Option<RegistryIdentity>, MetadataProbeFailure> {
-    if !eligible_root(root, crate_name) {
+    // serde_json alone may be declared by a member of the analysis root.
+    let eligible = if crate_name == "serde_json" {
+        eligible_json_root(root)
+    } else {
+        eligible_root(root, crate_name)
+    };
+    if !eligible {
         return Ok(None);
     }
     let Ok(root) = root.canonicalize() else {
@@ -741,9 +943,11 @@ fn verified_registry_identity_result(
         if before != after {
             return None;
         }
+        let canonical_manifest_paths = canonical_manifest_paths(&metadata)?;
         Some(RegistryIdentity {
             crate_name,
             input_snapshot: after.clone(),
+            canonical_manifest_paths,
             metadata,
             package_id,
             manifest_digests: manifest_digests.clone(),

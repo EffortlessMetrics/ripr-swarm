@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0403"
+scope = "out"
+reason = "PowerShell evidence contract is normative spec law for #5710; runtime mutant proof lands in PowerShell judged corpora"

@@ -1,0 +1,45 @@
+{
+  "id": "rust_repo_field_snapshot_literal",
+  "language": "rust",
+  "tier": "pure",
+  "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-field-snapshot-literal.json",
+  "report_subject": "fixtures/evidence-promotion-honesty-corpus/repo-exposure-subjects/field-snapshot-literal",
+  "vector": "field_snapshot_uncertainty_is_not_a_recommendation_without_changing_grip",
+  "assertions": [
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::make_record",
+      "expression": "id: format!(\"{}-1\", prefix)",
+      "grip_class": "weakly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_limitation",
+      "owner": "src/lib.rs::make_record",
+      "expression": "id: format!(\"{}-1\", prefix)",
+      "category": "rust_framework_oracle_unresolved",
+      "present": false
+    },
+    {
+      "type": "expected_repo_seam_grip",
+      "owner": "src/lib.rs::make_record",
+      "expression": "items: items.iter().count()",
+      "grip_class": "weakly_gripped",
+      "reach": "yes"
+    },
+    {
+      "type": "expected_repo_seam_limitation",
+      "owner": "src/lib.rs::make_record",
+      "expression": "items: items.iter().count()",
+      "category": "rust_framework_oracle_unresolved",
+      "present": true
+    },
+    {
+      "type": "expected_repo_seam_limitation",
+      "owner": "src/lib.rs::make_record",
+      "expression": "record",
+      "category": "rust_framework_oracle_unresolved",
+      "present": false
+    }
+  ]
+}

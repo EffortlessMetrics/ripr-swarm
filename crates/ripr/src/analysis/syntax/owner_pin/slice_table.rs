@@ -12,8 +12,11 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasGenericArgs, HasName},
 };
 
-/// Conservative reference completeness, not dispatch resolution. Imports,
-/// function pointers, recursion and opaque macro tokens are additional uses.
+/// Conservative reference completeness, not dispatch resolution. Visible
+/// function pointers, aliases and recursion are counted; unresolved imports,
+/// attributes and opaque macros leave completeness unknown. Plain data types
+/// are admitted unless they shadow primitive names; implementations and type
+/// aliases remain outside the shared consumers' intrinsic-operation boundary.
 pub(crate) fn owner_reference_count(source: &str, owner: &str) -> Option<usize> {
     let parse = parse_clean_source_file(source)?;
     // `parse_clean_source_file` above already established a clean parse.
@@ -27,7 +30,38 @@ pub(crate) fn owner_reference_count(source: &str, owner: &str) -> Option<usize> 
             if ast::Struct::can_cast(node.kind())
                 || ast::Enum::can_cast(node.kind())
                 || ast::Union::can_cast(node.kind())
-                || ast::Trait::can_cast(node.kind())
+            {
+                // Plain data declarations do not hide identifier uses. Keep
+                // primitive-name shadows unknown: consumers also rely on this
+                // gate before interpreting primitive operations as intrinsic.
+                return ast::AnyHasName::cast(node)
+                    .and_then(|named| named.name())
+                    .is_none_or(|name| {
+                        matches!(
+                            name.text().trim_start_matches("r#"),
+                            "bool"
+                                | "char"
+                                | "str"
+                                | "u8"
+                                | "u16"
+                                | "u32"
+                                | "u64"
+                                | "u128"
+                                | "usize"
+                                | "i8"
+                                | "i16"
+                                | "i32"
+                                | "i64"
+                                | "i128"
+                                | "isize"
+                                | "f16"
+                                | "f32"
+                                | "f64"
+                                | "f128"
+                        )
+                    });
+            }
+            if ast::Trait::can_cast(node.kind())
                 || ast::Impl::can_cast(node.kind())
                 || ast::TypeAlias::can_cast(node.kind())
                 || ast::ExternCrate::can_cast(node.kind())
@@ -608,8 +642,6 @@ mod tests {
         for source in [
             "use crate::mean;",
             "use super::mean;\nfn t() { mean(); }",
-            "struct S;",
-            "enum E {}",
             "trait T {}",
             "impl S {}",
             "type A = u8;",
@@ -627,5 +659,52 @@ mod tests {
         // Test-only attributes and the parent glob import are the admitted ones.
         let admitted = "use super::*;\n#[cfg(test)]\nmod m { #[test] fn t() { mean(); } }";
         assert_eq!(owner_reference_count(admitted, "mean"), Some(1));
+    }
+
+    #[test]
+    fn plain_data_definitions_preserve_reference_completeness() {
+        for declaration in [
+            "enum ChunkError { TooLong, BadDigit }",
+            "struct ChunkError { code: u8 }",
+            "union ChunkError { code: u8, wide: u16 }",
+        ] {
+            let source = format!(
+                "{declaration}\nfn mean() {{}}\nfn t() {{ assert_eq!(mean(), ()); assert_eq!(mean(), ()); }}"
+            );
+            assert_eq!(owner_reference_count(&source, "mean"), Some(3));
+            for (extra, expected) in [
+                ("const POINTER: fn() = mean;", 4),
+                ("const POINTER: fn() = r#mean;", 4),
+                ("fn alias() { let f = mean; f(); }", 4),
+                ("fn shadow() { let mean = || (); mean(); }", 5),
+                ("struct Named { mean: u8 }", 4),
+            ] {
+                assert_eq!(
+                    owner_reference_count(&format!("{source}\n{extra}"), "mean"),
+                    Some(expected),
+                    "{declaration}: {extra}"
+                );
+            }
+            let recursive = source.replace("fn mean() {}", "fn mean() { mean(); }");
+            assert_eq!(owner_reference_count(&recursive, "mean"), Some(4));
+        }
+    }
+
+    #[test]
+    fn data_definitions_do_not_relax_unresolved_semantics() {
+        for declaration in [
+            "struct u8;",
+            "enum usize { Value }",
+            "union r#bool { value: u8 }",
+            "struct str;",
+            "struct Error; impl PartialEq for Error {}",
+            "type Error = u8;",
+            "#[derive(Debug, PartialEq)] enum Error { Bad }",
+            "enum Error { Bad } use crate::mean as alias;",
+            "enum Error { Bad } fn hidden() { opaque!(mean); }",
+        ] {
+            let source = format!("{declaration}\nfn mean() {{}}\nfn t() {{ mean(); }}");
+            assert_eq!(owner_reference_count(&source, "mean"), None, "{source}");
+        }
     }
 }

@@ -1,11 +1,16 @@
 mod adapter;
+mod bolero;
+pub(crate) mod constant_items;
 mod constant_return;
+pub(crate) mod external_docs;
+mod fn_cfg_gates;
 pub(crate) mod fn_signature;
 pub(crate) mod lexical;
 mod local_assertion_macros;
 mod local_test_macros;
 pub(crate) mod loop_accumulator;
 mod macro_scope;
+mod module_ancestors;
 mod module_tree;
 mod mut_parameter;
 mod name_scope;
@@ -15,17 +20,23 @@ mod parent_module_cfg_gate;
 mod passthrough_item_macros;
 mod pattern_pin;
 mod proptest;
+pub(crate) use bolero::bolero_profiles;
 pub(crate) use proptest::proptest_expansions;
 pub(crate) mod run_memo;
 mod source_snapshot;
 pub(crate) use constant_return::returns_only_a_literal;
+pub(crate) use fn_cfg_gates::unestablished_cfg_gates_of_fn;
+pub(crate) use module_ancestors::{declares_module_named, enclosing_module_files};
 pub(crate) use mut_parameter::mut_parameter_unwritten_at;
 #[cfg(test)]
 pub(crate) use owner_pin::COMPARISON_NESTED_MACROS;
+#[cfg(test)]
+pub(crate) use owner_pin::CORE_PRELUDE_MACROS;
+pub(crate) use owner_pin::LEVELED_LOGGING_MACROS;
 pub(crate) use owner_pin::cfg_if_module_name;
 pub(crate) use owner_pin::debug_assert_eq_calls;
 pub(crate) use owner_pin::macro_binding_candidates;
-pub(crate) use owner_pin::unestablished_cfg_gates_of_fn;
+pub(crate) use owner_pin::module_declaration_unestablished_gate;
 pub(crate) use owner_pin::{
     AssertionContextRefusal, HelperLoan, MacroBindingCandidates, MacroBindingKind,
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
@@ -33,51 +44,65 @@ pub(crate) use owner_pin::{
     direct_literal_call_column, empty_local_macro_invocation_ranges,
     empty_macro_binding_ambiguities, err_return_guard_key, literal_root_macro_exports,
     local_empty_macro_names, macro_binding_scan, macro_call_is_statement, node_has_macro_escape,
-    owner_pin_assertions, owner_pin_matches_assertions, owner_reference_count,
-    qualified_matches_paths, returns_leave_the_function, skipping_table_column,
-    source_binds_value_name, source_declares_value_name, source_imported_claims_macros,
-    standard_derive_names, supported_targeted_item_context, trusted_macro_binding_site_sets,
-    trusted_macro_binding_sites, use_rebinds_crate_name,
+    opaque_row_names, owner_pin_assertions, owner_pin_assertions_with_default_features,
+    owner_reference_count, qualified_matches_paths, returns_leave_the_function,
+    skipping_table_column, source_binds_value_name, source_declares_value_name,
+    source_imported_claims_macros, standard_derive_names, supported_targeted_item_context,
+    trusted_macro_binding_site_sets, trusted_macro_binding_sites,
+    trusted_macro_binding_sites_in_context, use_rebinds_crate_name,
 };
-pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
+pub(crate) use owner_pin::{
+    ClaimsMacroKind, claims_macro_names, claims_payload_variant, decimal_u8,
+    is_test_scoped_trusted_macro, literal_check_syntax, literal_owner_syntax,
+};
+#[cfg(test)]
+pub(crate) use owner_pin::{returns_leave_reads, returns_leave_the_function_uncached};
 pub(crate) use pattern_pin::{PatternPins, pattern_pins};
 pub(crate) mod ra;
 
 pub use adapter::{
     LexicalRustSyntaxAdapter, RaRustSyntaxAdapter, RustSyntaxAdapter, SyntaxNodeFact, TextRange,
 };
-pub(crate) use local_assertion_macros::{LocalMacroCall, MacroArm, local_macro_calls};
+pub(crate) use local_assertion_macros::{
+    LocalMacroCall, MacroArm, local_macro_calls, local_macro_calls_many,
+};
 #[cfg(test)]
 pub(crate) use local_test_macros::expand_local_test_macros;
 pub(crate) use local_test_macros::{
     GeneratedTestPins, expand_local_test_macros_with, generated_test_pins,
 };
-#[cfg(test)]
-pub(crate) use macro_scope::splice_imported_macros;
 pub(crate) use macro_scope::{
-    ImportedMacros, MacroScope, first_macro_call, generator_calls, macro_scope,
+    ImportedMacros, MacroScope, SPLICED_LINES, first_macro_call, generator_calls, macro_scope,
+    splice_imported_macros,
 };
 pub(crate) use module_tree::{RustModuleTreeEdge, RustModuleTreeScan, rust_module_tree_scan};
 pub(crate) use name_scope::{
-    NameScope, NameScopes, UseBinding, fn_call_has_local_binding, function_type_param_names,
-    name_scope_for_file, name_scope_for_items, name_scopes_for_fn, use_item_bindings,
+    NameScope, NameScopes, UseBinding, expansion_declares_items, file_exports_a_std_macro,
+    fn_call_has_local_binding, function_type_param_names, name_scope_for_file,
+    name_scope_for_items, name_scopes_for_fn, use_item_bindings,
 };
+#[cfg(test)]
+pub(crate) use nesting::nesting_parse_calls;
 pub(crate) use nesting::{
-    block_comment_only_lines, non_code_token_end, parse_clean_source_file, rust_nesting_refusal,
-    string_literal_continuation_lines,
+    block_comment_only_lines, non_code_token_end, parse_clean_source_file,
+    parse_clean_source_file_memoized, rust_nesting_refusal, string_literal_continuation_lines,
 };
 pub(crate) use parent_module_cfg_gate::owner_gated_by_parent_mod_declarations;
 pub(crate) use ra::drop_in_assertion_leaf;
-pub(crate) use ra::parser_oracles_for_function;
 #[cfg(test)]
 pub(crate) use ra::production_owner_module_path;
 pub(crate) use ra::rust_include_directives;
 pub(crate) use ra::{
-    GovernedCfgTestModule, InvokedCallbackParam, ModuleItemScopes, closure_argument_positions,
-    fn_name_binding_count, governed_cfg_test_modules, has_test_attribute,
-    inline_unit_module_layout, invoked_callback_params, macro_call_columns, module_item_scopes,
-    passes_call_making_closure, unconditionally_invoked_param_positions,
+    EnclosingScopeKind, ForwardedCallbackParam, GovernedCfgTestModule, InvokedCallbackParam,
+    ModuleItemScopes, call_making_closure_positions, closure_argument_positions,
+    closure_argument_positions_many, enclosing_scopes, fn_name_binding_count,
+    forwarded_callback_params, governed_cfg_test_modules, has_test_attribute,
+    inline_unit_module_layout, invoked_callback_params, invoked_callback_params_many,
+    macro_call_columns, module_item_scopes, module_path_targets, param_never_mentioned,
+    passes_call_making_closure, passes_call_making_closure_many,
+    unconditionally_invoked_param_positions,
 };
+pub(crate) use ra::{parser_oracles_for_function, parser_oracles_for_functions_many};
 pub(crate) use source_snapshot::{
     ItemNesting, RootShadow, SourceSnapshot, SourceSyntaxMemos, has_cfg_attr,
 };

@@ -6,22 +6,41 @@ running `cargo install ripr` first.
 
 ## Resolution Order
 
-The VS Code/Open VSX extension resolves the server in this order:
+The VS Code/Open VSX extension resolves the server in this order, with the
+conditions noted; it is not a fixed ladder that runs every step:
 
 ```text
-1. ripr.server.path
-2. bundled server binary, if present
+1. ripr.server.path, when set (its success or failure is terminal)
+2. bundled server binary, if present — dormant by design (#2085): no
+   platform VSIX ships one today, so this candidate never exists on disk;
+   it is the planned first preference for future platform VSIXs
+   (#1443 / #1624), not a live step
 3. downloaded cached server binary
-4. ripr on PATH, when `ripr.server.version` is empty (checked before any download)
-5. verified first-run download from GitHub Releases
-6. ripr on PATH, when `ripr.server.version` is set or the download did not produce a server
+4. ripr on PATH, checked before any download only when
+   `ripr.server.autoDownload` is enabled and `ripr.server.version` is
+   empty, and used there only when its version is not older than the
+   expected server version; an older PATH result is held for step 6
+5. verified first-run download from GitHub Releases, only when
+   `ripr.server.autoDownload` is enabled
+6. ripr on PATH as fallback — when `ripr.server.version` is pinned, when
+   `ripr.server.autoDownload` is disabled (no early PATH check and no
+   download happen), when the download did not produce a server, or by
+   reusing the older early-PATH result from step 4
 7. actionable error
 ```
 
-An unpinned install therefore never makes a network call for a user who already
-installed a compatible `ripr` (cargo, binstall, a package manager). Setting
-`ripr.server.version` asks for that exact managed release, so the download keeps
-its place ahead of `PATH`.
+Steps 2–5 run only on a known prebuilt platform. On an unknown platform,
+resolution skips the bundled, cached, early-PATH, and download steps and
+goes straight to the PATH fallback in step 6.
+
+With `ripr.server.autoDownload` enabled, an unpinned install therefore
+never makes a network call for a user who already installed a current
+`ripr` (cargo, binstall, a package manager); an older PATH `ripr` falls
+through to the download and stays the warned fallback (#13638). Setting
+`ripr.server.version` asks for that exact managed release, so the download
+keeps its place ahead of `PATH`. When `ripr.server.autoDownload` is
+disabled, neither the early PATH check nor the download runs, and `PATH`
+is tried once as the step-6 fallback.
 
 `ripr.server.path` is an override for pinned or enterprise-managed binaries. The
 PATH fallback remains useful for local development and offline installs.
@@ -51,6 +70,16 @@ install receipt and its byte-integrity evidence. It does not attest producer
 provenance or use a private/experimental capability as the standard-LSP
 baseline.
 
+## Proxies
+
+The managed download runs inside the VS Code extension host, so it uses VS
+Code's own proxy support (#15317): `http.proxy`, or the `HTTPS_PROXY`
+environment variable when that is unset, with hosts in `http.noProxy` going
+direct. `http.proxySupport` must not be `off`. Proxy authentication, PAC files
+and system certificates follow VS Code's handling. The download still checks the
+redirect allowlist, size limits and the archive checksum. When no proxy works,
+set `ripr.server.path` to a local binary or install `ripr` on `PATH`.
+
 ## Downloaded Server Cache
 
 Downloaded servers are stored under the VS Code global storage directory:
@@ -75,6 +104,15 @@ archive digest, extracts and probes the staged executable, records its digest
 and reported binary version, writes a completed `install-receipt.json`, and
 then atomically renames the validated directory into the final cache path.
 Concurrent extension hosts converge on that one completed installation.
+
+The extracted archive must contain exactly one regular file with the target's
+expected executable name (`ripr.exe` on Windows, `ripr` elsewhere). A single
+executable inside a nested release directory is supported. A directory with
+that name does not count as an executable. Multiple matching files are refused,
+even when their bytes match, before any candidate is copied, made executable,
+probed, or promoted. The existing extracted-tree checks also refuse symlinks
+and multiply linked files. A refused install publishes no new completed cache
+entry and preserves any completed prior version.
 
 A cached executable is eligible only when the receipt has
 `installationState: "complete"`, its requested/manifest version, target, and
@@ -146,6 +184,36 @@ The manifest shape is:
 The checksum is for the downloaded archive. The extension verifies the archive
 before extraction and admits the result only after the staged binary's
 `ripr --version` probe and completed-receipt validation pass.
+
+## Non-publishing packaged managed-download rehearsal
+
+The read-only `server-archive-qualification.yml` workflow consumes its own
+Linux x64 archive and schema-4 archive receipt in
+`editors/vscode/test/managedDownload/rehearse.ts` (#9469). After the existing
+manifest producer and archive readback checks, it binds a distinct local HTTPS
+mirror manifest with `release-bind-server-descriptor`, packages and verifies
+one VSIX, and installs those exact VSIX bytes through the VS Code CLI.
+
+Three fresh extension-host profiles exercise successful managed download,
+parseable raw-manifest tampering, and archive tampering. The successful case
+requires `managed_download`, matching archive/executable/manifest digests,
+completed installation and a real LSP request after initialization. Each
+negative requires the intended checksum diagnostic, no running fallback server,
+and no completed install receipt. Request counts distinguish manifest refusal
+from archive refusal. Tests cannot use `RIPR_TEST_SERVER_PATH`.
+
+The mirror changes only manifest placement URLs before descriptor binding;
+the original manifest, archive and qualification receipt remain intact. A
+throwaway certificate is trusted only by the disposable test-host process via
+`NODE_EXTRA_CA_CERTS`; the CA private key is removed and excluded from uploads.
+Source and compiled descriptors are restored, and user profiles/settings are
+never reused. JSON evidence is uploaded as
+`ripr-packaged-managed-download-rehearsal`, including incomplete execution.
+
+This is a Linux composition rehearsal. It does not establish public retrieval,
+stable/RC placement, Windows/macOS parity, marketplace reuse (#9333), complete
+native runtime compatibility (#4489), or frozen-candidate qualification (#2769).
+No release, tag, asset attachment or marketplace publish is performed.
 
 ## Previous Public Release Proof
 
@@ -231,5 +299,7 @@ darwin-x64
 darwin-arm64
 ```
 
-When those exist, bundled binaries should remain ahead of downloaded binaries in
-the resolution order, with auto-download retained as fallback/update machinery.
+When those exist, bundled binaries should remain ahead of cached and
+downloaded binaries in the resolution order, with auto-download retained
+as fallback/update machinery. Until then, no VSIX ships a `server/`
+directory and the bundled step above stays dormant.

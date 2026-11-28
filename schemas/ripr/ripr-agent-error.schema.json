@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.effortlessmetrics.dev/ripr/ripr-agent-error.schema.json",
   "title": "RIPR riprAgent error envelope",
-  "description": "Closed typed failure and recovery contract for generic clients.",
+  "description": "Closed typed failure and recovery contract for the experimental riprAgent adapter (fixture vocabulary; not standard LSP/MCP integration).",
   "type": "object",
   "additionalProperties": false,
   "required": [

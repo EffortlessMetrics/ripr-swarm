@@ -32,9 +32,14 @@ enum Form {
     FeatureBranch,
     /// Left in the working tree on top of the base commit.
     Uncommitted,
-    /// Committed on `main` itself: the inferred base is `HEAD`, which differs
-    /// from nothing.
+    /// Committed on `main` itself: the inferred base is `main`, which differs
+    /// from nothing, so bare `ripr check` analyzes the last commit and repair
+    /// follows it (#16082).
     OnDefaultBranch,
+    /// The base commit amended to hold the change, so `main` is one root
+    /// commit: nothing differs from the inferred base and there is no last
+    /// commit to fall back to, so neither check nor repair can scope.
+    RootOnDefaultBranch,
     /// Committed on `trunk`, a branch name `ripr check` does not resolve as a
     /// default base, with no remote: no base resolves.
     NoResolvableBase,
@@ -59,6 +64,7 @@ impl Repo {
     }
 
     /// A package with no Rust seam whose only change is to a Python file.
+    #[cfg(feature = "lang-python")]
     fn python_only(form: Form) -> Result<Self, String> {
         let repo = Self::empty()?;
         repo.write(
@@ -67,6 +73,12 @@ impl Repo {
         )?;
         repo.write("src/lib.rs", "pub struct Marker;\n")?;
         repo.write("tools/x.py", "def f(x):\n    return x\n")?;
+        // Zero-config detection does not enable Python for `tools/x.py`
+        // (#13571); this fixture tests the enabled-language guidance.
+        repo.write(
+            "ripr.toml",
+            "[languages]\nenabled = [\"rust\", \"python\"]\n",
+        )?;
         repo.commit_base(form)?;
         repo.write("tools/x.py", "def f(x):\n    return x + 1\n")?;
         repo.land_change(form)?;
@@ -144,6 +156,14 @@ impl Repo {
             Form::OnDefaultBranch | Form::NoResolvableBase => {
                 self.git(&["commit", "-q", "--no-gpg-sign", "-am", "change"])
             }
+            Form::RootOnDefaultBranch => self.git(&[
+                "commit",
+                "-q",
+                "--no-gpg-sign",
+                "--amend",
+                "-am",
+                "base with change",
+            ]),
         }
     }
 
@@ -178,16 +198,8 @@ impl Repo {
     /// stdout and stderr of `ripr <args>`, with this repository's root
     /// replaced by `<root>` so two repositories compare equal.
     fn ripr(&self, args: &[&str]) -> Result<String, String> {
-        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-            .current_dir(&self.0)
-            .args(args)
-            .output()
-            .map_err(|e| e.to_string())?;
-        let text = format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let output = self.run(args)?;
+        let text = format!("{}\n{}", output.stdout, output.stderr);
         // The product prints a Windows root with `/` separators, so mask both
         // spellings of this repository's own root.
         let native = self.0.to_string_lossy().into_owned();
@@ -204,6 +216,17 @@ impl Repo {
             Form::FeatureBranch => self.git_out(&["diff", "--name-only", "main...HEAD"])?,
             Form::OnDefaultBranch | Form::NoResolvableBase => {
                 self.git_out(&["diff", "--name-only", "HEAD~1", "HEAD"])?
+            }
+            Form::RootOnDefaultBranch => {
+                // No history holds the change: `main` is one root commit
+                // and the working tree is clean.
+                assert_eq!(
+                    self.git_out(&["rev-list", "--count", "HEAD"])?.trim(),
+                    "1",
+                    "root form keeps a single commit"
+                );
+                assert_eq!(self.git_out(&["status", "--porcelain"])?.trim(), "");
+                self.git_out(&["ls-files", "--", expected])?
             }
         };
         assert_eq!(names.trim(), expected, "fixture must hold the one change");
@@ -272,7 +295,21 @@ fn committed_scopes_like_uncommitted(
     uncommitted: &Repo,
     changed_path: &str,
 ) -> Result<(), String> {
-    committed.assert_changed_paths(Form::FeatureBranch, changed_path)?;
+    committed_form_scopes_like_uncommitted(
+        committed,
+        Form::FeatureBranch,
+        uncommitted,
+        changed_path,
+    )
+}
+
+fn committed_form_scopes_like_uncommitted(
+    committed: &Repo,
+    form: Form,
+    uncommitted: &Repo,
+    changed_path: &str,
+) -> Result<(), String> {
+    committed.assert_changed_paths(form, changed_path)?;
     uncommitted.assert_changed_paths(Form::Uncommitted, changed_path)?;
     // A bare `ripr check` reads each form with no flag at all.
     check_says_nothing_to_repair(committed, &["check"])?;
@@ -302,6 +339,23 @@ fn committed_error_variant_change_scopes_repair_like_the_uncommitted_one() -> Re
     committed_scopes_like_uncommitted(&committed, &uncommitted, "src/lib.rs")
 }
 
+/// #16082: a change committed on the default branch itself is the range bare
+/// `ripr check` analyzes (its last-commit rescope), so repair scopes to it
+/// exactly as it scopes the uncommitted change.
+#[test]
+fn change_committed_on_the_default_branch_scopes_repair_like_the_uncommitted_one()
+-> Result<(), String> {
+    let new = err_new();
+    let committed = Repo::package(ERR_BASE, &new, ERR_TEST, Form::OnDefaultBranch)?;
+    let uncommitted = Repo::package(ERR_BASE, &new, ERR_TEST, Form::Uncommitted)?;
+    committed_form_scopes_like_uncommitted(
+        &committed,
+        Form::OnDefaultBranch,
+        &uncommitted,
+        "src/lib.rs",
+    )
+}
+
 #[test]
 fn committed_workspace_change_scopes_repair_like_the_uncommitted_one() -> Result<(), String> {
     let committed = Repo::workspace(Form::FeatureBranch)?;
@@ -313,8 +367,8 @@ fn committed_workspace_change_scopes_repair_like_the_uncommitted_one() -> Result
 fn a_spot_outside_the_changed_lines_is_not_offered_as_the_start() -> Result<(), String> {
     // The error-variant change is already gripped; the boundary spot on
     // `s.len() > 10` is not part of this diff.
-    let on_default = Repo::package(ERR_BASE, &err_new(), ERR_TEST, Form::OnDefaultBranch)?;
-    on_default.assert_changed_paths(Form::OnDefaultBranch, "src/lib.rs")?;
+    let on_default = Repo::package(ERR_BASE, &err_new(), ERR_TEST, Form::RootOnDefaultBranch)?;
+    on_default.assert_changed_paths(Form::RootOnDefaultBranch, "src/lib.rs")?;
     let unscoped = on_default.ripr(&["repair", "--root", "."])?;
     assert!(
         unscoped.contains("ripr looked at ") && unscoped.contains("repair route not ready"),
@@ -387,15 +441,43 @@ fn refusal_with_no_resolvable_base_says_it_could_not_tell_which_lines_changed() 
 
 #[test]
 fn refusal_on_the_default_branch_says_nothing_differs_from_the_base() -> Result<(), String> {
-    let repo = all_gripped(Form::OnDefaultBranch)?;
-    repo.assert_changed_paths(Form::OnDefaultBranch, "src/lib.rs")?;
+    // A root commit: with a parent, check and repair read the last commit.
+    let repo = all_gripped(Form::RootOnDefaultBranch)?;
+    repo.assert_changed_paths(Form::RootOnDefaultBranch, "src/lib.rs")?;
     let repair = repo.ripr(&["repair", "--root", "."])?;
     assert!(
         repair.contains("could not tell which lines you changed")
             && repair.contains("nothing differs from the base"),
         "{repair}"
     );
+    // A refusal that lists spots keeps pointing at them (#16113 control).
+    assert!(
+        repair.contains("the spots below are not narrowed"),
+        "{repair}"
+    );
     assert!(offered_starts(&repair).is_empty(), "{repair}");
+    Ok(())
+}
+
+/// #16113: a repository with no repairable spot lists none, so its unscoped
+/// note must not point at a list below.
+#[test]
+fn a_zero_spot_refusal_does_not_point_at_a_list_below() -> Result<(), String> {
+    let repo = Repo::package(
+        "pub struct Price;\n",
+        "pub struct Price(pub u32);\n",
+        "use fx::Price;\n\n#[test]\nfn builds() {\n    let _ = Price(1);\n}\n",
+        Form::RootOnDefaultBranch,
+    )?;
+    repo.assert_changed_paths(Form::RootOnDefaultBranch, "src/lib.rs")?;
+    let repair = repo.ripr(&["repair", "--root", "."])?;
+    assert!(
+        repair.contains("no gaps visible under ")
+            && repair.contains("nothing differs from the base")
+            && repair.contains("the search for repairable spots is not narrowed to your change"),
+        "{repair}"
+    );
+    assert!(!repair.contains("below"), "{repair}");
     Ok(())
 }
 
@@ -499,6 +581,7 @@ fn an_explicit_base_reads_the_dirty_working_tree_too() -> Result<(), String> {
 }
 
 #[test]
+#[cfg(feature = "lang-python")]
 fn zero_seam_refusal_leads_with_the_unscoped_note() -> Result<(), String> {
     let repo = Repo::python_only(Form::NoResolvableBase)?;
     repo.assert_changed_paths(Form::NoResolvableBase, "tools/x.py")?;
@@ -508,17 +591,385 @@ fn zero_seam_refusal_leads_with_the_unscoped_note() -> Result<(), String> {
             && repair.contains("could not tell which lines you changed"),
         "{repair}"
     );
-    assert!(!repair.contains("works from Rust gaps only"), "{repair}");
+    assert!(!repair.contains("seam flow is Rust only"), "{repair}");
     Ok(())
 }
 
 #[test]
+#[cfg(feature = "lang-python")]
 fn an_explicit_base_reaches_the_non_rust_guidance() -> Result<(), String> {
     let repo = Repo::python_only(Form::NoResolvableBase)?;
     let explicit = repo.ripr(&["repair", "--root", ".", "--base", "HEAD~1"])?;
     assert!(
-        explicit.contains("is Python") && explicit.contains("works from Rust gaps only"),
+        explicit.contains("is Python") && explicit.contains("seam flow is Rust only"),
         "the named base finds the Python change:\n{explicit}"
+    );
+    Ok(())
+}
+
+/// One `ripr` run with its streams kept apart, for the JSON documents.
+struct Run {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+}
+
+impl Repo {
+    fn run(&self, args: &[&str]) -> Result<Run, String> {
+        let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
+            .current_dir(&self.0)
+            .args(args)
+            .output()
+            .map_err(|e| e.to_string())?;
+        Ok(Run {
+            code: output.status.code(),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+}
+
+fn json_document(run: &Run) -> Result<serde_json::Value, String> {
+    serde_json::from_str(&run.stdout).map_err(|error| {
+        format!(
+            "stdout must be one JSON document ({error}):\n{}\nstderr:\n{}",
+            run.stdout, run.stderr
+        )
+    })
+}
+
+/// The `--base` rerun an unscoped start or menu names (#13701), with the
+/// absolute bound root between the two halves.
+const BASE_RERUN_HEAD: &str = "(for example `ripr repair --root ";
+const BASE_RERUN_TAIL: &str = " --base <ref>`)";
+
+fn names_base_rerun(text: &str) -> bool {
+    text.split_once(BASE_RERUN_HEAD)
+        .is_some_and(|(_, rest)| rest.lines().next().unwrap_or("").contains(BASE_RERUN_TAIL))
+}
+const NOT_NARROWED_MENU: &str = "so the repairs ripr offers here are not narrowed to your change";
+const NOT_NARROWED_START: &str = "so the spot this repair starts on is not narrowed to your change";
+
+/// The `rust/private-helper` repair-start case: one changed line inside a
+/// private helper; the only repairable spot is the public caller's return.
+const HELPER_BASE: &str =
+    "fn tax(v: u32) -> u32 {\n    v / 10\n}\n\npub fn gross(v: u32) -> u32 {\n    v + tax(v)\n}\n";
+const HELPER_TEST: &str =
+    "use fx::gross;\n\n#[test]\nfn gross_exceeds_net() {\n    assert!(gross(100) > 100);\n}\n";
+
+/// #13701 (a): with no readable change, the menu leads with the unscoped note
+/// and the `--base` rerun, in the human menu and in the `--json` refusal
+/// document's message; nothing is selected for the reader (fail closed).
+#[test]
+fn an_unscoped_menu_says_it_is_not_narrowed_and_names_the_base_rerun() -> Result<(), String> {
+    let new = TWO_SPOTS_BASE.replace("x > 100", "x >= 100");
+    let repo = Repo::package(TWO_SPOTS_BASE, &new, TWO_SPOTS_TEST, Form::NoResolvableBase)?;
+    repo.assert_changed_paths(Form::NoResolvableBase, "src/lib.rs")?;
+
+    let human = repo.run(&["repair", "--root", "."])?;
+    assert_eq!(
+        human.code,
+        Some(3),
+        "a menu is a decision:\n{}",
+        human.stderr
+    );
+    // The menu still offers the unchanged line: that is the premise.
+    assert!(
+        human.stderr.contains("different repairs")
+            && human.stderr.contains("src/lib.rs:2")
+            && human.stderr.contains("src/lib.rs:5"),
+        "control: unscoped, both spots are offered:\n{}",
+        human.stderr
+    );
+    let note_at = human
+        .stderr
+        .find("could not tell which lines you changed")
+        .ok_or_else(|| format!("the menu must carry the note:\n{}", human.stderr))?;
+    let menu_at = human.stderr.find("different repairs").unwrap_or(0);
+    assert!(
+        note_at < menu_at,
+        "the note leads the menu:\n{}",
+        human.stderr
+    );
+    assert!(
+        human.stderr.contains(NOT_NARROWED_MENU)
+            && human
+                .stderr
+                .contains("no base to compare against could be found")
+            && names_base_rerun(&human.stderr),
+        "{}",
+        human.stderr
+    );
+    assert_eq!(
+        human
+            .stderr
+            .matches("could not tell which lines you changed")
+            .count(),
+        1,
+        "the human menu says it once:\n{}",
+        human.stderr
+    );
+    assert!(human.stdout.is_empty(), "{}", human.stdout);
+
+    let json = repo.run(&["repair", "--root", ".", "--json"])?;
+    assert_eq!(json.code, Some(3), "{}", json.stderr);
+    let document = json_document(&json)?;
+    assert_eq!(
+        document["error"]["code"], "several_eligible_seams",
+        "{document:#}"
+    );
+    let message = document["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.starts_with("no repair started; run one of the commands above; ")
+            && message.contains(NOT_NARROWED_MENU)
+            && names_base_rerun(message),
+        "the JSON refusal message carries the note and the rerun:\n{document:#}"
+    );
+    assert_eq!(
+        document["error"]["next"],
+        serde_json::Value::Null,
+        "the `<ref>` template is never offered as a runnable next step:\n{document:#}"
+    );
+    // The boundary echoes the refusal message on stderr; the note is not
+    // printed a second time above the menu.
+    assert_eq!(
+        json.stderr
+            .matches("could not tell which lines you changed")
+            .count(),
+        1,
+        "the --json menu says it once on stderr:\n{}",
+        json.stderr
+    );
+    assert!(
+        !repo.0.join("target/ripr/repair-attempts").exists(),
+        "a menu starts nothing"
+    );
+    Ok(())
+}
+
+/// #13701 (b): with no readable change, a bare start on the one repairable
+/// spot (an unchanged line, `rust/private-helper`) says it is not narrowed and
+/// names the `--base` rerun, on stderr for a human start and as the
+/// `repair_start_scope` block of the `--json` start document.
+#[test]
+fn an_unscoped_single_start_says_it_is_not_narrowed_and_names_the_base_rerun() -> Result<(), String>
+{
+    let new = HELPER_BASE.replace("v / 10", "v / 5");
+    let repo = Repo::package(HELPER_BASE, &new, HELPER_TEST, Form::RootOnDefaultBranch)?;
+    repo.assert_changed_paths(Form::RootOnDefaultBranch, "src/lib.rs")?;
+
+    let human = repo.run(&["repair", "--root", "."])?;
+    // The fixture must start: the claim is about what a start says.
+    assert!(
+        human.stdout.contains("Repair prepared for seam") && human.stdout.contains("src/lib.rs:6"),
+        "precondition, a bare repair starts on the unchanged caller line:\nstdout:\n{}\nstderr:\n{}",
+        human.stdout,
+        human.stderr
+    );
+    assert!(
+        human
+            .stderr
+            .contains("could not tell which lines you changed")
+            && human.stderr.contains("nothing differs from the base")
+            && human.stderr.contains(NOT_NARROWED_START)
+            && names_base_rerun(&human.stderr),
+        "the human start must say it is not narrowed:\n{}",
+        human.stderr
+    );
+
+    let json_repo = Repo::package(HELPER_BASE, &new, HELPER_TEST, Form::RootOnDefaultBranch)?;
+    let json = json_repo.run(&["repair", "--root", ".", "--json"])?;
+    assert_eq!(json.code, Some(0), "{}", json.stderr);
+    let document = json_document(&json)?;
+    assert!(
+        document.pointer("/repair_attempt/attempt_id").is_some(),
+        "precondition, the JSON start started an attempt:\n{document:#}"
+    );
+    let scope = &document["repair_start_scope"];
+    assert_eq!(scope["narrowed_to_change"], false, "{document:#}");
+    let note = scope["note"].as_str().unwrap_or_default();
+    assert!(
+        note.contains("could not tell which lines you changed")
+            && note.contains(NOT_NARROWED_START),
+        "{document:#}"
+    );
+    let base_command = scope["base_command"].as_str().unwrap_or_default();
+    assert!(
+        base_command.starts_with("ripr repair --root ") && base_command.ends_with(" --base <ref>"),
+        "{document:#}"
+    );
+    assert_eq!(
+        scope.as_object().map_or(0, serde_json::Map::len),
+        3,
+        "{document:#}"
+    );
+    // A repeated `--json` start resumes the attempt and prints its status
+    // document, which carries the same block.
+    let resumed = json_repo.run(&["repair", "--root", ".", "--json"])?;
+    assert_eq!(resumed.code, Some(0), "{}", resumed.stderr);
+    assert!(
+        resumed
+            .stderr
+            .contains("is already awaiting the focused test edit"),
+        "precondition, the second start resumes:\n{}",
+        resumed.stderr
+    );
+    let resumed_doc = json_document(&resumed)?;
+    assert!(
+        resumed_doc.get("repair_attempt").is_none(),
+        "precondition, the resume prints the status document:\n{resumed_doc:#}"
+    );
+    assert_eq!(
+        resumed_doc.get("repair_start_scope"),
+        document.get("repair_start_scope"),
+        "the resumed start keeps the scope block:\n{resumed_doc:#}"
+    );
+    Ok(())
+}
+
+/// A feature branch off `main` whose only change adds a line to the test file
+/// and a README: the diff is readable but touches no Rust production code.
+fn test_and_readme_only(src: &str, test: &str) -> Result<Repo, String> {
+    let repo = Repo::empty()?;
+    repo.write(
+        "Cargo.toml",
+        "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    repo.write("src/lib.rs", src)?;
+    repo.write("tests/t.rs", test)?;
+    repo.commit_base(Form::FeatureBranch)?;
+    repo.git(&["checkout", "-q", "-b", "feature"])?;
+    repo.write("tests/t.rs", &format!("{test}// touched\n"))?;
+    repo.write("README.md", "fx\n")?;
+    repo.git(&["add", "-A"])?;
+    repo.git(&["commit", "-q", "--no-gpg-sign", "-m", "tests and docs"])?;
+    let names = repo.git_out(&["diff", "--name-only", "main...HEAD"])?;
+    assert_eq!(
+        names.trim(),
+        "README.md\ntests/t.rs",
+        "fixture must change only the test file and the README"
+    );
+    Ok(repo)
+}
+
+const NO_PRODUCTION_CODE: &str = "touches no Rust production code";
+
+/// #13701 (d): a readable diff that changes only tests and docs scopes
+/// nothing, so the whole-repository menu says so in its own words (not as an
+/// unreadable change) and names the `--base` rerun, in human and JSON output.
+#[test]
+fn a_menu_for_a_change_with_no_production_code_says_it_is_not_narrowed() -> Result<(), String> {
+    let repo = test_and_readme_only(TWO_SPOTS_BASE, TWO_SPOTS_TEST)?;
+    let human = repo.run(&["repair", "--root", "."])?;
+    assert_eq!(human.code, Some(3), "{}", human.stderr);
+    assert!(
+        human.stderr.contains("different repairs")
+            && human.stderr.contains("src/lib.rs:2")
+            && human.stderr.contains("src/lib.rs:5"),
+        "precondition, nothing scopes the menu:\n{}",
+        human.stderr
+    );
+    assert!(
+        human.stderr.contains(NO_PRODUCTION_CODE)
+            && human
+                .stderr
+                .contains("the repairs ripr offers here are not narrowed to it")
+            && names_base_rerun(&human.stderr)
+            && !human
+                .stderr
+                .contains("could not tell which lines you changed"),
+        "{}",
+        human.stderr
+    );
+    let json = repo.run(&["repair", "--root", ".", "--json"])?;
+    assert_eq!(json.code, Some(3), "{}", json.stderr);
+    let document = json_document(&json)?;
+    let message = document["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(NO_PRODUCTION_CODE) && names_base_rerun(message),
+        "{document:#}"
+    );
+    Ok(())
+}
+
+/// #13701 (e): the same readable test-and-docs-only diff, with one repairable
+/// spot: the start says it is not narrowed, on stderr and in the `--json`
+/// document's `repair_start_scope` block.
+#[test]
+fn a_start_for_a_change_with_no_production_code_says_it_is_not_narrowed() -> Result<(), String> {
+    let repo = test_and_readme_only(HELPER_BASE, HELPER_TEST)?;
+    let human = repo.run(&["repair", "--root", "."])?;
+    assert!(
+        human.stdout.contains("Repair prepared for seam") && human.stdout.contains("src/lib.rs:6"),
+        "precondition, a bare repair starts on the unchanged caller line:\nstdout:\n{}\nstderr:\n{}",
+        human.stdout,
+        human.stderr
+    );
+    assert!(
+        human.stderr.contains(NO_PRODUCTION_CODE)
+            && human
+                .stderr
+                .contains("the spot this repair starts on is not narrowed to it")
+            && names_base_rerun(&human.stderr),
+        "{}",
+        human.stderr
+    );
+    let json_repo = test_and_readme_only(HELPER_BASE, HELPER_TEST)?;
+    let json = json_repo.run(&["repair", "--root", ".", "--json"])?;
+    assert_eq!(json.code, Some(0), "{}", json.stderr);
+    let document = json_document(&json)?;
+    assert_eq!(
+        document["repair_start_scope"]["narrowed_to_change"], false,
+        "{document:#}"
+    );
+    assert!(
+        document["repair_start_scope"]["note"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(NO_PRODUCTION_CODE),
+        "{document:#}"
+    );
+    Ok(())
+}
+
+/// #13701 (c): a change the diff reads and that touches a seam scopes the
+/// start, so neither the human start nor the `--json` document carries the
+/// note or the `--base` rerun. (A scoped menu is not covered here: with the
+/// diff read, `ripr check` narrows these fixtures to its one recommended
+/// start, so no scoped menu could be built from them.)
+#[test]
+fn a_start_scoped_by_the_diff_carries_no_unscoped_note() -> Result<(), String> {
+    let new = TWO_SPOTS_BASE.replace("x > 100", "x >= 100");
+    let repo = Repo::package(TWO_SPOTS_BASE, &new, TWO_SPOTS_TEST, Form::FeatureBranch)?;
+    repo.assert_changed_paths(Form::FeatureBranch, "src/lib.rs")?;
+    let human = repo.run(&["repair", "--root", "."])?;
+    assert!(
+        human.stdout.contains("Repair prepared for seam") && human.stdout.contains("src/lib.rs:5"),
+        "precondition, the inferred base scopes a start to the changed spot:\nstdout:\n{}\nstderr:\n{}",
+        human.stdout,
+        human.stderr
+    );
+    assert!(
+        !human
+            .stderr
+            .contains("could not tell which lines you changed")
+            && !human.stderr.contains(NO_PRODUCTION_CODE)
+            && !human.stderr.contains("--base <ref>"),
+        "{}",
+        human.stderr
+    );
+
+    let json_repo = Repo::package(TWO_SPOTS_BASE, &new, TWO_SPOTS_TEST, Form::FeatureBranch)?;
+    let json = json_repo.run(&["repair", "--root", ".", "--json"])?;
+    assert_eq!(json.code, Some(0), "{}", json.stderr);
+    let document = json_document(&json)?;
+    assert!(
+        document.pointer("/repair_attempt/attempt_id").is_some(),
+        "precondition, the JSON start started an attempt:\n{document:#}"
+    );
+    assert!(
+        document.get("repair_start_scope").is_none(),
+        "a scoped start carries no repair_start_scope block:\n{document:#}"
     );
     Ok(())
 }

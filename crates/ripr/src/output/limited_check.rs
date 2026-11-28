@@ -1,8 +1,10 @@
 use crate::app::{CHECK_OUTPUT_SCHEMA_VERSION, CHECK_REFUSAL_SCHEMA_VERSION, CheckInput};
 use crate::core_error::CoreError;
 use crate::output::json::render_pretty_with_newline;
+use crate::output::refusal::RefusalBlock;
 use serde_json::{Value, json};
 
+const CONFIG_INVALID_IDENTITY: &str = "config_invalid";
 const DIFF_SCOPE_OVERSIZED_PREFIX: &str = "diff_scope_oversized:";
 const DIFF_SCOPE_REPAIR_ROUTE: &str = "analysis/diff-scope-budget";
 const REPO_SCOPE_OVERSIZED_PREFIX: &str = "repo_scope_oversized:";
@@ -14,15 +16,28 @@ const REPO_SCOPE_REPAIR_ROUTE: &str = "analysis/repo-scope-budget";
 /// diff-scope refusal (Rust line/file guards) keeps `rust_diff_scope_budget`
 /// exactly as before. The `--json` consumer must see the budget it can act
 /// on — a Python refusal reporting a Rust basis would claim more than the
-/// envelope enforces (evidence honesty).
+/// envelope enforces (evidence honesty). A refusal naming several limits
+/// (the #13641 nothing-fits refusal) names the largest file's limit first,
+/// so the basis follows the env named earliest in the message.
 fn diff_scope_basis(error: &str) -> &'static str {
-    if error.contains(crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV) {
-        "python_diff_scope_budget"
-    } else if error.contains(crate::analysis::DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV) {
-        "typescript_diff_scope_budget"
-    } else {
-        "rust_diff_scope_budget"
-    }
+    [
+        (
+            crate::analysis::DIFF_CHANGED_RUST_LINE_LIMIT_ENV,
+            "rust_diff_scope_budget",
+        ),
+        (
+            crate::analysis::DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV,
+            "python_diff_scope_budget",
+        ),
+        (
+            crate::analysis::DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+            "typescript_diff_scope_budget",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(env, basis)| error.find(env).map(|position| (position, basis)))
+    .min_by_key(|(position, _)| *position)
+    .map_or("rust_diff_scope_budget", |(_, basis)| basis)
 }
 
 pub(crate) fn render_diff_scope_limited_check_json(
@@ -93,6 +108,9 @@ pub(crate) fn render_diff_scope_limited_check_json(
     if let Some(base) = &input.base {
         value["base"] = json!(base);
     }
+    // The shared refusal block (#11584) rides beside the frozen scope-guard
+    // keys; `message` stays the guard's own diagnostic verbatim.
+    RefusalBlock::from_prose(run_status, error).insert_into(&mut value);
 
     render_pretty_with_newline(&value, "limited check").map(Some)
 }
@@ -141,7 +159,7 @@ pub(crate) struct RefusalEnvelopeContext<'a> {
 /// [`CoreError::check_refusal`], matched structurally; this renderer never
 /// inspects message text.
 fn refusal_envelope_value(context: &RefusalEnvelopeContext<'_>, error: &CoreError) -> Value {
-    let notice = error.refusal_notice();
+    let notice = machine_notice(error, context.root);
     let identity = notice.identity;
     let repair_route = notice.repair_route;
     let remedy = serde_json::to_value(&notice.remedy).unwrap_or(Value::Null);
@@ -226,7 +244,9 @@ pub(crate) fn render_check_failure_json(
     input: &CheckInput,
     error: &CoreError,
 ) -> Result<String, String> {
-    let identity = error.refusal_notice().identity;
+    let identity = error
+        .refusal_notice(&crate::config::config_error_summary)
+        .identity;
     let timeout_context = (identity == "analysis_timeout")
         .then(crate::app::timeout_refusal::take_stashed)
         .flatten();
@@ -244,7 +264,55 @@ pub(crate) fn render_check_failure_json(
     if let Some(projection) = timeout_context {
         value["input_context"] = projection.input_context_value();
     }
+    // The shared refusal block (#11584): the typed identity and message the
+    // envelope already carries, plus the one stated next step (or null).
+    let notice = machine_notice(error, &input.root);
+    RefusalBlock::from_remedy(notice.identity, &notice.message, &notice.remedy)
+        .insert_into(&mut value);
     render_pretty_with_newline(&value, "limited check")
+}
+
+/// The refusal notice every machine refusal envelope carries. A `ripr.toml`
+/// that failed to load keeps its parser diagnostic redacted (config contents
+/// never enter machine output), but the human stderr also names the way out
+/// ("Fix the error above in ripr.toml and rerun"); without it a JSON consumer
+/// had `next: null` and a message that ended at the TOML line/column (#15260).
+/// The step is appended here once, with the one command that re-checks the
+/// file, so the envelope's remedy and `error.next` match the human next step.
+fn machine_notice(error: &CoreError, root: &std::path::Path) -> crate::core_error::RefusalNotice {
+    let mut notice = error.refusal_notice(&crate::config::config_error_summary);
+    if notice.identity == CONFIG_INVALID_IDENTITY
+        && let Some(recovery) = crate::config::working_tree_config_recovery(&error.to_string())
+    {
+        // A root holding a backtick cannot round-trip through the
+        // backtick-delimited prose the remedy parser reads, so the step is
+        // named without the command and `next` stays null (fail closed).
+        let command = config_validate_command(root);
+        notice.message = if command.contains('`') {
+            format!(
+                "{}; {recovery}, then check it with ripr config validate --root <repository root>",
+                notice.message
+            )
+        } else {
+            format!(
+                "{}; {recovery}, then check it with `{command}`",
+                notice.message
+            )
+        };
+        notice.remedy = crate::domain::RefusalRemedy::from_prose(&notice.message);
+    }
+    notice
+}
+
+/// `ripr config validate --root <root>` for the bound root, shell-quoted like
+/// every other composed next command. A root the remedy parser cannot lift as
+/// one runnable command leaves `next` null instead of naming another tree.
+fn config_validate_command(root: &std::path::Path) -> String {
+    let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    format!(
+        "ripr config validate --root {}",
+        crate::agent::loop_commands::shell_arg(&bound)
+    )
 }
 
 #[cfg(test)]
@@ -453,6 +521,46 @@ mod tests {
                 if actual != Some("rust_diff_scope_budget") {
                     return Err(format!(
                         "{pointer}: expected rust_diff_scope_budget, got {actual:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn multi_limit_refusal_basis_follows_the_limit_named_first() -> Result<(), String> {
+        // #13641 review: the nothing-fits refusal names the largest file's
+        // limit first and every other enabled limit after it; the basis
+        // follows the first one, never a fixed Python-first preference.
+        for (first, expected) in [
+            (
+                "RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES",
+                "typescript_diff_scope_budget",
+            ),
+            ("RIPR_MAX_DIFF_CHANGED_RUST_LINES", "rust_diff_scope_budget"),
+            (
+                "RIPR_MAX_DIFF_CHANGED_PYTHON_LINES",
+                "python_diff_scope_budget",
+            ),
+        ] {
+            let refusal = format!(
+                "diff_scope_oversized: every one of the 3 changed file(s) ripr's enabled \
+                 adapters read exceeds its language's changed-line limit on its own (largest: \
+                 4100 changed lines over the {first} limit (2000)); analysis was not run. \
+                 Repair route: raise the limit via RIPR_MAX_DIFF_CHANGED_PYTHON_LINES=<number> / \
+                 RIPR_MAX_DIFF_CHANGED_TYPESCRIPT_LINES=<number> / \
+                 RIPR_MAX_DIFF_CHANGED_RUST_LINES=<number>."
+            );
+            let rendered = render_diff_scope_limited_check_json(&input(), &refusal)?
+                .ok_or("expected a limited artifact for the nothing-fits refusal")?;
+            let value: Value =
+                serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+            for pointer in ["/analysis_scope/basis", "/run_limitations/0/basis"] {
+                let actual = value.pointer(pointer).and_then(Value::as_str);
+                if actual != Some(expected) {
+                    return Err(format!(
+                        "{first} first: {pointer}: expected {expected}, got {actual:?}"
                     ));
                 }
             }

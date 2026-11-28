@@ -33,6 +33,12 @@ mod effect_assertion_sweep;
 mod effect_assertions;
 #[path = "owner_pin_execution/function_pointer.rs"]
 mod function_pointer;
+#[path = "owner_pin_execution/non_empty_array_loop.rs"]
+mod non_empty_array_loop;
+#[path = "owner_pin_execution/path_value.rs"]
+mod path_value;
+#[path = "owner_pin_execution/propagated_helper_try.rs"]
+mod propagated_helper_try;
 
 #[path = "owner_pin_execution/matches_panic.rs"]
 mod matches_panic;
@@ -365,7 +371,7 @@ fn empty_macro_arguments_cannot_activate_a_real_far_oracle() -> Result<(), Strin
             assert!(
                 finding["ripr"]["infect"]["summary"]
                     .as_str()
-                    .is_some_and(|s| s.contains("equality-boundary discriminator is missing"))
+                    .is_some_and(|s| s.contains("equality-boundary check is missing"))
             );
         }
         observations.push(finding.clone());
@@ -594,7 +600,9 @@ fn owner_pin_shared_admission_keeps_credit_on_one_admitted_oracle() -> Result<()
         (
             "let input = 4;\nlet _later = || assert_eq!(weight(input), 12);\nassert_eq!(2 + 2, 4);",
             false,
-            "strong",
+            // #14968: a literal-only assertion reads no value, so it supplies
+            // no oracle strength either.
+            "none",
         ),
         (
             "let input = 4;\nlet _later = || assert_eq!(weight(input), 12);\nassert!(weight(input) > 0);",
@@ -1507,13 +1515,27 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
     let test_file = "use super::*;\n#[test]\nfn checks() {\n    assert_eq!(weight(4), 12);\n}\n";
     let define = "macro_rules! define { ($name:ident ! ($($rest:tt)*)) => { macro_rules! $name { ($a:expr, $b:expr) => {{ let _ = (&$a, &$b); }}; } $($rest)* }; }";
     let wrap = "macro_rules! wrap { ($($tokens:tt)*) => { $($tokens)* }; }";
-    for (case, items, module, exposed, runtime_catches) in [
+    // httparse's `req!` shape (#14761): the wrapper forwards to its own
+    // second arm and asserts in its body, and a plain test sits between two
+    // of its calls. Its expansion binds nothing, so the plain test's
+    // `assert_eq!` is the standard one.
+    let recursive = "#[cfg(test)]\nmod tests {\n    use super::*;\n    macro_rules! case {\n        ($name:ident, $check:expr) => { case! { $name, $check, 1 } };\n        ($name:ident, $check:expr, $want:expr) => {\n            #[test]\n            fn $name() { assert_eq!($want, 1); $check; }\n        };\n    }\n    case! { first, assert_eq!(1, 1) }\n    #[test]\n    fn checks() {\n        assert_eq!(weight(4), 12);\n    }\n    case! { second, assert_eq!(2, 2) }\n}\n";
+    for (case, items, module, exposed, runtime_catches, tests) in [
         (
             "pass_through",
             format!("{wrap}\nfn _uses() {{ wrap!(assert_eq!(1, 1)); }}\n{inline_tests}"),
             None,
             false,
             true,
+            1,
+        ),
+        (
+            "recursive_asserting_wrapper",
+            recursive.to_string(),
+            None,
+            true,
+            true,
+            3,
         ),
         (
             "shadow_and_test_module_from_one_expansion",
@@ -1521,6 +1543,7 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
             Some(("tests.rs", test_file)),
             false,
             false,
+            1,
         ),
         (
             "no_implicit_prelude_hidden_in_arguments",
@@ -1530,6 +1553,7 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
             Some(("tests.rs", test_file)),
             false,
             false,
+            1,
         ),
     ] {
         let source = format!("{production}\n{items}\n");
@@ -1575,7 +1599,7 @@ fn wrapper_argument_admission_matches_runtime() -> Result<(), String> {
                 &runtime_source,
                 &modules,
                 &format!("wrapper runtime: {case}, wrong={wrong}"),
-                1,
+                tests,
                 wrong && runtime_catches,
             )?;
         }
@@ -2353,6 +2377,16 @@ fn bool_owner_assert_pin_matched_static_and_runtime_controls() -> Result<(), Str
             true,
         ),
         (
+            "let_bound_results_named_in_messages",
+            "let hit = gate(10);\n        let miss = gate(9);\n        assert!(hit, \"{}\", hit);\n        assert!(!miss, \"{}\", miss);",
+            true,
+        ),
+        (
+            "let_bound_far_results_named_in_messages",
+            "let hit = gate(50);\n        let miss = gate(3);\n        assert!(hit, \"{}\", hit);\n        assert!(!miss, \"{}\", miss);",
+            false,
+        ),
+        (
             "shadowed_owner",
             "let gate = |value: u32| value >= 10;\n        assert!(gate(10));\n        assert!(!gate(9));",
             false,
@@ -2676,6 +2710,99 @@ fn aliased_outside_module_beside_a_same_named_module_is_not_credited() -> Result
     let production = "#![allow(deprecated)]\npub trait Counter {\n    fn step(&self) -> u32;\n\n    fn count_ones(&self) -> u32 {\n        4 * self.step()\n    }\n}\n\n#[allow(non_camel_case_types)]\npub struct MAX;\n\nimpl Counter for MAX {\n    fn step(&self) -> u32 {\n        8\n    }\n}\n\nuse std::u32 as nums;\npub mod other {\n    pub mod nums {}\n}\n";
     let tests = "#[cfg(test)]\nmod tests {\n    use super::Counter;\n    use crate::nums::*;\n\n    #[test]\n    fn counts() {\n        assert_eq!(MAX.count_ones(), 32);\n    }\n}\n";
     unit_struct_shadow_is_not_credited("aliased module glob", production, &[], tests)
+}
+
+/// #7160: a dependency `macro_rules!` invoked at item position can emit a
+/// `pub use` the spelling scan never reads. The mutant passes while ripr
+/// refuses the unit-struct receiver.
+#[test]
+fn out_of_workspace_item_macro_emits_unread_unit_binding() -> Result<(), String> {
+    let production = "pub trait Counter {\n    fn step(&self) -> u32;\n\n    fn count_ones(&self) -> u32 {\n        4 * self.step()\n    }\n}\n\n#[allow(non_camel_case_types)]\npub struct MAX;\n\nimpl Counter for MAX {\n    fn step(&self) -> u32 {\n        8\n    }\n}\n\npub mod limits;\n";
+    let limits = "#![allow(deprecated)]\nuse macro_reexport::reexport_max;\nreexport_max!();\n";
+    let tests = "#[cfg(test)]\nmod tests {\n    use super::Counter;\n    use crate::limits::MAX;\n\n    #[test]\n    fn counts() {\n        assert_eq!(MAX.count_ones(), 32);\n    }\n}\n";
+    let scratch = Scratch::create()?;
+    let root = scratch.0.join("ws");
+    let dep = scratch.0.join("macro_reexport");
+    for directory in [root.join("src"), dep.join("src")] {
+        std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    }
+    let write =
+        |path: PathBuf, text: &str| std::fs::write(path, text).map_err(|error| error.to_string());
+    write(
+        dep.join("Cargo.toml"),
+        "[package]\nname = \"macro_reexport\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    write(
+        dep.join("src/lib.rs"),
+        "#![allow(deprecated)]\n#[macro_export]\nmacro_rules! reexport_max {\n    () => {\n        pub use std::u32::MAX;\n    };\n}\n",
+    )?;
+    write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"unit_struct_macro_shadow_control\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies]\nmacro_reexport = { path = \"../macro_reexport\" }\n",
+    )?;
+    write(root.join("src/lib.rs"), &format!("{production}\n{tests}"))?;
+    write(root.join("src/limits.rs"), limits)?;
+    let diff = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,5 +3,5 @@ pub trait Counter {\n \n     fn count_ones(&self) -> u32 {\n-        self.step() * 4\n+        4 * self.step()\n     }\n }\n";
+    let changed_line = production
+        .lines()
+        .position(|line| line.contains("4 * self.step()"))
+        .map(|index| index + 1)
+        .ok_or("production has no changed tail")?;
+    let diff = diff.replace(
+        "@@ -3,5 +3,5",
+        &format!("@@ -{0},5 +{0},5", changed_line - 2),
+    );
+    write(root.join("diff.patch"), &diff)?;
+    let report = check_workspace(CheckInput {
+        root: root.clone(),
+        diff_file: Some(root.join("diff.patch")),
+        mode: Mode::Fast,
+        format: OutputFormat::Json,
+        ..CheckInput::default()
+    })?;
+    let finding = report
+        .findings
+        .iter()
+        .find(|finding| {
+            finding.probe.family == ProbeFamily::ReturnValue
+                && finding.probe.location.line == changed_line
+        })
+        .ok_or("no return_value finding on the changed tail")?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::WeaklyExposed,
+        "out-of-workspace item macro: {:?}",
+        finding.class
+    );
+    for (label, tail) in [
+        ("rewrite", "4 * self.step()"),
+        ("mutant", "4 + self.step()"),
+    ] {
+        let mutant_production = production.replace("4 * self.step()", tail);
+        write(
+            root.join("src/lib.rs"),
+            &format!("{mutant_production}\n{tests}"),
+        )?;
+        let cargo = PathBuf::from(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+        let result = run(
+            &cargo,
+            &[
+                "test".as_ref(),
+                "--quiet".as_ref(),
+                "--manifest-path".as_ref(),
+                root.join("Cargo.toml").as_os_str(),
+                "--target-dir".as_ref(),
+                scratch.0.join("target").as_os_str(),
+            ],
+        )?;
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        assert!(
+            result.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "out-of-workspace item macro {label} must keep the mutant green: {stdout}; {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    Ok(())
 }
 
 /// The changed `Counter::count_ones` default on line 5 reads weakly_exposed,
@@ -3324,21 +3451,67 @@ fn constant_row_table_pairs_each_row_with_its_boundary_input() -> Result<(), Str
 
 /// #7175/#7117: identical assertion tokens can name a test-local trait or
 /// the production trait. Keep literal runtime truth outside the analyzed root,
-/// and graduate all three compiled shapes into the independent honesty gate.
+/// and graduate compiled shapes into the independent honesty gate.
+fn load_honesty_corpus_cases(fixtures: &Path) -> Result<Vec<serde_json::Value>, String> {
+    let corpus_path = fixtures.join("evidence-promotion-honesty-corpus/corpus.json");
+    let corpus_text = std::fs::read_to_string(&corpus_path).map_err(|error| error.to_string())?;
+    let mut corpus: serde_json::Value =
+        serde_json::from_str(&corpus_text).map_err(|error| error.to_string())?;
+    let cases = corpus
+        .get_mut("cases")
+        .and_then(|value| value.as_array_mut())
+        .ok_or("missing honesty cases")?;
+    let cases_dir = fixtures.join("evidence-promotion-honesty-corpus/cases");
+    if cases_dir.is_dir() {
+        let mut files = std::fs::read_dir(&cases_dir)
+            .map_err(|error| error.to_string())?
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+            .collect::<Vec<_>>();
+        files.sort();
+        let mut seen = cases
+            .iter()
+            .filter_map(|case| case["id"].as_str().map(str::to_string))
+            .collect::<std::collections::BTreeSet<_>>();
+        for file in files {
+            let case_text = std::fs::read_to_string(&file).map_err(|error| error.to_string())?;
+            let case: serde_json::Value =
+                serde_json::from_str(&case_text).map_err(|error| error.to_string())?;
+            let id = case["id"]
+                .as_str()
+                .ok_or_else(|| format!("{} missing id", file.display()))?;
+            if seen.insert(id.to_string()) {
+                cases.push(case);
+            }
+        }
+    }
+    Ok(cases.clone())
+}
+
 #[test]
 fn trait_shadow_corpus_matches_compiled_owner_dispatch() -> Result<(), String> {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
-    let corpus: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(fixtures.join("evidence-promotion-honesty-corpus/corpus.json"))
-            .map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let cases = corpus["cases"].as_array().ok_or("missing honesty cases")?;
+    let cases = load_honesty_corpus_cases(&fixtures)?;
 
-    for (shape, shadow, test_file, line, name) in [
-        ("impl", true, "src/lib.rs", 28, "render_is_empty"),
-        ("impl", false, "src/lib.rs", 18, "render_is_empty"),
+    for (prefix, shape, shadow, test_file, line, name) in [
         (
+            "rust_trait",
+            "impl",
+            true,
+            "src/lib.rs",
+            28,
+            "render_is_empty",
+        ),
+        (
+            "rust_trait",
+            "impl",
+            false,
+            "src/lib.rs",
+            18,
+            "render_is_empty",
+        ),
+        (
+            "rust_trait",
             "parent",
             true,
             "src/helpers/render_tests.rs",
@@ -3346,17 +3519,50 @@ fn trait_shadow_corpus_matches_compiled_owner_dispatch() -> Result<(), String> {
             "render_is_empty",
         ),
         (
+            "rust_trait",
             "parent",
             false,
             "src/helpers/render_tests.rs",
             4,
             "render_is_empty",
         ),
-        ("default", true, "src/lib.rs", 35, "advances"),
-        ("default", false, "src/lib.rs", 22, "advances"),
+        ("rust_trait", "default", true, "src/lib.rs", 35, "advances"),
+        ("rust_trait", "default", false, "src/lib.rs", 22, "advances"),
+        (
+            "rust_f64_trait",
+            "impl",
+            true,
+            "src/lib.rs",
+            24,
+            "render_is_empty",
+        ),
+        (
+            "rust_f64_trait",
+            "impl",
+            false,
+            "src/lib.rs",
+            16,
+            "render_is_empty",
+        ),
+        (
+            "rust_f64_trait",
+            "parent",
+            true,
+            "src/helpers/render_tests.rs",
+            4,
+            "render_is_empty",
+        ),
+        (
+            "rust_f64_trait",
+            "parent",
+            false,
+            "src/helpers/render_tests.rs",
+            4,
+            "render_is_empty",
+        ),
     ] {
         let fixture_name = format!(
-            "rust_trait_{shape}_{}",
+            "{prefix}_{shape}_{}",
             if shadow { "shadow" } else { "import" }
         );
         let registered = cases

@@ -17,7 +17,7 @@ use super::const_flow::expr::{
     Machine, Reader, Ty, Value, inline_helpers, parse_assertion, parse_expression, parse_fn_header,
     parse_reader,
 };
-use super::const_flow::{mentions_call, shares_module_scope};
+use super::const_flow::{mentions_call, module_scopes};
 use crate::analysis::facts::{FunctionImplContext, FunctionSourceRole, FunctionSummary};
 use crate::analysis::language::{changed_let_binding, mask_rust_comments_and_strings};
 use crate::analysis::probes::{ReturnFlowKind, resolve_changed_binding_return};
@@ -190,16 +190,25 @@ pub(in crate::analysis) fn same_file_binding_helpers<'a>(
     index: &'a RustIndex,
 ) -> Option<Vec<&'a FunctionSummary>> {
     let facts = find_file_facts(index, &owner.file)?;
-    let named = |name: &str| facts.functions.iter().filter(|f| f.name == name).count();
+    // Counted once: a count per candidate walked every function of the file
+    // for every other function, for every changed owner (#11738).
+    let mut name_counts: std::collections::BTreeMap<&str, usize> =
+        std::collections::BTreeMap::new();
+    for function in facts.functions.iter() {
+        *name_counts.entry(function.name.as_str()).or_default() += 1;
+    }
+    let named = |name: &str| name_counts.get(name).copied().unwrap_or(0);
     if named(&owner.name) != 1 {
         return None;
     }
     let mut helpers = Vec::new();
+    // One scope table for the file, not one per candidate helper (#13577).
+    let scopes = module_scopes(&facts.source);
     for function in facts.functions.iter() {
         if function.name == owner.name
             || function.source_role != FunctionSourceRole::Production
             || !matches!(function.impl_context, FunctionImplContext::Free)
-            || !shares_module_scope(&facts.source, owner.start_line, &[function.start_line])
+            || !scopes.shares(owner.start_line, &[function.start_line])
         {
             continue;
         }

@@ -26,6 +26,14 @@ appears for these shapes. Tests call the unique entries `classify` and
 `ambiguous`, not the non-unique helper `is_word_start`, so this remains
 the #7080 negative control (a uniqueness stop that no test enters).
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:ac178c7f -> no_static_path
+probe:src_other.rs:predicate:e1711426 -> no_static_path
+```
+
 ## Must Not
 
 - Transfer through a computed argument or a non-unique callee name.

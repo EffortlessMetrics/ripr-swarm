@@ -1,0 +1,164 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_multiline_def_boundary_off/input",
+  "config_path": "<cwd>/fixtures/python_multiline_def_boundary_off/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:c2f5fcc45072e48973c5bf06b9e83325aa34698f32e538d82b867f760fa8c375","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_fx_core.py:python_preview:c1582ce6",
+      "canonical_gap_id": "gap:python:src/fx/core.py:expired:predicate_boundary:predicate:age>=max_age",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/fx/core.py:expired:predicate_boundary:predicate:age>=max_age",
+        "language": "python",
+        "file": "src/fx/core.py",
+        "owner": "expired",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "age>=max_age"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "boundary_input_not_matched", "summary": "no observed call supplies the changed boundary input"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_fx_core.py:python_preview:c1582ce6",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/fx/core.py",
+        "line": 7,
+        "expression": "    if age >= max_age:",
+        "owner": "python:src/fx/core.py::expired"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `expired`"},
+        "infect": {"state":"weak","confidence":"low","summary":"Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary."},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"weak","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"weak","confidence":"low"}
+      ],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `expired`", "infection weak: Related tests reach the changed predicate, but static evidence does not place a strong related test input at the changed boundary.", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: if age >= max_age: (line 7)", "related test tests/test_t.py:4 test_expired uses strong exact value oracle: assert expired(111, max_age=10) == 1", "source function argument value max_age = 10 at line 5", "source function argument value now = 105 at line 5", "source function argument value max_age = 10 at line 6", "source function argument value now = 111 at line 6"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"if age >= max_age:","line":7}
+      ],
+      "evidence": ["owner: expired", "owner_kind: function", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_t.py", "suggested_test_name: test_expired", "suggested_test_node_id: tests/test_t.py::test_expired", "suggested_verify_command: python -m pytest tests/test_t.py::test_expired", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_expired)", "test_verify_command: python -m pytest tests/test_t.py::test_expired (test_expired)", "related_test_relation: syntactic_call (test_expired)", "test_oracle: exact_value strong (test_expired)"],
+      "missing": ["A strong Python oracle reaches `expired`, but static evidence does not place a related test input at the changed predicate boundary. No strong related test call places age equal to max_age; observed age values: unresolved; observed max_age values: 10."],
+      "assertion_texts": {
+        "5": "assert expired(105, max_age=10) == 0",
+        "6": "assert expired(111, max_age=10) == 1"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "max_age = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 5,
+            "value": "now = 105",
+            "context": "function_argument"
+          },
+          {
+            "line": 6,
+            "value": "max_age = 10",
+            "context": "function_argument"
+          },
+          {
+            "line": 6,
+            "value": "now = 111",
+            "context": "function_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "max_age = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 5,
+          "value": "now = 105",
+          "context": "function_argument"
+        },
+        {
+          "line": 6,
+          "value": "max_age = 10",
+          "context": "function_argument"
+        },
+        {
+          "line": 6,
+          "value": "now = 111",
+          "context": "function_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_expired",
+          "file": "tests/test_t.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert expired(111, max_age=10) == 1"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_t.py",
+        "suggested_test_name": "test_expired",
+        "suggested_test_node_id": "tests/test_t.py::test_expired",
+        "verify_command": "python -m pytest tests/test_t.py::test_expired",
+        "verify_command_confidence": "high"
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "changed_sink": "age, max_age",
+      "observed_sink": "assert expired(105, max_age=10) == 0",
+      "oracle_alignment": "direct",
+      "alignment_reason": "strong_oracle_observes_owner_name",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/fx/core.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/fx/core.py","digest":"sha256:fad4134fa77480bfccb89a1c105aeeb641d34297c45c4ec9d91eaa5bf10ea000"}]}
+}

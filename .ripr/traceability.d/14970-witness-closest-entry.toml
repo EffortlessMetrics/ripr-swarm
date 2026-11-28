@@ -1,0 +1,11 @@
+# The transitive-reach witness names the entry closest to the owner (#14970).
+[[extend]]
+id = "RIPR-SPEC-0114"
+tests = [
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_witnesses_at_different_depths_then_the_closest_entry_is_named",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_method_syntax_call_to_a_free_entry_then_it_does_not_win_on_depth",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::method_syntax_detection_reads_whole_names_outside_strings",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_an_admission_rule_then_a_refused_nearer_witness_does_not_hide_an_admitted_one",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::a_file_applying_two_derives_offers_the_one_closest_to_the_owner",
+  "crates/ripr/tests/cross_package_wrapper_reach.rs::a_nearer_unrelated_namesake_does_not_hide_the_dependent_wrapper",
+]

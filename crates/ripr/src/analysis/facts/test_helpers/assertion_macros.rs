@@ -32,7 +32,10 @@ use crate::analysis::extract::{
     extract_assertions, extract_identifier_tokens, mask_comments_and_strings,
     retain_reached_oracles,
 };
-use crate::analysis::syntax::{LocalMacroCall, MacroArm, local_macro_calls};
+use crate::analysis::syntax::{
+    ImportedMacros, LocalMacroCall, MacroArm, SPLICED_LINES, local_macro_calls,
+    local_macro_calls_many, macro_scope, splice_imported_macros,
+};
 use crate::domain::{OracleKind, OracleStrength};
 use rayon::prelude::*;
 use std::borrow::Cow;
@@ -40,6 +43,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub(crate) fn credit_same_file_assertion_macros(index: &mut RustIndex) {
+    // As for the helper pass: a run scope when the caller has none (#12947).
+    let _pass_memo = crate::analysis::syntax::run_memo::enter();
     let candidate_files = index
         .tests()
         .iter()
@@ -54,9 +59,25 @@ pub(crate) fn credit_same_file_assertion_macros(index: &mut RustIndex) {
                 && facts.source.contains("macro_rules")
         })
         .collect::<Vec<_>>();
+    let sources = files
+        .iter()
+        .map(|(_, facts)| facts.source.as_ref())
+        .collect::<Vec<&str>>();
+    // Each overlapping index of one diff run reads the same test files, so
+    // the full-file parse is memoized per run (#12947). A pool worker keeps
+    // the nested fan-out it had, since the batch computes serially there.
+    let parsed = if rayon::current_thread_index().is_none() {
+        local_macro_calls_many(&sources)
+    } else {
+        sources
+            .par_iter()
+            .map(|source| local_macro_calls(source))
+            .collect()
+    };
     let calls_by_file: BTreeMap<PathBuf, Vec<LocalMacroCall>> = files
-        .par_iter()
-        .map(|(file, facts)| ((*file).clone(), local_macro_calls(&facts.source)))
+        .iter()
+        .zip(parsed)
+        .map(|((file, _), calls)| ((*file).clone(), calls))
         .filter(|(_, calls)| !calls.is_empty())
         .collect();
     if calls_by_file.is_empty() {
@@ -215,6 +236,75 @@ pub(crate) fn expanded_assertion_view<'a, 't>(
             .replace_range(start..end, &replaced);
     }
     view.map_or(Cow::Borrowed(source), Cow::Owned)
+}
+
+/// One statement-level call of an assertion-forwarding macro defined in
+/// another file, with the std assertion it stands for (#12886).
+pub(crate) struct ForwardedCall {
+    /// The call's source text in the test body.
+    pub call_text: String,
+    /// The assertion statement the call expands to.
+    pub statement: String,
+    /// The expansion's own grade. Never credited: the caller only names a
+    /// limit from it.
+    pub strength: OracleStrength,
+}
+
+/// Calls in `test` of macros that `imported` brings from other files and
+/// whose single arm expands exactly to one graded assertion over the call's
+/// arguments (the same bounded shape the same-file credit expands). Nothing
+/// here is written to the index: this is the limit-only side of #12886, so a
+/// call that does not expand, a macro that ignores its operand, an ambiguous
+/// or unresolved definition and a test holding a `use` item all yield nothing.
+pub(crate) fn imported_forwarding_calls(
+    source: &str,
+    imported: &ImportedMacros,
+    test: &TestFact,
+) -> Vec<ForwardedCall> {
+    if imported.is_empty() || test_holds_use_item(test) {
+        return Vec::new();
+    }
+    let Some(scope) = macro_scope(&imported.definitions) else {
+        return Vec::new();
+    };
+    let Some(spliced) = splice_imported_macros(source, imported) else {
+        return Vec::new();
+    };
+    local_macro_calls(&spliced)
+        .iter()
+        .filter(|call| {
+            scope
+                .macros
+                .iter()
+                .any(|defined| defined.name == call.macro_name)
+                && call.function == test.name
+                && test.start_line + SPLICED_LINES <= call.start_line
+                && call.end_line <= test.end_line + SPLICED_LINES
+        })
+        .filter(|call| extract_assertions(&call.text, 1).is_empty())
+        .filter(|call| {
+            // The same never-run statements the same-file credit drops, in
+            // the file's own line numbers.
+            let Some(mut oracle) = macro_call_oracle(call) else {
+                return false;
+            };
+            let Some(line) = oracle.line.checked_sub(SPLICED_LINES) else {
+                return false;
+            };
+            oracle.line = line;
+            let mut oracles = vec![oracle];
+            retain_reached_oracles(&mut oracles, &test.body, test.start_line);
+            !oracles.is_empty()
+        })
+        .filter_map(|call| {
+            let expanded = expand_call(call)?;
+            Some(ForwardedCall {
+                call_text: call.text.trim().to_string(),
+                statement: expanded.statement,
+                strength: expanded.oracle.strength,
+            })
+        })
+        .collect()
 }
 
 /// What one test earns from its same-file assertion macro calls.

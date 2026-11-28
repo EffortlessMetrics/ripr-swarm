@@ -1,0 +1,1 @@
+crates/ripr/src/cli/commands/receipt.rs|write {} failed: {err}

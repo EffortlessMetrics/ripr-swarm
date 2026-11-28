@@ -178,10 +178,21 @@ fn numbered_binding_cases_keep_exact_semantic_contracts() -> Result<(), String> 
                 } else {
                     "end"
                 };
+                // #12118: the retargeted finding names the changed `let` line,
+                // located independently in the materialized source.
+                let anchor_file = case["anchor"]["file"].as_str().ok_or("missing anchor")?;
+                let materialized = std::fs::read_to_string(scratch.0.join(anchor_file))
+                    .map_err(|error| error.to_string())?;
+                let let_line = materialized
+                    .lines()
+                    .position(|text| text.contains(&format!("let {binding} = ")))
+                    .ok_or("changed let present")?
+                    + 1;
+                assert!(let_line < *line, "{name}: let precedes the predicate use");
                 assert_eq!(
                     relations[0].as_str(),
                     format!(
-                        "binding_predicate_relation: changed binding `{binding}` initializer `{before}` -> `{after}` flows into predicate operand at line {line}"
+                        "binding_predicate_relation: changed binding `{binding}` initializer `{before}` -> `{after}` flows into predicate operand at line {line} (changed `let {binding}` declared at line {let_line})"
                     ),
                     "{name}: exact causal relation"
                 );

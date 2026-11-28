@@ -146,11 +146,14 @@ impl Drop for Repo {
     }
 }
 
+// The test drives the future, so the async body runs and the gap is real;
+// a future dropped unpolled is the separate `rust_future_never_polled`
+// limit (#13702), which reports no gap at all.
 fn async_case() -> Result<Repo, String> {
     Repo::create(
         "pub async fn get(x: u32) -> u32 {\n    x + 1\n}\n",
         "pub async fn get(x: u32) -> u32 {\n    x + 2\n}\n",
-        "use dd::get;\n\n#[test]\nfn t() {\n    let _future = get(1);\n}\n",
+        "use dd::get;\n\n#[test]\nfn t() {\n    let _value = futures::executor::block_on(get(1));\n}\n",
     )
 }
 

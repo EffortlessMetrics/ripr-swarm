@@ -228,6 +228,7 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
     all_tests: &[TypeScriptTest],
     owner_was_credited: impl Fn(&TypeScriptTest) -> bool,
     workspace_root: &Path,
+    alias_map: Option<&TsAliasMap>,
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
     for test in all_tests {
@@ -251,20 +252,42 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
             if !name_matches {
                 continue;
             }
-            if relative_import_resolves_to_workspace_file(
-                workspace_root,
-                &test.file,
-                &import.source,
-            ) {
-                continue;
-            }
+            // An escaping join cannot name an in-workspace package. It
+            // still needs the unresolved-import disclosure.
+            let base = relative_import_base(&test.file, &import.source);
+            let entry = base.as_deref().and_then(|path| {
+                let module = normalized_path(path);
+                alias_map
+                    .and_then(|map| map.own_build_entry(&test.file, &module))
+                    .filter(|_| !file_module_exists(workspace_root, &module))
+            });
+            let why_not_actionable = if let Some(entry) = entry {
+                match entry.source.as_deref() {
+                    Some(source) if normalized_path_eq(&owner.file, source) => format!(
+                        "test `{}` imports `{}`, whose package main `{}` is build output outside the source index. RIPR found the tracked source `{}`, but could not attribute this test to it",
+                        test.name, import.source, entry.main, source
+                    ),
+                    Some(_) => continue,
+                    None => format!(
+                        "test `{}` imports `{}`, whose package main `{}` is build output outside the source index. No unique tracked source entry could be attributed to this import",
+                        test.name, import.source, entry.main
+                    ),
+                }
+            } else {
+                if base.as_deref().is_some_and(|path| {
+                    relative_import_resolves_to_workspace_file(workspace_root, path)
+                }) {
+                    continue;
+                }
+                format!(
+                    "test `{}` name-calls owner `{}` via relative specifier `{}`, which resolves to no workspace file (module renamed or moved without updating the import?); the test is therefore excluded from trusted relations, so `no_static_path` for this owner can be a false negative",
+                    test.name, owner.name, import.source
+                )
+            };
             limitations.push(TypeScriptNamedLimitation {
                 name: "typescript_relative_import_unresolved",
                 sample_source: format!("{}:{}", normalized_path(&test.file), test.line),
-                why_not_actionable: format!(
-                    "test `{}` name-calls owner `{}` via relative specifier `{}`, which resolves to no workspace file (module renamed or moved without updating the import?); the test is therefore excluded from trusted relations, so `no_static_path` for this owner can be a false negative",
-                    test.name, owner.name, import.source
-                ),
+                why_not_actionable,
                 repair_route: "analysis/typescript-relative-import-resolution",
             });
             break;
@@ -273,41 +296,13 @@ pub(crate) fn named_limitations_for_relative_import_unresolved(
     limitations
 }
 
-/// `true` when the relative specifier `source`, resolved against the test
-/// file's directory, hits an existing workspace source file — mirroring the
-/// module-extension conventions of the relation layer (explicit extension,
-/// extensionless, or `/index` variants).
-fn relative_import_resolves_to_workspace_file(
-    workspace_root: &Path,
-    test_file: &Path,
-    source: &str,
-) -> bool {
-    // Lexically normalize the joined path so `..` segments collapse before
-    // probing; the test file and specifier are workspace-relative strings.
-    // PathBuf accepts forward slashes in components on every platform.
-    let test_dir = test_file.parent().unwrap_or(Path::new(""));
-    let joined = test_dir.join(source);
-    let mut components: Vec<std::ffi::OsString> = Vec::new();
-    for component in joined.components() {
-        match component {
-            std::path::Component::ParentDir => {
-                components.pop();
-            }
-            std::path::Component::CurDir => {}
-            std::path::Component::Normal(part) => components.push(part.to_os_string()),
-            // Rooted/prefix components cannot occur for workspace-relative
-            // test files; treat the candidate as unresolved (fail-closed).
-            _ => return true,
-        }
-    }
-    let base = components
-        .iter()
-        .fold(PathBuf::new(), |acc, part| acc.join(part));
+/// Whether the relative import hits an indexed-language extension or index file.
+fn relative_import_resolves_to_workspace_file(workspace_root: &Path, base: &Path) -> bool {
     // Forward-slash spelling: PathBuf accepts it on every platform and it
     // keeps the candidate list separator-stable.
     let base_str = base.to_string_lossy().replace('\\', "/");
     let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
-    let mut candidates: Vec<PathBuf> = vec![base.clone()];
+    let mut candidates: Vec<PathBuf> = vec![base.to_path_buf()];
     for ext in extensions {
         if base_str.is_empty() {
             // `require('..')` from `test/`: the workspace root directory
@@ -367,10 +362,12 @@ fn relative_import_resolves_to_workspace_file(
 /// INVARIANT: this function is ONLY called when `workspace_root` is `Some`
 /// (i.e. when the package-local filter is active).  It is NOT called
 /// speculatively.
-pub(crate) fn named_limitations_for_unresolved_ownership(
+///
+/// `candidates` is the owner's relation-index enumeration, computed once by the
+/// caller and shared with the spy-fabrication scan (#10925).
+pub(crate) fn named_limitations_for_unresolved_ownership_from_candidates(
     owner: &TypeScriptOwner,
-    all_tests: &[TypeScriptTest],
-    relation_index: &RelationIndex,
+    candidates: &[&TypeScriptTest],
     workspace_root: &Path,
     related: &[TypeScriptRelatedCandidate<'_>],
 ) -> Vec<TypeScriptNamedLimitation> {
@@ -381,7 +378,7 @@ pub(crate) fn named_limitations_for_unresolved_ownership(
     // #10028: a test can only fire here when it references the owner by a
     // body call/name or an owner-matching import — exactly the relation
     // index's keys — so the indexed candidates are a sound superset.
-    for test in relation_index.candidates(owner, all_tests) {
+    for &test in candidates {
         if saw_target_unresolved {
             break;
         }
@@ -524,10 +521,36 @@ pub(crate) fn alias_gap_for_unresolved_import(
             // tsconfig of its own: its advice is the flag-off / load-gap one.
             // A specifier naming a workspace package (#4769) failed in its
             // own manifest; tsconfig advice would send the user elsewhere.
-            let package_dir =
-                alias_map.and_then(|map| map.workspace_package_dir_for(&import.source));
-            let tsconfig_map = alias_map.filter(|map| map.has_tsconfig());
+            // The importer's own package config governs its aliases (#12754):
+            // derive the cause, and whether a workspace package is the
+            // question, from that governing map rather than the root one.
+            let importer_map = alias_map
+                .map(|map| super::related_tests::importer_alias_map(map, map.root(), &test.file));
+            let nested_map = match &importer_map {
+                Some(super::related_tests::ImporterAliasMap::Nested(map)) => Some(map.as_ref()),
+                _ => None,
+            };
+            let nested_unavailable = match (&importer_map, alias_map) {
+                (
+                    Some(super::related_tests::ImporterAliasMap::NestedUnavailable(dir)),
+                    Some(map),
+                ) => super::related_tests::unavailable_config_claims(map, dir, &import.source),
+                _ => false,
+            };
+            let package_dir = if nested_unavailable {
+                None
+            } else {
+                match nested_map {
+                    Some(map) => map.workspace_package_dir_for(&import.source),
+                    None => alias_map.and_then(|map| map.workspace_package_dir_for(&import.source)),
+                }
+            };
+            let tsconfig_map = nested_map.or_else(|| alias_map.filter(|map| map.has_tsconfig()));
             let (cause_text, recovery_hint) = match (tsconfig_map, alias_unavailable) {
+                _ if nested_unavailable => (
+                    "the importing file's nearest package tsconfig.json/jsconfig.json declares compilerOptions.paths but cannot be followed exactly (no baseUrl, a references or cross-directory/package-name extends form, an unreadable or invalid config, or both tsconfig.json and jsconfig.json declaring paths)".to_string(),
+                    "give that package config a compilerOptions.baseUrl and inline any inherited compilerOptions.paths for credit".to_string(),
+                ),
                 _ if package_dir.is_some() => {
                     let manifest = package_dir
                         .map(|dir| normalized_path(&dir.join("package.json")))
@@ -634,16 +657,18 @@ impl TsAliasGapDisclosure {
 /// the changed sink, so the finding must not present the test as an owner
 /// observer; the relation gate already refuses the trusted relation, and this
 /// limitation names why.
-pub(crate) fn named_limitations_for_spy_fabrication(
+///
+/// `candidates` is the owner's relation-index enumeration, computed once by the
+/// caller and shared with the unresolved-ownership scan (#10925).
+pub(crate) fn named_limitations_for_spy_fabrication_from_candidates(
     owner: &TypeScriptOwner,
-    all_tests: &[TypeScriptTest],
-    relation_index: &RelationIndex,
+    candidates: &[&TypeScriptTest],
 ) -> Vec<TypeScriptNamedLimitation> {
     let mut limitations: Vec<TypeScriptNamedLimitation> = Vec::new();
     // #10028: spy fabrication names the owner in the test body (the
     // fabricated-call string literal or a default-import binding), so the
     // indexed candidates are a sound superset of potential producers.
-    for test in relation_index.candidates(owner, all_tests) {
+    for &test in candidates {
         if test_spies_owner_with_fabrication_for_owner(test, &owner.name, owner.exported_as_default)
         {
             limitations.push(TypeScriptNamedLimitation {
@@ -657,8 +682,45 @@ pub(crate) fn named_limitations_for_spy_fabrication(
             });
             break;
         }
+        // #15939: the same limitation for a replacement the
+        // spy guard does not read (a stub, a member assignment, a spy
+        // fabricated in a hook).
+        if !matches!(
+            owner.owner_kind,
+            OwnerKind::Method | OwnerKind::ClassMethod | OwnerKind::ModuleFunction
+        ) && super::function_replacement::owner_function_replaced_in_file(test, owner)
+        {
+            limitations.push(TypeScriptNamedLimitation {
+                name: "typescript_spy_fabricated_observer",
+                sample_source: format!("{}:{}", normalized_path(&test.file), test.line),
+                why_not_actionable: format!(
+                    "the file of test `{}` replaces `{}` on its module object (a stub, a member assignment or a spy fabricated outside the test body); the observed value does not flow from the changed sink",
+                    test.name, owner.name
+                ),
+                repair_route: "analysis/typescript-spy-oracle-resolution",
+            });
+            break;
+        }
     }
     limitations
+}
+
+/// Test-only convenience: enumerate the relation-index candidates itself.
+#[cfg(test)]
+pub(crate) fn named_limitations_for_unresolved_ownership(
+    owner: &TypeScriptOwner,
+    all_tests: &[TypeScriptTest],
+    relation_index: &RelationIndex,
+    workspace_root: &Path,
+    related: &[TypeScriptRelatedCandidate<'_>],
+) -> Vec<TypeScriptNamedLimitation> {
+    let candidates = relation_index.candidates(owner, all_tests);
+    named_limitations_for_unresolved_ownership_from_candidates(
+        owner,
+        &candidates,
+        workspace_root,
+        related,
+    )
 }
 
 /// Check whether an import source (relative path) resolves to the same module
@@ -693,8 +755,10 @@ mod module_identity_tests {
             method_kind: TypeScriptMethodKind::Ordinary,
             class_default_export: false,
             default_object_member: false,
+            default_object_unsafe_siblings: Vec::new(),
             commonjs_default_export: false,
             commonjs_whole_function: false,
+            constructor_callback: false,
             module_entries: Vec::new(),
             arity: None,
             params: Vec::new(),
@@ -866,7 +930,7 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                 limitations.push(TypeScriptNamedLimitation {
                     name: "typescript_snapshot_discriminator_unresolved",
                     sample_source: sample,
-                    why_not_actionable: "the test uses toMatchSnapshot/toMatchInlineSnapshot; snapshot oracles do not pin a specific discriminator value so the changed behavior may not be caught by a stale snapshot".to_string(),
+                    why_not_actionable: "the test uses toMatchSnapshot/toMatchInlineSnapshot; the available snapshot evidence does not establish an expected value for the changed behavior, which may not be caught by a stale snapshot".to_string(),
                     repair_route: "analysis/typescript-snapshot-oracle-hardening",
                 });
                 saw_snapshot = true;
@@ -956,9 +1020,9 @@ pub(crate) fn named_limitations_for_oracle_candidates(
                         normalized_path(&candidate.test.file),
                         candidate.test.evidence_line(assertion)
                     );
-                    let why = format!(
-                        "the matcher `.{}(...)` receives a non-literal dynamic argument; the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior",
-                        assertion.matcher
+                    let why = dynamic_assertion_why(
+                        &assertion.matcher,
+                        assertion.dynamic_expected_text.as_deref(),
                     );
                     limitations.push(TypeScriptNamedLimitation {
                         name: "typescript_dynamic_assertion_unresolved",
@@ -972,6 +1036,132 @@ pub(crate) fn named_limitations_for_oracle_candidates(
         }
     }
     limitations
+}
+
+/// Words an unresolved expected value for the shape it actually has (#15331).
+/// Wording only: the assertion stays unresolved and no oracle strength is
+/// upgraded. The consumer in `output::typescript_packet_projection` keys off
+/// the shape phrases below, so they are one contract.
+fn dynamic_assertion_why(matcher: &str, expected_text: Option<&str>) -> String {
+    const TAIL: &str = "the adapter cannot statically resolve the expected value and cannot confirm the discriminator pins the changed behavior";
+    match expected_text.map(str::trim) {
+        Some("undefined") => format!(
+            "the matcher `.{matcher}(...)` expects `undefined`, which the adapter does not read as a resolved expected value; {TAIL}"
+        ),
+        Some(text) if container_holds_identifier(text) => format!(
+            "the matcher `.{matcher}(...)` receives an object or array literal that contains variables; {TAIL}"
+        ),
+        _ => {
+            format!("the matcher `.{matcher}(...)` receives a non-literal dynamic argument; {TAIL}")
+        }
+    }
+}
+
+/// True when `text` is an object or array literal with a member value that is
+/// a bare identifier on its own (`{ a: x }`, `[x, 1]`, shorthand `{ x }`,
+/// spread `...x`), not a key (plain or computed `[k]`), string, number,
+/// keyword literal (`true`, `false`, `null`, `undefined`, `NaN`, `Infinity`),
+/// call or call argument, member read (`x.y`, `o[k]`), `new` expression or
+/// asymmetric matcher such as `expect.any(String)`. A conservative scan
+/// tracks which bracket each word sits in; any doubt reads as false, which
+/// keeps the generic wording.
+fn container_holds_identifier(text: &str) -> bool {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Ctx {
+        Object,
+        Array,
+        Other,
+    }
+    fn before(chars: &[char], at: usize) -> (Option<char>, bool) {
+        let mut k = at;
+        while k > 0 && chars[k - 1].is_whitespace() {
+            k -= 1;
+        }
+        let prev = k.checked_sub(1).and_then(|p| chars.get(p)).copied();
+        let spread = k >= 3 && chars[k - 3..k].iter().all(|ch| *ch == '.');
+        (prev, spread)
+    }
+    if !(text.starts_with('{') && text.ends_with('}')
+        || text.starts_with('[') && text.ends_with(']'))
+    {
+        return false;
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut stack: Vec<Ctx> = Vec::new();
+    let mut i = 0;
+    let mut quote: Option<char> = None;
+    while i < chars.len() {
+        let c = chars[i];
+        if let Some(q) = quote {
+            if c == '\\' {
+                i += 1;
+            } else if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        let top = stack.last().copied();
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '{' | '[' => {
+                let (prev, spread) = before(&chars, i);
+                let value_slot = match top {
+                    None => true,
+                    Some(Ctx::Object) => prev == Some(':') || spread,
+                    Some(Ctx::Array) => matches!(prev, Some('[' | ',')) || spread,
+                    Some(Ctx::Other) => false,
+                };
+                stack.push(match (value_slot, c) {
+                    (true, '{') => Ctx::Object,
+                    (true, _) => Ctx::Array,
+                    (false, _) => Ctx::Other,
+                });
+            }
+            '(' => stack.push(Ctx::Other),
+            '}' | ']' | ')' => {
+                stack.pop();
+            }
+            _ if c.is_alphabetic() || c == '_' || c == '$' => {
+                let start = i;
+                while i < chars.len()
+                    && (chars[i].is_alphanumeric() || matches!(chars[i], '_' | '$'))
+                {
+                    i += 1;
+                }
+                let word: String = chars[start..i].iter().collect();
+                let (prev, spread) = before(&chars, start);
+                let mut j = i;
+                while j < chars.len() && chars[j].is_whitespace() {
+                    j += 1;
+                }
+                let next = chars.get(j).copied();
+                let bare = match top {
+                    Some(Ctx::Object) => {
+                        (prev == Some(':') || spread || matches!(prev, Some('{' | ',')))
+                            && matches!(next, Some(',' | '}'))
+                    }
+                    Some(Ctx::Array) => {
+                        (matches!(prev, Some('[' | ',')) || spread)
+                            && matches!(next, Some(',' | ']'))
+                    }
+                    _ => false,
+                };
+                if bare
+                    && !matches!(
+                        word.as_str(),
+                        "true" | "false" | "null" | "undefined" | "NaN" | "Infinity"
+                    )
+                {
+                    return true;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }
 
 /// A `toMatchObject` assertion whose resolved expected value is written as a
@@ -1464,4 +1654,56 @@ pub(crate) fn derived_boundary_operand_limitation(
         ),
         repair_route: "analysis/typescript-derived-boundary-operand",
     })
+}
+
+#[cfg(test)]
+mod dynamic_why_tests {
+    use super::{container_holds_identifier, dynamic_assertion_why};
+
+    #[test]
+    fn expected_value_shapes_get_distinct_reasons() {
+        let undefined = dynamic_assertion_why("is", Some("undefined"));
+        assert!(undefined.contains("expects `undefined`"), "{undefined}");
+        let members = dynamic_assertion_why("toEqual", Some("{ items: [item1, item2] }"));
+        assert!(members.contains("contains variables"), "{members}");
+        let variable = dynamic_assertion_why("toBe", Some("expectedTotal"));
+        assert!(
+            variable.contains("non-literal dynamic argument"),
+            "{variable}"
+        );
+        let missing = dynamic_assertion_why("toBe", None);
+        assert!(
+            missing.contains("non-literal dynamic argument"),
+            "{missing}"
+        );
+    }
+
+    #[test]
+    fn container_scan_ignores_keys_strings_and_keyword_literals() {
+        assert!(!container_holds_identifier(
+            "{ a: 'x y', b: [1, 2.5e3], c: null }"
+        ));
+        assert!(!container_holds_identifier(
+            "[true, false, undefined, 'item1']"
+        ));
+        assert!(container_holds_identifier("{ items: [item1, item2] }"));
+        assert!(container_holds_identifier("[1, item]"));
+        assert!(container_holds_identifier("{ item }"));
+        assert!(container_holds_identifier("{ ...base, n: 1 }"));
+        assert!(!container_holds_identifier("foo"));
+        // Not variables: calls, member reads, `new`, asymmetric matchers and
+        // the non-finite number globals keep the generic wording.
+        assert!(!container_holds_identifier("[1, f(2)]"));
+        assert!(!container_holds_identifier("{ id: expect.any(String) }"));
+        assert!(!container_holds_identifier("{ n: NaN, m: [Infinity] }"));
+        assert!(!container_holds_identifier("{ d: new Date(0) }"));
+        assert!(!container_holds_identifier("[Number.MAX_VALUE]"));
+        // Computed keys, member reads by index and call arguments are not
+        // member values either.
+        assert!(!container_holds_identifier("{ [key]: 1 }"));
+        assert!(!container_holds_identifier("[obj[key]]"));
+        assert!(!container_holds_identifier("[f(1, value, 3)]"));
+        assert!(container_holds_identifier("{ a: [1, { b: item }] }"));
+        assert!(container_holds_identifier("[[item]]"));
+    }
 }

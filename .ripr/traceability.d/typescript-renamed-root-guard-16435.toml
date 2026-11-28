@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "fixtures/typescript_vitest_renamed_root_unentered_guard",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/guard_entry_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+]

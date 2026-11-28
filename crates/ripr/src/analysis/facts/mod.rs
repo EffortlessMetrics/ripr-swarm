@@ -17,6 +17,25 @@ pub(crate) mod index_build_probe {
         BUILDS.with(|builds| builds.set(builds.get() + 1));
     }
 
+    thread_local! {
+        static INCLUDE_REBASES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Reuse fell back to a fresh build because an added file may re-parent
+    /// function identities, moved the retained include view, or revived a
+    /// withheld file's tests (a retraction counts too).
+    pub(super) fn record_include_rebase() {
+        INCLUDE_REBASES.with(|count| count.set(count.get() + 1));
+    }
+
+    /// Run `work` and return its result plus how many reuses fell back to a
+    /// fresh build for the reasons above.
+    pub(crate) fn observe_rebase_fallbacks<T>(work: impl FnOnce() -> T) -> (T, usize) {
+        INCLUDE_REBASES.with(|count| count.set(0));
+        let result = work();
+        (result, INCLUDE_REBASES.with(Cell::get))
+    }
+
     /// Run `work` with a zeroed counter and return its result plus the
     /// number of index-build phases it started.
     pub(crate) fn observe<T>(work: impl FnOnce() -> T) -> (T, usize) {
@@ -29,19 +48,26 @@ mod doctests;
 mod execution_context;
 pub(crate) use build::CachedRustIndex;
 use build::MissAttribution;
+pub(crate) use build::SecondaryPassGuard;
+pub(in crate::analysis) use build::manifest_library_name;
+pub(crate) use build::out_of_root_member_dirs;
 #[cfg(test)]
 pub(crate) use build::streamed_source_bytes;
 pub(crate) use build::{RUST_SOURCE_NOT_UTF8_REASON, rust_source_text};
 pub(crate) use doctests::SYNTHETIC_NAME as DOCTEST_FUNCTION_NAME;
+pub(crate) use doctests::owner_gate_atoms;
+pub(crate) use doctests::test_gate_is_default_enabled;
 pub(crate) use execution_context::ExecutionContext;
 pub(crate) mod cfg_predicates;
 pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+mod invisible_owners;
 mod local_test_alias;
 mod macro_generated_tests;
 pub(crate) mod macro_visibility;
+pub(crate) mod resource_dependencies;
 
 /// The index builder's macro-generated test registration, for fixtures that
 /// assemble an index by hand.
@@ -51,9 +77,14 @@ pub(crate) fn register_macro_generated_tests_for_test(index: &mut model::RustInd
     // abort here.
     let _ = macro_generated_tests::register_macro_generated_tests(index);
 }
+mod bolero;
+#[cfg(test)]
+mod bolero_tests;
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
+mod process_memo;
+pub(crate) use process_memo::enable_process_fact_memo;
 mod proptest;
 #[cfg(test)]
 mod proptest_tests;
@@ -64,6 +95,11 @@ mod stray_files;
 pub(crate) fn compose_fixture_source_roles(index: &mut RustIndex, root: &Path) {
     role_composition::compose_index_source_roles(index, root);
 }
+mod quickcheck_generator;
+mod rebound_assertion_roots;
+pub(crate) use quickcheck_generator::is_generator_subject;
+#[cfg(test)]
+mod quickcheck_generator_tests;
 mod test_helpers;
 mod test_styles;
 pub(crate) use test_styles::BUILT_IN_TEST_ATTRIBUTE_PATHS;
@@ -85,6 +121,8 @@ pub(crate) fn normalize_reconstructed_source_roles(
     test_styles::normalize_index_test_styles(index)?;
     index.refresh_memberships()?;
     proptest::register_proptest_tests(index, root)?;
+    index.refresh_memberships()?;
+    bolero::register_bolero_tests(index, root)?;
     index.refresh_memberships()?;
     harness_registry::apply_registrations(index, root, registrations);
     index.finalize()
@@ -123,6 +161,10 @@ pub fn build_index_with_test_harnesses(
         proptest::register_proptest_tests(&mut index, root)?;
         index.refresh_memberships()
     })?;
+    index_phase("index_bolero_tests", || {
+        bolero::register_bolero_tests(&mut index, root)?;
+        index.refresh_memberships()
+    })?;
     // Composition runs strictly after the normalizer: the normalizer
     // recomputes every role from same-file text and would stomp composed
     // roles (#3533). Composed grants only ever upgrade `Production` to the
@@ -151,6 +193,9 @@ pub fn build_index_with_test_harnesses(
     index_phase("index_test_helper_credit", || {
         test_helpers::credit_same_file_assertion_helpers(&mut index);
         test_helpers::credit_same_file_assertion_macros(&mut index);
+        // #10150: after crediting, so a helper's or macro's qualified
+        // assertion faces the same manifest check as a written one.
+        rebound_assertion_roots::mark_rebound_root_assertions_unknown(&mut index);
         Ok(())
     })?;
     index.finalize()?;
@@ -194,6 +239,20 @@ pub(crate) fn build_analysis_index_from_loaded_files(
     build_cached_index_with_test_harnesses(root, files, registrations, MissAttribution::Skipped)
 }
 
+/// Whether `files` are exactly the indexed files with the indexed text.
+fn files_match_index(cached: &build::CachedRustIndex, files: &[(PathBuf, Vec<u8>)]) -> bool {
+    let indexed = cached.index.files();
+    let distinct: std::collections::BTreeSet<&Path> =
+        files.iter().map(|(path, _)| path.as_path()).collect();
+    indexed.len() == distinct.len()
+        && files.iter().all(|(path, bytes)| {
+            indexed.get(path).is_some_and(|facts| {
+                let source: &str = facts.data().source.as_ref();
+                build::rust_source_text(bytes).text == source
+            })
+        })
+}
+
 /// Reuse an already-built cached index as the index for `files` (#8547):
 /// files whose indexed source still matches the loaded bytes are kept
 /// as-is, new or changed files are parsed through the file-fact cache and
@@ -202,31 +261,77 @@ pub(crate) fn build_analysis_index_from_loaded_files(
 /// changed, parsed facts are returned without another build or post-parse
 /// pass. Run-scoped manifest/export authority and dependent query memos are
 /// refreshed because auxiliary inputs need not be among the indexed files.
+#[cfg(test)]
 pub(crate) fn reuse_cached_index_with_loaded_files(
-    mut cached: build::CachedRustIndex,
+    cached: build::CachedRustIndex,
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
+    reuse_cached_index(cached, root, files, registrations, false)
+}
+
+/// [`reuse_cached_index_with_loaded_files`] for an index built earlier in the
+/// same analysis run from the same root (the diff pipeline's admission probe
+/// core). The run reads one consistent view of provider, target and runner
+/// configuration, so when the loaded files are exactly the indexed files the
+/// index is served as built instead of being rebuilt from the fact cache to
+/// re-derive property-test authority that cannot have moved. Any added,
+/// changed or dropped file takes the ordinary path.
+pub(crate) fn reuse_cached_index_in_run(
+    cached: build::CachedRustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+) -> Result<build::CachedRustIndex, String> {
+    reuse_cached_index(cached, root, files, registrations, true)
+}
+
+fn reuse_cached_index(
+    mut cached: build::CachedRustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    same_run: bool,
+) -> Result<build::CachedRustIndex, String> {
+    if same_run && files_match_index(&cached, files) {
+        // Invariant: `registrations` is ignored here because the core was
+        // built in this run with the same `options.test_harnesses` the
+        // caller passes now; a caller with different registrations must not
+        // use the same-run form.
+        // #11810: a local macro exporter or its selected manifest can change
+        // without changing the indexed Rust files. Do not retain a cached
+        // absent/present export or the assertion sites derived from it.
+        cached.index.member_crates = member_crates::MemberCrates::new(root);
+        cached.index.call_identity_memos.clear();
+        return Ok(cached);
+    }
     // Provider, target and runner configuration can change with unchanged
     // Rust bytes. Rebuild the post-parse authority from cached raw facts; do
     // not reuse a formerly admitted or formerly refused property generation.
-    if !cached.index.proptest_receipts.is_empty()
-        || cached.index.files().iter().any(|(_, file)| {
-            file.unresolved_property_macros.iter().any(|property| {
-                matches!(
-                    property.name.as_str(),
-                    "proptest" | "proptest::proptest" | "::proptest::proptest"
-                )
-            })
-        })
+    // Within one run (`same_run`) the configuration cannot have moved, and the
+    // post-process below regenerates every property-test fact from the merged
+    // index: the style normalizer drops generated tests (they have no parsed
+    // function), the proptest and bolero producers clear and rebuild their
+    // receipts, and a property macro already lifted from
+    // `unresolved_property_macros` is only ever lifted again. So the extended
+    // result equals a fresh build without re-decoding the fact cache.
+    if !same_run
+        && (!cached.index.proptest_receipts.is_empty()
+            || !cached.index.bolero_receipts.is_empty()
+            || cached.index.files().iter().any(|(_, file)| {
+                (!file.used_lexical_fallback
+                    && file.source.contains("bolero")
+                    && !crate::analysis::syntax::bolero_profiles(&file.source).is_empty())
+                    || file.unresolved_property_macros.iter().any(|property| {
+                        matches!(
+                            property.name.as_str(),
+                            "proptest" | "proptest::proptest" | "::proptest::proptest"
+                        )
+                    })
+            }))
     {
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
+        return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
     }
     let kept: std::collections::BTreeSet<&Path> =
         files.iter().map(|(path, _)| path.as_path()).collect();
@@ -255,54 +360,86 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
         // absent/present export or the assertion sites derived from it.
         cached.index.member_crates = member_crates::MemberCrates::new(root);
         cached.index.call_identity_memos.clear();
+        // #5171: embedded resource bytes are not part of the Rust-file reuse
+        // comparison; refresh producer-owned edges from the current workspace.
+        resource_dependencies::attach_resource_dependencies(root, &mut cached.index);
         return Ok(cached);
     }
     // Post-processing is only incrementally exact when the file set grows by
     // leaf additions. A dropped file can retract module provenance and helper
-    // credits already applied to retained files, and an added or changed file
-    // with an `include!` directive can re-parent already rebased function
-    // identities; none of those can be undone in place, so fail closed to a
-    // fresh build over exactly `files` (verdicts equal a non-reusing build).
-    // A changed file (an extra replacing an indexed path) retracts too:
-    // `remove_file` leaves include parents/targets/limitations and module
-    // provenance derived from the old bytes in place.
+    // credits already applied to retained files; that cannot be undone in
+    // place, so fail closed to a fresh build over exactly `files` (verdicts
+    // equal a non-reusing build). A changed file (an extra replacing an
+    // indexed path) retracts too: `remove_file` leaves include
+    // parents/targets/limitations and module provenance derived from the old
+    // bytes in place. An added file with an `include!` directive is checked
+    // after the merge instead (`includes_exact` below).
     let retracts = !dropped.is_empty()
         || extras
             .iter()
             .any(|(path, _)| cached.index.files().get(path).is_some());
-    let rebases_includes = extras
-        .iter()
-        .any(|(_, bytes)| bytes.windows(8).any(|w| w == b"include!"));
+    // Only a retained target can be re-parented in place: an added target
+    // reaches the merged resolution unrebased, as in a fresh build.
+    let added: std::collections::BTreeSet<&Path> =
+        extras.iter().map(|(path, _)| path.as_path()).collect();
+    let retained: std::collections::BTreeSet<&Path> = kept.difference(&added).copied().collect();
+    let rebases_includes = extras.iter().any(|(path, bytes)| {
+        includes::added_file_may_rebase_includes(
+            path,
+            &build::rust_source_text(bytes).text,
+            &retained,
+        )
+    });
     if retracts || rebases_includes {
-        drop(cached);
-        return build_cached_index_with_test_harnesses(
-            root,
-            files,
-            registrations,
-            MissAttribution::Skipped,
-        );
+        trace_reuse_fallback(if retracts {
+            "retracts"
+        } else {
+            "include_targets_kept_file"
+        });
+        #[cfg(test)]
+        index_build_probe::record_include_rebase();
+        return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
     }
     for path in &dropped {
         cached.index.remove_file(path);
     }
+    // #12947: composition withholds the tests of a file outside every module
+    // tree by clearing them, and a later pass that no longer withholds them
+    // rebuilds them from the function facts, which is not the parser's own
+    // test fact a fresh build keeps. So a file the core withheld that the
+    // merge links again (an include limitation, a new module edge) falls
+    // back when it then has tests (checked below).
+    // #14962: tests withheld because `cargo test` skips every root of the
+    // file's module tree revive the same way when the merge adds a live
+    // root (a `src/main.rs` that declares the shared module).
+    let withheld: Vec<PathBuf> = cached
+        .index
+        .files()
+        .iter()
+        .filter(|(path, facts)| {
+            facts.role_provenance.outside_module_tree
+                || cached.index.cargo_test_skipped_files.contains(*path)
+        })
+        .map(|(path, _)| path.clone())
+        .collect();
     if !extras.is_empty() {
-        let stats = index_phase("index_cached_parse", || {
+        let (stats, includes_exact) = index_phase("index_cached_parse", || {
             build::extend_index_from_loaded_files_with_cache(&mut cached.index, root, &extras)
         })?;
-        cached.file_fact_cache.hits += stats.hits;
-        cached.file_fact_cache.misses += stats.misses;
-        cached.file_fact_cache.corrupt_ignored += stats.corrupt_ignored;
-        cached.file_fact_cache.stores += stats.stores;
-        cached.file_fact_cache.store_errors += stats.store_errors;
-        cached
-            .file_fact_cache
-            .invalidated_files
-            .extend(stats.invalidated_files);
-        cached
-            .file_fact_cache
-            .store_failures
-            .extend(stats.store_failures);
-        cached.file_fact_cache.store_failures_dropped += stats.store_failures_dropped;
+        cached.file_fact_cache.merge_from(&stats);
+        // #12947: an added file's `include!` directive re-resolves every
+        // include edge over the merged index. Rebased identities and
+        // composed roles of retained files cannot be re-parented in place,
+        // so the extension stands only when the retained files' include view
+        // is unchanged (an added directive that only names a target outside
+        // the index, in an index that already had an unresolved include,
+        // changes none). Otherwise fail closed to a fresh build.
+        if !includes_exact {
+            trace_reuse_fallback("retained_include_view_changed");
+            #[cfg(test)]
+            index_build_probe::record_include_rebase();
+            return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
+        }
         // An added file that makes module composition unknowable (lexical
         // fallback emits no `mod` declarations; an unknown `#[path]` target
         // may compile any file) flips workspace-wide `outside_module_tree`
@@ -318,13 +455,8 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
             })
         });
         if unknowable {
-            drop(cached);
-            return build_cached_index_with_test_harnesses(
-                root,
-                files,
-                registrations,
-                MissAttribution::Skipped,
-            );
+            trace_reuse_fallback("unknowable_module_composition");
+            return fresh_build_keeping_run_stats(cached, root, files, registrations, same_run);
         }
     }
     let mut hash = crate::analysis::seam_cache::FilesContentHashBuilder::new();
@@ -332,7 +464,49 @@ pub(crate) fn reuse_cached_index_with_loaded_files(
         hash.push(path, bytes);
     }
     cached.files_content_hash = hash.finish();
-    post_process_cached_index(cached, root, registrations)
+    let processed = post_process_cached_index(cached, root, registrations)?;
+    // A revived file without tests differs in nothing a fresh build keeps.
+    let revived = withheld.iter().any(|path| {
+        processed.index.files().get(path).is_some_and(|facts| {
+            !facts.role_provenance.outside_module_tree
+                && !processed.index.cargo_test_skipped_files.contains(path)
+                && !facts.tests.is_empty()
+        })
+    });
+    if revived {
+        trace_reuse_fallback("withheld_tests_revived");
+        #[cfg(test)]
+        index_build_probe::record_include_rebase();
+        return fresh_build_keeping_run_stats(processed, root, files, registrations, same_run);
+    }
+    Ok(processed)
+}
+
+/// Fresh build over exactly `files` after a reuse that cannot be extended in
+/// place. The discarded same-run core keeps its analysis facts out of the
+/// result, but the file-fact cache work it already did (lookups, stores and
+/// store failures) is real and stays in the receipt (#4975).
+fn fresh_build_keeping_run_stats(
+    cached: build::CachedRustIndex,
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    registrations: &[TestHarnessRegistration],
+    same_run: bool,
+) -> Result<build::CachedRustIndex, String> {
+    let prior = same_run.then(|| cached.file_fact_cache.clone());
+    drop(cached);
+    let mut fresh = build_cached_index_with_test_harnesses(
+        root,
+        files,
+        registrations,
+        MissAttribution::Skipped,
+    )?;
+    if let Some(mut merged) = prior {
+        // Earlier work first, so the capped store-failure rows keep run order.
+        merged.merge_from(&fresh.file_fact_cache);
+        fresh.file_fact_cache = merged;
+    }
+    Ok(fresh)
 }
 
 fn build_cached_index_with_test_harnesses(
@@ -373,6 +547,10 @@ fn post_process_cached_index(
         proptest::register_proptest_tests(&mut cached.index, root)?;
         cached.index.refresh_memberships()
     })?;
+    index_phase("index_bolero_tests", || {
+        bolero::register_bolero_tests(&mut cached.index, root)?;
+        cached.index.refresh_memberships()
+    })?;
     index_phase("index_role_composition", || {
         role_composition::compose_index_source_roles(&mut cached.index, root);
         Ok(())
@@ -398,6 +576,9 @@ fn post_process_cached_index(
     index_phase("index_test_helper_credit", || {
         test_helpers::credit_same_file_assertion_helpers(&mut cached.index);
         test_helpers::credit_same_file_assertion_macros(&mut cached.index);
+        // #10150: after crediting, so a helper's or macro's qualified
+        // assertion faces the same manifest check as a written one.
+        rebound_assertion_roots::mark_rebound_root_assertions_unknown(&mut cached.index);
         Ok(())
     })?;
     cached.index.finalize()?;
@@ -414,8 +595,28 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
     paths: &[PathBuf],
     registrations: &[TestHarnessRegistration],
 ) -> Result<build::CachedRustIndex, String> {
-    let cached = index_phase("index_cached_parse", || {
-        build::build_index_from_paths_with_cache(root, paths, MissAttribution::Named)
+    build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
+        root,
+        paths,
+        registrations,
+        None,
+    )
+}
+
+pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses_and_consumed(
+    root: &Path,
+    paths: &[PathBuf],
+    registrations: &[TestHarnessRegistration],
+    consumed: Option<&mut crate::analysis::consumed_source::ConsumedRustSources>,
+) -> Result<build::CachedRustIndex, String> {
+    let cached = index_phase("index_cached_parse", || match consumed {
+        Some(consumed) => build::build_index_from_paths_with_cache_and_consumed(
+            root,
+            paths,
+            MissAttribution::Named,
+            Some(consumed),
+        ),
+        None => build::build_index_from_paths_with_cache(root, paths, MissAttribution::Named),
     })?;
     post_process_cached_index(cached, root, registrations)
 }
@@ -424,29 +625,43 @@ pub(crate) fn build_index_from_paths_with_cache_and_test_harnesses(
 // by every role surface (diff seeding, seam inventory, LSP scope) so a
 // misdeclared registration degrades identically everywhere.
 pub(crate) use harness_registry::validated_file_wide_harness_targets;
-pub(crate) use test_helpers::expanded_assertion_view;
+pub(crate) use test_helpers::{expanded_assertion_view, imported_forwarding_calls};
+pub(crate) use test_styles::attributes_define_mutants_skip;
 pub(crate) use test_styles::attributes_define_proof_harness;
 pub(crate) use test_styles::attributes_define_test;
 
 // Keep compilation-unit rebasing available at the facts facade for index consumers.
 pub(crate) use includes::compilation_unit_path_from_parents;
+pub(crate) use includes::literal_include_fragments;
 pub use index::{FactSlice, FileData, FileFactsView};
+pub(crate) use local_test_alias::imported_test_alias_crate;
 #[cfg(test)]
 pub(crate) use model::OwnedRustIndex;
 pub use model::{
     CallFact, CallText, FileFacts, FunctionContainer, FunctionFact, FunctionImplContext,
     FunctionItemFact, FunctionSourceRole, FunctionSummary, HarnessLimitationFact,
     HarnessSelectorCapability, HarnessSubjectClaim, HarnessSubjectFact, LetBindingFact,
-    LiteralFact, ModuleDeclarationFact, ModulePathTarget, OracleFact, ProbeShapeFact,
-    ProbeShapeKind, ResolvedIncludeParent, ReturnFact, RustIncludeLimitation, RustIndex,
-    SourceRoleProvenance, SourceRoleProvenanceEdge, SourceRoleProvenanceEdgeKind, SourceText,
-    TestFact, TestSummary, UnresolvedPropertyMacroFact,
+    LiteralFact, MacroGeneratedOrigin, ModuleDeclarationFact, ModulePathTarget, OracleFact,
+    ProbeShapeFact, ProbeShapeKind, ResolvedIncludeParent, ReturnFact, RustIncludeLimitation,
+    RustIndex, SharedFactSlice, SourceRoleProvenance, SourceRoleProvenanceEdge,
+    SourceRoleProvenanceEdgeKind, SourceText, TestFact, TestSummary, UnresolvedPropertyMacroFact,
 };
 // Hot evidence loops hash each indexed file once and validate by digest.
 pub(crate) use model::WorkspaceFileAuthority;
 #[cfg(test)]
 pub(crate) use model::WorkspaceRootAuthority;
+pub(crate) use model::probe_shape_position;
 pub(crate) use model::source_digest;
+
+/// Names, on the opt-in latency stream, why index reuse fell back to a fresh
+/// build, so a trace shows when the extension path is not taken.
+fn trace_reuse_fallback(reason: &str) {
+    if std::env::var_os("RIPR_REPO_EXPOSURE_LATENCY_TRACE").is_some() {
+        eprintln!(
+            "ripr_repo_exposure_latency phase=index_reuse_fallback status={reason} duration_ms=0"
+        );
+    }
+}
 
 /// Phase tracing extends the existing opt-in latency stream; normal output is
 /// unchanged. A cancelled intermediate index is never returned as complete.

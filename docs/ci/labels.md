@@ -31,6 +31,7 @@ table only documents the label meanings.
 | `status/blocked-upstream` | Blocked on `cargo-allow` or an external repository. |
 | `status/blocked-repo` | Blocked on a tracked in-repo item (PR, issue, or code). |
 | `status/needs-work` | Actionable and not started. Do **not** use it for partially landed work; that understates delivery and invites duplicate implementation. |
+| `status/needs-reverify` | One or more repo-rooted paths cited in the issue changed on `main` after filing. Re-verify each `path:line` anchor against current `main` before acting; the weekly issue-staleness watchdog applies this label and never removes it. |
 | `status/mis-scoped` | Re-scope, close, or supersede — the issue is the wrong scope or stale. |
 | `status/partial` | A bounded portion has merged to `main` (or another authoritative repository) and the residual acceptance plus next owner are recorded. Apply only when a merged deliverable exists — never merely planned. |
 

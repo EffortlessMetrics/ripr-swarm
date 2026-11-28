@@ -1,0 +1,217 @@
+name: Issue Staleness Watchdog
+
+# Investigation issues cite repo-rooted path:line evidence that decays as main
+# moves. This scheduled sweep flags open issues whose cited paths changed after
+# filing (#5079). It never closes, verifies, or removes status/needs-reverify;
+# agents and humans re-anchor citations on a follow-up pass.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      refresh:
+        description: Re-check issues already labeled status/needs-reverify (comment edit only)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  watchdog:
+    name: Flag stale issue path citations
+    if: github.repository == 'EffortlessMetrics/ripr-swarm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    concurrency:
+      group: issue-staleness-watchdog-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      - name: Sweep open issues for stale cited paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REFRESH: ${{ inputs.refresh && 'true' || 'false' }}
+          MAX_ISSUES: "50"
+          MAX_COMMITS_CALLS: "300"
+          MAX_PATHS: "5"
+          MARKER: "<!-- issue-staleness-watchdog -->"
+          LABEL: status/needs-reverify
+        run: |
+          set -euo pipefail
+
+          gh label create "$LABEL" \
+            --description "Cited repo paths changed on main since filing; re-verify path:line evidence before acting." \
+            --color FBCA04 2>/dev/null || true
+
+          {
+            echo "### Issue Staleness Watchdog (#5079)"
+            echo ""
+            echo "Deterministic sweep: ≥1 commit on \`main\` touching a cited path since the issue was filed ⇒ stale citation signal."
+            echo "Never closes issues or removes \`$LABEL\`. Refresh dispatch (\`refresh=$REFRESH\`) re-checks already-labeled issues and edits the owned comment only."
+            echo ""
+            echo "| issue | stale cited paths | disposition |"
+            echo "| --- | --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          export MAX_PATHS
+          extract_paths() {
+            perl -0777 -ne '
+              my %seen;
+              my $n = 0;
+              my $max = 0 + ($ENV{MAX_PATHS} // 5);
+              while (
+                /(?:^|[\s\x60\x27"\(\[])((?:crates|xtask|docs|policy|fixtures|editors|examples|scripts|\.github|\.agents|\.ripr|\.allow)\/[^\s\x60\x27"\(\)\]\>,]+)/g
+              ) {
+                my $p = $1;
+                # Drop sentence punctuation and `:line`, `:line:col`, `:12-22`
+                # anchors so the commits lookup sees the cited file path.
+                $p =~ s/[.,;:!?]+\z//;
+                $p =~ s/(?::\d+)+(?:-\d+)?\z//;
+                $p =~ s/[.,;:!?]+\z//;
+                next if $seen{$p}++;
+                print "$p\n";
+                last if ++$n >= $max;
+              }
+            ' <<<"$1"
+          }
+
+          # Prints the id of the first watchdog-owned comment, nothing when there
+          # is none. A failed lookup returns nonzero so the caller never mistakes
+          # "could not list comments" for "no comment yet" and posts a duplicate.
+          find_owned_comment() {
+            local pages
+            pages="$(gh api --paginate "repos/$REPOSITORY/issues/$1/comments?per_page=100")" || return 1
+            printf '%s' "$pages" \
+              | jq -r --arg m "$MARKER" '.[] | select(.body | contains($m)) | .id' \
+              | sed -n '1p'
+          }
+
+          post_or_edit_comment() {
+            issue="$1"
+            body="$2"
+            id="$(find_owned_comment "$issue")" || return 1
+            if [ -n "${id:-}" ]; then
+              gh api -X PATCH "repos/$REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
+            else
+              gh api "repos/$REPOSITORY/issues/$issue/comments" -f body="$body" > /dev/null
+            fi
+          }
+
+          # `--paginate` runs `--jq` once per page, so ordering happens here over
+          # the whole list: oldest first with a stable number tiebreak. Whether the
+          # issue carries the label is computed in jq (a boolean column) because
+          # `@tsv` escapes any tab used to join several label names.
+          issues="$(gh api "repos/$REPOSITORY/issues?state=open&per_page=100" --paginate \
+            --jq ".[] | select(.pull_request == null) | [.created_at, .number, ((.title + \"\\n\" + (.body // \"\")) | @base64), ([.labels[].name] | any(. == \"$LABEL\"))] | @tsv" \
+            | LC_ALL=C sort -t $'\t' -k1,1 -k2,2n)"
+
+          # Unchanged issues consume path checks every week, so a fixed start would
+          # let the first issues starve the rest once the commits budget is spent.
+          # Rotate the start by one run's worth of issues per week so every issue
+          # is reached within a bounded number of sweeps.
+          total="$(printf '%s\n' "$issues" | grep -c . || true)"
+          week="${SWEEP_WEEK:-$(( $(date -u +%s) / 604800 ))}"
+          stride=$(( MAX_COMMITS_CALLS / MAX_PATHS ))
+          [ "$stride" -ge 1 ] || stride=1
+          if [ "$total" -gt 1 ]; then
+            offset=$(( (week * stride) % total ))
+            issues="$(printf '%s\n' "$issues" | awk -v o="$offset" 'NF { rows[n++] = $0 } END { for (i = 0; i < n; i++) print rows[(i + o) % n] }')"
+          fi
+
+          scanned=0
+          flagged=0
+          commits_calls=0
+          deferred_cap=0
+          deferred_api=0
+
+          while IFS=$'\t' read -r created_at number b64 has_label; do
+            [ -n "${number:-}" ] || continue
+            text="$(printf '%s' "$b64" | base64 -d)"
+            scanned=$((scanned + 1))
+            disposition="ok"
+            stale_paths=""
+
+            if [ "$has_label" = true ] && [ "$REFRESH" != true ]; then
+              disposition="skip: already labeled"
+              echo "| #$number | — | $disposition |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+            if [ "$REFRESH" = true ] && [ "$has_label" != true ]; then
+              disposition="skip: refresh only re-checks labeled issues"
+              echo "| #$number | — | $disposition |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            mapfile -t paths < <(extract_paths "$text")
+            if [ "${#paths[@]}" -eq 0 ] || [ -z "${paths[0]:-}" ]; then
+              disposition="skip: no rooted path citations"
+              echo "| #$number | — | $disposition |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            stale_lines=""
+            for path in "${paths[@]}"; do
+              [ -n "$path" ] || continue
+              if [ "$commits_calls" -ge "$MAX_COMMITS_CALLS" ]; then
+                deferred_api=$((deferred_api + 1))
+                disposition="defer: commits API budget"
+                break
+              fi
+              commits_calls=$((commits_calls + 1))
+              hit="$(gh api "repos/$REPOSITORY/commits?path=$(printf '%s' "$path" | jq -sRr @uri)&since=$(printf '%s' "$created_at" | jq -sRr @uri)&per_page=1" \
+                --jq '.[0] | if . == null then empty else [.sha[0:8], .commit.committer.date] | @tsv end' 2>/dev/null || true)"
+              if [ -n "$hit" ]; then
+                read -r sha date <<<"$hit"
+                stale_lines="${stale_lines}- \`${path}\` — newest on main since filing: \`${sha}\` (${date})"$'\n'
+                stale_paths="${stale_paths}${path}; "
+              fi
+            done
+
+            if [ -z "$stale_lines" ]; then
+              [ "$disposition" != ok ] || disposition="skip: citations unchanged on cited paths"
+              echo "| #$number | — | $disposition |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            comment_body="$MARKER
+          One or more repo-rooted paths cited in this issue changed on \`main\` after filing (${created_at}). Re-verify each \`path:line\` anchor against current \`main\` before acting; line numbers are not checked by this sweep.
+
+          ${stale_lines}
+          This sweep does not close the issue or remove \`$LABEL\`; a human or agent reverify pass re-anchors citations and clears the label when done."
+
+            if [ "$REFRESH" = true ]; then
+              if post_or_edit_comment "$number" "$comment_body"; then
+                disposition="refresh: comment updated"
+              else
+                disposition="refresh: comment update failed"
+              fi
+              echo "| #$number | ${stale_paths%;*} | $disposition |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            if [ "$flagged" -ge "$MAX_ISSUES" ]; then
+              deferred_cap=$((deferred_cap + 1))
+              disposition="defer: per-sweep label cap (the weekly rotation reaches it in a later sweep)"
+              echo "| #$number | ${stale_paths%;*} | $disposition |" >> "$GITHUB_STEP_SUMMARY"
+              continue
+            fi
+
+            if gh api "repos/$REPOSITORY/issues/$number/labels" -f "labels[]=$LABEL" > /dev/null \
+              && post_or_edit_comment "$number" "$comment_body"; then
+              flagged=$((flagged + 1))
+              disposition="labeled and commented"
+            else
+              disposition="label or comment failed"
+            fi
+            echo "| #$number | ${stale_paths%;*} | $disposition |" >> "$GITHUB_STEP_SUMMARY"
+          done <<<"$issues"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Open issues scanned: $scanned; newly labeled: $flagged; commits API calls: $commits_calls; deferred (cap): $deferred_cap; deferred (API budget): $deferred_api." >> "$GITHUB_STEP_SUMMARY"

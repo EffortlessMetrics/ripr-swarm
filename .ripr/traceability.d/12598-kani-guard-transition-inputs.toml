@@ -1,0 +1,18 @@
+[[extend]]
+id = "RIPR-SPEC-0135"
+tests = [
+  "crates/ripr/tests/kani_guard_transition_inputs.rs::fixed_guard_inputs_change_only_the_implementation",
+  "crates/ripr/tests/kani_guard_transition_inputs.rs::guard_only_inputs_preserve_exact_implementation_bytes",
+  "crates/ripr/tests/kani_guard_transition_inputs.rs::fixture_implementations_differ_on_exactly_the_equality_boundary",
+  "crates/ripr/tests/kani_guard_transition_inputs.rs::partial_domain_is_nonempty_but_excludes_all_equality_faults",
+  "crates/ripr/tests/kani_guard_transition_inputs.rs::fixture_guard_restoration_returns_exact_original_source",
+]
+fixtures = [
+  "crates/ripr/tests/fixtures/kani_guard_transitions/strong.rs",
+  "crates/ripr/tests/fixtures/kani_guard_transitions/wrong.rs",
+  "crates/ripr/tests/fixtures/kani_guard_transitions/weak.rs",
+  "crates/ripr/tests/fixtures/kani_guard_transitions/weak_wrong.rs",
+  "crates/ripr/tests/fixtures/kani_guard_transitions/narrow_wrong.rs",
+  "crates/ripr/tests/fixtures/kani_guard_transitions/narrow_correct.rs",
+  "crates/ripr/tests/fixtures/kani_guard_transitions/false_domain.rs",
+]

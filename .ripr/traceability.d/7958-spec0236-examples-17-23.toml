@@ -1,0 +1,7 @@
+# Pins RIPR-SPEC-0236 examples 17 and 23 on the repo-exposure evidence record (#7958).
+[[extend]]
+id = "RIPR-SPEC-0236"
+tests = [
+  "crates/ripr/tests/spec0236_7958.rs::spec0236_example_17_direct_assert_is_actionable_related_test_extension",
+  "crates/ripr/tests/spec0236_7958.rs::spec0236_example_23_macro_witness_category_is_opaque_static_evidence_only",
+]

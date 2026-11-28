@@ -1,6 +1,7 @@
 //! `ripr reports ci-summary`: print the generated workflow's step summary.
 
-use crate::cli::parse::expect_value;
+use crate::cli::commands_context::ensure_command_root;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
 use crate::output::ci_summary::{CiSummaryInput, render_ci_summary};
 use std::io::Write;
@@ -16,6 +17,7 @@ const COMMAND: &str = "reports ci-summary";
 /// the settings, and `github.base_ref || default_branch` for the base.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CiSummaryOptions {
+    pub(super) full: bool,
     pub(super) root: PathBuf,
     pub(super) base_ref: String,
     pub(super) upload_sarif: String,
@@ -26,21 +28,36 @@ pub(super) struct CiSummaryOptions {
 pub(super) fn ci_summary(args: &[String]) -> Result<(), String> {
     let settings = super::ci_packet::CiSettings::from_env()?;
     let options = parse_ci_summary_options_with(args, &settings)?;
+    ensure_command_root(std::path::Path::new(&options.root), "reports ci-summary")?;
     let input = CiSummaryInput {
         configured_languages: configured_languages(&options.root),
         root: options.root,
         base_ref: options.base_ref,
+        event_name: settings.event_name.clone(),
         upload_sarif: options.upload_sarif == "true",
+        pull_request: settings.pull_request(),
         gate_baseline: !options.gate_baseline.is_empty(),
         gate_configured: gate_configured(&settings.gate_mode),
+        gate_mode: settings.gate_mode.clone(),
         comment_mode: options.comment_mode,
     };
-    let summary = render_ci_summary(&input);
-    let mut stdout = std::io::stdout().lock();
-    stdout
-        .write_all(&summary)
-        .and_then(|()| stdout.flush())
-        .map_err(|err| format!("{COMMAND} could not write the summary: {err}; check you can write to the summary path, then rerun"))
+    let summary = render_ci_summary(&input, options.full);
+    write_summary(&mut std::io::stdout().lock(), &summary)
+}
+
+/// The summary is bytes (full reports are included verbatim), so it keeps
+/// its own writer, but its errors carry the shared stdout-writer prefixes:
+/// a reader that closed stdout early (`ripr reports ci-summary | head`)
+/// then exits `2` quietly, as every other command does
+/// (docs/EXIT_CODES.md), instead of blaming a "summary path" that was
+/// never involved.
+fn write_summary(out: &mut impl Write, summary: &[u8]) -> Result<(), String> {
+    out.write_all(summary).map_err(|err| {
+        format!("write to stdout failed: {err}; check the reader of ripr's output is still open, then rerun")
+    })?;
+    out.flush().map_err(|err| {
+        format!("flush stdout failed: {err}; check the reader of ripr's output is still open, then rerun")
+    })
 }
 
 /// `RIPR_GATE_MODE` counts as set when it is non-empty, read raw as
@@ -88,18 +105,29 @@ pub(super) fn parse_ci_summary_options_with(
         .cloned()
         .unwrap_or_default();
     let mut options = CiSummaryOptions {
+        full: false,
         root: PathBuf::from("."),
         base_ref,
         upload_sarif: workflow.upload_sarif.clone(),
         gate_baseline: workflow.gate_baseline.clone(),
         comment_mode: workflow.comment_mode.clone(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
-            "--root" => options.root = PathBuf::from(non_empty_string_arg(args, i, flag, COMMAND)?),
+            "--full" => {
+                options.full = true;
+                continue;
+            }
+            "--root" => {
+                let value = non_empty_string_arg(args, i, flag, COMMAND)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, COMMAND)?;
+                options.root = reconciled;
+                root_explicit = true;
+            }
             "--base-ref" => options.base_ref = non_empty_string_arg(args, i, flag, COMMAND)?,
             "--upload-sarif" => options.upload_sarif = expect_value(args, i, flag)?.to_string(),
             "--gate-baseline" => options.gate_baseline = expect_value(args, i, flag)?.to_string(),

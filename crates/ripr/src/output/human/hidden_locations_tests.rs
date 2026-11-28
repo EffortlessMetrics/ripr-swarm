@@ -5,6 +5,14 @@ use super::tests::{bounded_output_with_findings, sample_finding};
 use crate::domain::{SourceCurrentness, SourceLocation};
 use std::path::PathBuf;
 
+/// The text under `Hidden:`. A removal-only run also lists its removed lines
+/// above Hidden (#15617), so row counts for the Hidden list read this part.
+fn hidden_section(rendered: &str) -> &str {
+    rendered
+        .split_once("\nHidden:\n")
+        .map_or("", |(_, hidden)| hidden)
+}
+
 fn assert_locations(root: PathBuf, currentness: SourceCurrentness) {
     let findings = (0..3)
         .map(|index| {
@@ -37,9 +45,21 @@ fn assert_locations(root: PathBuf, currentness: SourceCurrentness) {
         rendered.contains("Summary: 3 changed behaviors checked: "),
         "{rendered}"
     );
+    // Count the Hidden rows only: a removal-only run also lists its removed
+    // lines above Hidden, with the same location presentation (#15617).
+    let hidden = hidden_section(&rendered);
     assert_eq!(
-        rendered.matches("    - ./src/").count(),
+        hidden.matches("    - ./src/").count(),
         3 - usize::from(selected)
+    );
+    assert_eq!(
+        rendered.matches("    - ./src/").count() - hidden.matches("    - ./src/").count(),
+        if currentness == SourceCurrentness::BaseDeleted {
+            3
+        } else {
+            0
+        },
+        "{rendered}"
     );
     assert!(rendered.contains("  Full evidence: rerun with --format human-full\n"));
     assert!(rendered.contains("  Machine data: rerun with --format json\n"));
@@ -114,7 +134,9 @@ fn outside_parent_escape_and_unrooted_paths_keep_their_spelling() -> std::io::Re
     output.root = root;
     let rendered = render(&output);
     assert!(
-        rendered.contains("State: no gap selected for repair"),
+        rendered.contains(
+            "State: every finding left is on removed code, which is never an edit target"
+        ),
         "{rendered}"
     );
     for file in files {
@@ -165,7 +187,11 @@ fn location_change_keeps_the_twenty_row_cap_and_continuation() {
         rendered.contains("All 23 finding(s) are base-side evidence"),
         "{rendered}"
     );
-    assert_eq!(rendered.matches("    - ./src/").count(), 20, "{rendered}");
+    assert_eq!(
+        hidden_section(&rendered).matches("    - ./src/").count(),
+        20,
+        "{rendered}"
+    );
     assert!(
         rendered.contains(
             "    - ./src/f00.rs:1 (weak); kind: predicate; reason: missing strong oracle\n"
@@ -179,7 +205,7 @@ fn location_change_keeps_the_twenty_row_cap_and_continuation() {
         "{rendered}"
     );
     assert!(!rendered.contains("    - ./src/f20.rs:"), "{rendered}");
-    assert!(rendered.contains("    - … and 3 more omitted finding(s); every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"), "{rendered}");
+    assert!(rendered.contains("    - … and 3 more omitted finding(s): 3 weak; every identity is in --format json with RIPR_CHECK_FINDINGS_BYTES=0.\n"), "{rendered}");
 }
 
 /// #9373 items 2 and 3: hidden rows tell the three unknown classes apart and
@@ -241,4 +267,137 @@ fn hidden_classes_gloss_only_listed_classes() {
     assert_eq!(rendered.matches("    weak = ").count(), 1, "{rendered}");
     assert!(!rendered.contains("unknown:"), "{rendered}");
     assert!(!rendered.contains("no path ="), "{rendered}");
+}
+
+#[test]
+fn identical_hidden_rows_collapse_with_a_repeat_count() {
+    let findings = (0..3)
+        .map(|index| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(
+        hidden_section(&rendered).matches("    - ").count(),
+        1,
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("reason: missing strong oracle (x3)\n"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn distinct_or_non_consecutive_hidden_rows_stay_separate() {
+    let findings = [0usize, 1, 0]
+        .iter()
+        .enumerate()
+        .map(|(index, file)| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.probe.location =
+                SourceLocation::new(PathBuf::from(format!("src/f{file}.rs")), 7, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(
+        hidden_section(&rendered).matches("    - ").count(),
+        3,
+        "{rendered}"
+    );
+    assert!(!rendered.contains(" (x"), "{rendered}");
+}
+
+#[test]
+fn hidden_rows_state_a_long_shared_reason_once() {
+    // #14308 item 3: rows that differ only by file repeated a long limit
+    // sentence on every row. The first row states it; later rows point up.
+    const LONG: &str = "An integration test may reach this change through a crate public API ripr cannot fully trace";
+    let findings = (0..3)
+        .map(|index| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.probe.location =
+                SourceLocation::new(PathBuf::from(format!("src/f{index}.rs")), 7, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding.missing = vec![LONG.to_string()];
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(
+        hidden_section(&rendered).matches("    - ").count(),
+        3,
+        "{rendered}"
+    );
+    assert_eq!(rendered.matches(LONG).count(), 1, "{rendered}");
+    assert_eq!(
+        rendered.matches("; reason: same as above\n").count(),
+        2,
+        "{rendered}"
+    );
+    let stated = rendered.find(LONG).unwrap_or(usize::MAX);
+    let pointer = rendered.find("same as above").unwrap_or(0);
+    assert!(
+        stated < pointer,
+        "the reason must be stated first: {rendered}"
+    );
+}
+
+#[test]
+fn hidden_rows_keep_a_short_shared_reason_on_every_row() {
+    // A short reason costs about as much as the pointer, so it stays whole.
+    let findings = (0..3)
+        .map(|index| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.probe.location =
+                SourceLocation::new(PathBuf::from(format!("src/f{index}.rs")), 7, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    assert_eq!(
+        rendered
+            .matches("; reason: missing strong oracle\n")
+            .count(),
+        3,
+        "{rendered}"
+    );
+    assert!(!rendered.contains("same as above"), "{rendered}");
+}
+
+#[test]
+fn hidden_rows_restate_a_long_reason_after_a_different_reason() {
+    // "same as above" points only at the row printed just above: A, B, A states
+    // A again on the third row instead of pointing past B.
+    const LONG_A: &str = "An integration test may reach this change through a crate public API ripr cannot fully trace";
+    const LONG_B: &str =
+        "A macro expansion hides the changed expression from the static probe ripr runs here";
+    let findings = [LONG_A, LONG_B, LONG_A]
+        .iter()
+        .enumerate()
+        .map(|(index, reason)| {
+            let mut finding = sample_finding();
+            finding.id = format!("finding-{index}");
+            finding.probe.location =
+                SourceLocation::new(PathBuf::from(format!("src/f{index}.rs")), 7, 1);
+            finding.source_currentness = SourceCurrentness::BaseDeleted;
+            finding.missing = vec![(*reason).to_string()];
+            finding
+        })
+        .collect();
+    let rendered = render(&bounded_output_with_findings(findings));
+    let hidden = hidden_section(&rendered);
+    assert_eq!(hidden.matches("    - ").count(), 3, "{rendered}");
+    assert_eq!(rendered.matches(LONG_A).count(), 2, "{rendered}");
+    assert_eq!(rendered.matches(LONG_B).count(), 1, "{rendered}");
+    assert!(!rendered.contains("same as above"), "{rendered}");
 }

@@ -1,0 +1,2 @@
+crates/ripr/tests/diff_file_trailing_text.rs|Command::new|1|diff-trailing-text|#14072: the integration control drives the built `ripr check` binary on a diff file in a private temp workspace. One direct argv spawn with no shell, waits through `.output()`, and uses no network.
+crates/ripr/tests/diff_file_trailing_text.rs|use std::process::Command|1|diff-trailing-text|#14072: imports Command only for the bounded binary invocation described above.

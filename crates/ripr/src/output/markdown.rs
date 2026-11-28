@@ -20,14 +20,49 @@ pub(crate) const COMMAND_SHELL_DISCLOSURE: &str = "Commands are written for Bash
 /// single-quote form instead of the unsafe double-quoted one.
 pub(crate) const COMMAND_SHELL_DISCLOSURE_WINDOWS: &str = "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor for spaced paths. A value carrying `$` or backtick keeps the single-quote form instead — both Git Bash and PowerShell would expand it inside double quotes — so paste that value in Git Bash or PowerShell, not cmd.exe (cmd.exe passes single quotes through as literal characters); the same routing applies to a value carrying `%`, which cmd.exe expands even inside double quotes. An interior `\"` in an argument is kept by cmd.exe and PowerShell but dropped by Git Bash (`\"` cannot occur in a Windows filename, so this touches only exotic non-path arguments). A PowerShell form follows a command only when PowerShell needs a different one: the `&` call operator before a quoted program path, or a guarded BOM-free UTF-8 write in place of `>`. A command that begins with a `NAME=value` environment assignment is Bash syntax only: PowerShell writes it differently (`$env:NAME = 'value'`, which its PowerShell form already does), and cmd.exe rejects it as an unrecognized command. Paste the PowerShell form, or in cmd.exe run `set NAME=value` on its own line first and then the command without the assignment. A command with no PowerShell form after it runs unchanged in cmd.exe and PowerShell, unless a line says its PowerShell form is unavailable. Values containing control characters keep an explicit bash escape form; paste those in Git Bash or PowerShell. WSL bash is not a drop-in substitute: paths keep their Windows drive-letter prefix, which WSL resolves as a relative path.\n\n";
 
-/// One-line shell note for a command that runs unchanged in PowerShell, so a
-/// first-time reader is not handed the whole quoting paragraph before any
-/// command needs it (#11570 item 5). Windows keeps the full host paragraph.
-pub(crate) fn short_command_shell_note() -> &'static str {
-    if cfg!(windows) {
-        COMMAND_SHELL_DISCLOSURE_WINDOWS
+/// One-line shell note for the `ripr status` polling surface (#13242).
+///
+/// The quickstart wires agents to poll plain `ripr status --root .`, and on
+/// Windows the per-poll note used to be the full [`COMMAND_SHELL_DISCLOSURE_WINDOWS`]
+/// paragraph (~1,300 chars, 73% of a real poll's output). Each poll is a fresh
+/// process, so a within-process "show it once" cannot work without making the
+/// read-only status command write marker state; instead the default poll
+/// carries one line that keeps the host shell boundary claim and names the
+/// documented route back to the full disclosure (the global `-v`/`--verbose`
+/// flag, which renders [`agent_status_shell_disclosure`]'s legacy text). The
+/// command-specific PowerShell fence or unavailable line below the command is
+/// unaffected and still renders per command.
+pub(crate) fn status_poll_shell_note(windows_host: bool) -> &'static str {
+    if windows_host {
+        "Commands are written for the Windows console: arguments are double-quoted, the one form cmd.exe, PowerShell, and Git Bash all honor. A `powershell` fence follows only when PowerShell needs a different form. Full shell-quoting disclosure (`$`/backtick/`%` values, `NAME=value` prefixes, WSL limits): rerun with `-v`/`--verbose`.\n\n"
     } else {
+        "Commands are written for Bash; cmd.exe is not supported. A `powershell` fence follows only when PowerShell needs a different form. Full shell-quoting disclosure: rerun with `-v`/`--verbose`.\n\n"
+    }
+}
+
+/// Shell note for the `ripr status` markdown surface (#13242). With `verbose`
+/// this returns the legacy bytes exactly: the full host disclosure for a
+/// command with a second form, the #11570 short note ("runs unchanged in
+/// PowerShell") for one that does not. Without it, [`status_poll_shell_note`]'
+/// one-liner keeps repeat polls small on both hosts while the boundary claim
+/// stays in the output.
+/// `windows_host` is a parameter (the `shell_arg_for`/`powershell_command_for`
+/// pattern, #4378/#8152) so both hosts' notes are pinned on any machine.
+pub(crate) fn agent_status_shell_disclosure(
+    same_as_bash: bool,
+    windows_host: bool,
+    verbose: bool,
+) -> &'static str {
+    if !verbose {
+        return status_poll_shell_note(windows_host);
+    }
+    if windows_host {
+        return COMMAND_SHELL_DISCLOSURE_WINDOWS;
+    }
+    if same_as_bash {
         "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
+    } else {
+        COMMAND_SHELL_DISCLOSURE
     }
 }
 
@@ -253,6 +288,15 @@ fn prose_once(text: &str) -> String {
             }
         }
     }
+    copy_protected(text, protected, false)
+}
+
+/// Copy `protected` byte ranges of `text` verbatim and neutralise the rest.
+fn copy_protected(
+    text: &str,
+    mut protected: Vec<std::ops::Range<usize>>,
+    literal_markup: bool,
+) -> String {
     protected.sort_unstable_by_key(|range| range.start);
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
@@ -261,12 +305,12 @@ fn prose_once(text: &str) -> String {
             continue;
         }
         if range.start > copied {
-            out.push_str(&neutralize(&text[copied..range.start], false, false));
+            out.push_str(&neutralize(&text[copied..range.start], literal_markup));
         }
         out.push_str(&text[range.start.max(copied)..range.end]);
         copied = range.end;
     }
-    out.push_str(&neutralize(&text[copied..], false, false));
+    out.push_str(&neutralize(&text[copied..], literal_markup));
     out
 }
 
@@ -288,20 +332,66 @@ fn reference_label_code_ranges(
 }
 
 /// Untrusted prose on one line (a list item or a heading): line endings
-/// become spaces so the text cannot start a new block, then [`prose`].
+/// become spaces so the text cannot start a new block. Like [`prose`], only
+/// code spans the Markdown parser confirms stay verbatim (#15127): a lexical
+/// backtick pair can straddle a link destination, title or autolink that the
+/// parser consumes, which would leave a later tag or mention live.
 pub(crate) fn inline_prose(text: &str) -> String {
-    neutralize(&one_line(text), false, true)
+    inline_prose_with(text, false)
 }
 
 /// [`inline_prose`] that also renders `*`, `_`, `[` and `]` literally outside
 /// code spans, for free text that must not turn into emphasis or a link.
 pub(crate) fn inline_prose_literal(text: &str) -> String {
-    neutralize(&one_line(text), true, true)
+    inline_prose_with(text, true)
 }
 
 /// [`inline_prose`] for a GFM table cell: `|` also becomes `\|`.
 pub(crate) fn table_cell_text(text: &str) -> String {
     inline_prose(text).replace('|', "\\|")
+}
+
+fn inline_prose_with(text: &str, literal_markup: bool) -> String {
+    let mut current = one_line(text);
+    loop {
+        let rendered = inline_prose_once(&current, literal_markup);
+        if rendered == current {
+            return rendered;
+        }
+        // Escaping a backtick can change which spans the parser sees, so
+        // reparse until stable. Each changed pass escapes a backtick, HTML
+        // opener, mention prefix or literal marker and escapes are never
+        // reversed, so this terminates.
+        current = rendered;
+    }
+}
+
+fn inline_prose_once(text: &str, literal_markup: bool) -> String {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    // Parse in inline context: the text is emitted inside a list item, heading
+    // or table cell, so a leading `#`, `>` or indentation must not become a
+    // block here. The sentinel shifts every parser offset by its length.
+    const SENTINEL: &str = "x ";
+    let framed = format!("{SENTINEL}{text}");
+    // Keep parser-confirmed code spans verbatim. A run of backticks the parser
+    // left as literal text pairs with nothing here, so it also stays as it was;
+    // a backtick the parser consumed elsewhere (a link destination, title or
+    // autolink) is escaped.
+    let protected = Parser::new_ext(&framed, Options::ENABLE_TABLES)
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            let start = range.start.checked_sub(SENTINEL.len())?;
+            let end = range.end.checked_sub(SENTINEL.len())?;
+            let keep = match event {
+                Event::Code(_) => true,
+                Event::Text(literal) => !literal.is_empty() && literal.chars().all(|ch| ch == '`'),
+                _ => false,
+            };
+            keep.then_some(start..end)
+        })
+        .collect();
+    copy_protected(text, protected, literal_markup)
 }
 
 fn one_line(text: &str) -> String {
@@ -312,14 +402,14 @@ fn one_line(text: &str) -> String {
 ///
 /// `@` followed by a username character gains a word joiner (U+2060), so
 /// GitHub renders the text but does not notify the named user or team, and
-/// `<` becomes `&lt;`, so no raw HTML or autolink renders. Only the single-line
-/// callers allow lexical code spans here; [`prose`] copies parsed code ranges
-/// first. Other backticks are escaped so neutralizing an HTML block cannot
+/// `<` becomes `&lt;`, so no raw HTML or autolink renders. Callers copy
+/// parser-confirmed code ranges verbatim first; every other backtick is
+/// escaped so neutralizing an HTML block cannot
 /// create a new span across what used to be a block boundary. A backslash escape
 /// is copied as a pair, so an escaped backtick opens no span; `\@` is not a
 /// pair, since the escaped `@` still renders as a mention. The result is
 /// idempotent, so text read back from a posted body can be rendered again.
-fn neutralize(text: &str, literal_markup: bool, inline_spans: bool) -> String {
+fn neutralize(text: &str, literal_markup: bool) -> String {
     let chars = text.chars().collect::<Vec<_>>();
     let mut out = String::with_capacity(text.len());
     let mut index = 0usize;
@@ -336,12 +426,6 @@ fn neutralize(text: &str, literal_markup: bool, inline_spans: bool) -> String {
                     index += 1;
                 }
             },
-            '`' if inline_spans => {
-                let run = backtick_run(&chars, index);
-                let end = closing_backtick_run(&chars, index + run, run).unwrap_or(index + run);
-                out.extend(chars.get(index..end).unwrap_or_default());
-                index = end;
-            }
             '`' => {
                 out.push_str("\\`");
                 index += 1;
@@ -372,28 +456,6 @@ fn neutralize(text: &str, literal_markup: bool, inline_spans: bool) -> String {
         }
     }
     out
-}
-
-fn backtick_run(chars: &[char], start: usize) -> usize {
-    chars
-        .iter()
-        .skip(start)
-        .take_while(|ch| **ch == '`')
-        .count()
-}
-
-/// End (exclusive) of the first run of exactly `len` backticks at or after
-/// `from`, which closes a code span opened by a run of `len`.
-fn closing_backtick_run(chars: &[char], from: usize, len: usize) -> Option<usize> {
-    let mut index = from;
-    while index < chars.len() {
-        let run = backtick_run(chars, index);
-        if run == len {
-            return Some(index + run);
-        }
-        index += run.max(1);
-    }
-    None
 }
 
 /// One-line disclosure emitted in place of a PowerShell variant when the bash
@@ -468,13 +530,21 @@ pub(crate) fn command_context_directory(
     }
 }
 
-/// Resolve a ledger `typescript_package_root` to a directory under `workspace_root`.
+/// Resolve a ledger `typescript_package_root` (or a Python record's
+/// `verify_cwd`, #15302) to a directory under `workspace_root`.
 fn confined_typescript_package_directory(
     workspace_root: &std::path::Path,
     record: &serde_json::Value,
 ) -> Option<std::path::PathBuf> {
     use std::path::Component;
-    let rel = typescript_package_root_from_gap_record(record)?;
+    let rel = typescript_package_root_from_gap_record(record).or_else(|| {
+        record
+            .get("verify_cwd")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })?;
     if rel == "." {
         return None;
     }
@@ -493,6 +563,21 @@ fn confined_typescript_package_directory(
         return None;
     }
     Some(resolved)
+}
+
+/// True when a Python record names a nonblank `verify_cwd` (and no TypeScript
+/// package root) that does not resolve to a directory under `workspace_root`.
+fn python_verify_cwd_unconfined(
+    workspace_root: &std::path::Path,
+    record: &serde_json::Value,
+) -> bool {
+    let declared = record
+        .get("verify_cwd")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    declared
+        && typescript_package_root_from_gap_record(record).is_none()
+        && confined_typescript_package_directory(workspace_root, record).is_none()
 }
 
 /// Clipboard verify command for nested TypeScript packages when a rooted Bash
@@ -524,6 +609,23 @@ pub(crate) fn selected_nested_verify_command_context(
 ) -> serde_json::Value {
     let verify_root = command_context_directory(workspace_root, record);
     let mut context = selected_command_context(&verify_root, verify, verify);
+    // A Python record's verify command is spelled relative to its nested
+    // project (#15302). When that directory cannot be confined under the
+    // selected root, a root-rooted form would print a command that cannot
+    // find its test: withhold the verify forms instead. `cwd` stays the
+    // selected root so the packet still validates and the receipt form holds.
+    if python_verify_cwd_unconfined(workspace_root, record)
+        && let Some(object) = context.as_object_mut()
+    {
+        object.insert(
+            "verify".to_string(),
+            serde_json::json!({
+                "bash": null,
+                "powershell": null,
+                "recovery": "The nested Python project directory named by verify_cwd is missing or outside the selected root; rerun ripr check from this checkout and regenerate the packet.",
+            }),
+        );
+    }
     let receipt_context = selected_command_context(workspace_root, receipt, receipt);
     if let Some(object) = context.as_object_mut() {
         object.insert(
@@ -585,7 +687,7 @@ fn rooted_command_forms(cwd: Option<&str>, command: &str) -> serde_json::Value {
     serde_json::json!({
         "bash": format!("(cd -P -- {root} && {command})"),
         "powershell": null,
-        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. Use the Bash form, or inspect the raw command in JSON and run it from the selected repository in PowerShell, checking its result before recording a receipt.",
+        "recovery": "PowerShell selected-root form is unavailable because generic shell text does not establish native exit-status semantics. In Git Bash (not WSL) or a Unix shell, use the Bash form. In PowerShell, inspect the raw command in JSON, run it from the selected repository, and check its exit status before recording a receipt.",
     })
 }
 
@@ -1322,6 +1424,72 @@ pub(crate) fn powershell_text_variant(command: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// #15302: a Python record's project-relative verify command runs from
+    /// its confined `verify_cwd`; an unconfinable one withholds the verify
+    /// forms instead of rooting a command that cannot find its test.
+    #[cfg(not(windows))]
+    #[test]
+    fn python_verify_cwd_roots_verify_or_withholds_it() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!("ripr-md-verify-cwd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("py")).map_err(|e| e.to_string())?;
+        let verify = "python -m pytest tests/test_price.py::test_discount";
+        let nested = serde_json::json!({"verify_cwd": "py"});
+        let context =
+            selected_nested_verify_command_context(&root, &nested, verify, "ripr receipt write");
+        let bash = context["verify"]["bash"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let receipt = context["receipt"]["bash"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let withheld: Vec<serde_json::Value> = ["missing", "../py", "/py", "."]
+            .iter()
+            .map(|cwd| {
+                selected_nested_verify_command_context(
+                    &root,
+                    &serde_json::json!({"verify_cwd": cwd}),
+                    verify,
+                    "ripr receipt write",
+                )
+            })
+            .collect();
+        let rooted = selected_nested_verify_command_context(
+            &root,
+            &serde_json::json!({}),
+            verify,
+            "ripr receipt write",
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            bash.contains("ripr-md-verify-cwd-")
+                && bash.contains("/py")
+                && bash.ends_with("&& python -m pytest tests/test_price.py::test_discount)"),
+            "{bash}"
+        );
+        assert!(
+            receipt.contains("ripr-md-verify-cwd-") && !receipt.contains("/py"),
+            "receipt stays rooted at the workspace: {receipt}"
+        );
+        for context in withheld {
+            assert!(context["verify"]["bash"].is_null(), "{context}");
+            assert!(context["cwd"].is_string(), "{context}");
+            assert!(
+                context["verify"]["recovery"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("verify_cwd")),
+                "{context}"
+            );
+        }
+        assert!(
+            rooted["verify"]["bash"].as_str().is_some(),
+            "no cwd keeps the root form: {rooted}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn rooted_bash_accepts_literal_argument_equals_without_powershell_translation() {
         let command = "cargo test example -- --test-threads=1";
@@ -1753,6 +1921,105 @@ mod tests {
         );
     }
 
+    const MIXED_BACKTICK_CASES: &[&str] = &[
+        "gap [x](a`b) <b>bold</b> then `end` is invalid",
+        "gap [x](u \"a`b\") <b>bold</b> then `end` is invalid",
+        "gap <http://a`b> <b>bold</b> then `end` is invalid",
+        "gap [x](a`b) @octocat then `end` is invalid",
+        "[x](a`b) @octocat <b>bold</b> `end` and `<i>` too",
+        "[x](a`b) <b>bold</b> ``end`` then `more` and `x",
+        // Text that would start a block at line start stays inline.
+        "# [x](a`b) <b>h</b> `end`",
+        "> [x](a`b) @octocat `end`",
+        "1. [x](a`b) <i>i</i> `end`",
+        "- [x](a`b) <b>b</b> `end`",
+        "    [x](a`b) <b>b</b> `end`",
+        "[r]: a`b <b>b</b> `end`",
+        "[x][r] `a`b <b>b</b> `end`",
+    ];
+
+    type Helper = fn(&str) -> String;
+
+    /// Raw HTML events and live mentions in the parsed rendering of `rendered`.
+    fn live_html_and_mentions(rendered: &str) -> (Vec<String>, Vec<String>) {
+        use pulldown_cmark::{Event, Parser};
+        let mut html = Vec::new();
+        let mut mentions = Vec::new();
+        for event in Parser::new_ext(rendered, pulldown_cmark::Options::ENABLE_TABLES) {
+            match event {
+                Event::Html(raw) | Event::InlineHtml(raw) => html.push(raw.to_string()),
+                Event::Text(text) => {
+                    let chars: Vec<char> = text.chars().collect();
+                    for (index, ch) in chars.iter().enumerate() {
+                        let next = chars.get(index + 1);
+                        if *ch == '@' && next.is_some_and(|c| c.is_ascii_alphanumeric()) {
+                            mentions.push(text.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        (html, mentions)
+    }
+
+    #[test]
+    fn single_line_prose_keeps_only_parser_confirmed_code_spans() {
+        let helpers: [(&str, Helper); 3] = [
+            ("inline_prose", inline_prose),
+            ("inline_prose_literal", inline_prose_literal),
+            ("table_cell_text", table_cell_text),
+        ];
+        for (name, helper) in helpers {
+            for input in MIXED_BACKTICK_CASES {
+                let once = helper(input);
+                let (html, mentions) = live_html_and_mentions(&once);
+                assert!(html.is_empty(), "{name} left raw HTML {html:?}: {once}");
+                assert!(mentions.is_empty(), "{name} left a mention: {once}");
+                assert_eq!(helper(&once), once, "{name} is not idempotent for {input}");
+            }
+            let repro = helper(MIXED_BACKTICK_CASES[0]);
+            assert!(repro.contains("&lt;b>bold&lt;/b>"), "{name}: {repro}");
+        }
+    }
+
+    #[test]
+    fn single_line_prose_keeps_a_genuine_code_span_verbatim() {
+        for helper in [inline_prose, inline_prose_literal, table_cell_text] {
+            assert_eq!(helper("use `<b>` here"), "use `<b>` here");
+            assert_eq!(helper("`@user` and ``a`b``"), "`@user` and ``a`b``");
+        }
+    }
+
+    #[test]
+    fn single_line_prose_maps_code_spans_after_multibyte_text() {
+        // Parser offsets are bytes; multibyte text before and between spans
+        // must not shift which bytes are copied verbatim.
+        let input = "é ✓ <b> `<i>` 日本 @octocat `@u` end";
+        let expected = "é ✓ &lt;b> `<i>` 日本 @\u{2060}octocat `@u` end";
+        for helper in [inline_prose, inline_prose_literal, table_cell_text] {
+            let once = helper(input);
+            assert_eq!(once, expected);
+            assert_eq!(helper(&once), once);
+        }
+    }
+
+    #[test]
+    fn table_cell_text_escapes_a_pipe_inside_a_code_span() {
+        // GFM splits table cells before inline parsing, so a raw `|` inside a
+        // code span would still end the cell; `\|` renders as `|` in the code.
+        let cell = table_cell_text("run `a|b` then a|b");
+        assert_eq!(cell, "run `a\\|b` then a\\|b");
+        let table = format!("| h |\n| --- |\n| {cell} |\n");
+        let codes = pulldown_cmark::Parser::new_ext(&table, pulldown_cmark::Options::ENABLE_TABLES)
+            .filter_map(|event| match event {
+                pulldown_cmark::Event::Code(code) => Some(code.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(codes, vec!["a|b".to_owned()]);
+    }
+
     #[test]
     fn markdown_text_escapes_backslashes() {
         assert_eq!(markdown_text("a\\b"), "a\\\\b");
@@ -1847,6 +2114,75 @@ mod tests {
         // grow a cmd.exe route it does not honor.
         assert!(COMMAND_SHELL_DISCLOSURE.contains("cmd.exe is not supported"));
         assert!(!COMMAND_SHELL_DISCLOSURE.contains("set NAME=value"));
+    }
+
+    /// #13242: the `ripr status` default poll note is one line on both hosts,
+    /// keeps the host shell boundary claim the status tests pin, and names
+    /// the `-v`/`--verbose` route back to the full disclosure.
+    #[test]
+    fn status_poll_shell_note_is_one_line_and_keeps_the_boundary_claim() {
+        for windows_host in [true, false] {
+            let note = status_poll_shell_note(windows_host);
+            assert!(!note.trim_end().contains('\n'), "one line: {note}");
+            assert!(
+                note.contains("`-v`/`--verbose`"),
+                "route to the full disclosure: {note}"
+            );
+            if windows_host {
+                assert!(note.contains("Windows console"), "{note}");
+            } else {
+                assert!(note.contains("cmd.exe is not supported."), "{note}");
+            }
+            // Materially smaller than the essay it replaces (at least 3x on
+            // both hosts; the Bash essay is already the shorter one).
+            let essay = if windows_host {
+                COMMAND_SHELL_DISCLOSURE_WINDOWS
+            } else {
+                COMMAND_SHELL_DISCLOSURE
+            };
+            assert!(
+                note.len() * 3 < essay.len(),
+                "poll note must be a small fraction of the essay: {} vs {}",
+                note.len(),
+                essay.len()
+            );
+        }
+    }
+
+    /// #13242: `-v`/`--verbose` restores the legacy disclosure bytes exactly
+    /// (full essay for a command with a second form, the short note for one
+    /// that runs unchanged); the default demotes both to the one-line note.
+    /// Host is a parameter so both hosts pin on any machine.
+    #[test]
+    fn agent_status_shell_disclosure_verbose_restores_legacy_bytes() {
+        for windows_host in [true, false] {
+            let full = if windows_host {
+                COMMAND_SHELL_DISCLOSURE_WINDOWS
+            } else {
+                COMMAND_SHELL_DISCLOSURE
+            };
+            let short = if windows_host {
+                COMMAND_SHELL_DISCLOSURE_WINDOWS
+            } else {
+                "This command is written for Bash and runs unchanged in PowerShell. cmd.exe is not supported.\n\n"
+            };
+            assert_eq!(
+                agent_status_shell_disclosure(false, windows_host, true),
+                full
+            );
+            assert_eq!(
+                agent_status_shell_disclosure(true, windows_host, true),
+                short
+            );
+            assert_eq!(
+                agent_status_shell_disclosure(false, windows_host, false),
+                status_poll_shell_note(windows_host)
+            );
+            assert_eq!(
+                agent_status_shell_disclosure(true, windows_host, false),
+                status_poll_shell_note(windows_host)
+            );
+        }
     }
 
     #[test]

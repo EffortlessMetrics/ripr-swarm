@@ -19,17 +19,18 @@ pub(super) fn tool_descriptor() -> Value {
     json!({
         "name": TOOL_NAME,
         "title": "RIPR durable repair attempt inventory",
-        "description": "Discover durable CLI repair attempts in this workspace's default store before or after refresh, without creating a store, editing source, preparing an attempt, or executing verification; in-memory MCP transactions are excluded. Rows are ordered by identity, never by time: valid rows carry attempt_id, state, seam_id, repository_head, currentness, and receipt_status (the outputSchema enumerates the fields); invalid rows keep directory and attempt_invalid without trusting manifest fields. A missing default store is empty; an unavailable root or store read failure is a typed failure. Optional offset and limit page all rows, capped at 256 rows and the structured-envelope byte limit. Follow continuation.next_page with inventory_id; a changed observation fails closed with stale_inventory and the current identity, so restart at offset 0. inventory_id binds root, observed HEAD, and all summary rows — a live read, not an atomic filesystem snapshot. Use ripr_get_repair_attempt and ripr_get_receipt_status for one valid discovered id. Nothing returned authorizes an edit or command.",
+        "description": "List durable CLI repair attempts in this workspace's default store, ordered by identity, never by time: attempt_id, state, seam_id, repository_head, currentness and receipt_status; invalid rows show attempt_invalid. A missing store is empty. Page with offset and limit (at most 256 rows) and follow continuation.next_page with inventory_id; stale_inventory means restart at offset 0. In-memory MCP transactions are excluded. Use ripr_get_repair_attempt for one id. It creates no store.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "inventory_id": {"type": "string", "description": "Optional prior inventory identity; mismatch fails with stale_inventory."},
-                "offset": {"type": "integer", "minimum": 0},
-                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_PAGE_ITEMS}
+                "offset": {"type": "integer", "minimum": 0, "description": "Start row. Default 0."},
+                "limit": {"type": "integer", "minimum": 1, "maximum": MAX_PAGE_ITEMS, "description": "Rows per page. Default 256."}
             },
             "additionalProperties": false
         },
         "outputSchema": {
+            "type": "object",
             "oneOf": [
                 {
                     "type": "object",
@@ -117,6 +118,13 @@ pub(super) fn list_document(
             "restart the server with `ripr mcp --stdio --root <repository>` and retry",
         )
     })?;
+    if !root.is_dir() {
+        return Err(AttemptFailure::new(
+            "workspace_unavailable",
+            "the workspace root no longer exists; the durable attempt store cannot be read",
+            super::workspace::RESTART_ROOT_GONE_RECOVERY,
+        ));
+    }
     let inventory = inventory_repair_attempts_from(root, None).map_err(|_error| AttemptFailure::new(
         CODE_ATTEMPT_INVALID,
         "the shared repair-attempt authority could not read this workspace's durable store",
@@ -358,6 +366,23 @@ mod tests {
     fn missing_workspace_root_is_a_typed_workspace_unavailable_failure() -> Result<(), String> {
         let failure = refusal(list_document(None, None, None, 0, None, ROOMY))?;
         assert_eq!(failure.code, "workspace_unavailable");
+        assert!(failure.recovery.contains("--root"), "{}", failure.recovery);
+        Ok(())
+    }
+
+    #[test]
+    fn deleted_workspace_root_is_workspace_unavailable_with_restart_recovery() -> Result<(), String>
+    {
+        let root = Root::new("deleted")?;
+        let path = root.0.clone();
+        std::fs::remove_dir_all(&path).map_err(|error| error.to_string())?;
+        let failure = refusal(list_document(Some(&path), None, None, 0, None, ROOMY))?;
+        assert_eq!(failure.code, "workspace_unavailable");
+        assert!(
+            failure.recovery.contains("restart the server"),
+            "{}",
+            failure.recovery
+        );
         assert!(failure.recovery.contains("--root"), "{}", failure.recovery);
         Ok(())
     }

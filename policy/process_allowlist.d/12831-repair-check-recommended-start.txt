@@ -1,0 +1,1 @@
+crates/ripr/tests/repair_check_recommended_start.rs|Command::new|2|12831-repair-check-recommended-start|Fixture setup runs local git (init/commit/checkout) in a temp repository and the built ripr binary (check, repair) against it; no shell or network.

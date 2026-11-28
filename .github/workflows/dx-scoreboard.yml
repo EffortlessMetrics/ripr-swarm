@@ -8,6 +8,10 @@ name: DX Scoreboard
 # breaks. Wall-time and memory compare only against a same-runner baseline.
 # The `corpus` board is gated by rust-corpus.yml, which ingests its receipt,
 # and the `ranking` board by pilot-ranking.yml.
+# Each run also appends one dated receipt to the `dx-trend-receipts` artifact
+# chain and renders one trend page ranking every measured metric by distance
+# from its target (#14795, `cargo xtask dx-trend`). The trend is advisory and
+# adds no gate; a missing previous artifact only shortens the history.
 
 on:
   workflow_dispatch:
@@ -16,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: dx-scoreboard-${{ github.ref }}
@@ -52,4 +57,39 @@ jobs:
         with:
           name: dx-scoreboard
           path: target/ripr/reports/dx-scoreboard.*
+          if-no-files-found: warn
+
+      # The history lives outside target/ for the same rust-cache reason as the
+      # corpus. Only receipts from main runs extend the trend.
+      - name: Fetch previous trend receipts
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/dx-trend-history"
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=dx-trend-receipts&per_page=20" --jq '[.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")][0].workflow_run.id // empty' || true)
+          if [ -n "$run_id" ]; then gh run download "$run_id" --repo "$GITHUB_REPOSITORY" --name dx-trend-receipts --dir "$RUNNER_TEMP/dx-trend-history" || echo "::warning::previous trend receipts unavailable"; fi
+
+      - name: Render the trend page
+        if: always() && hashFiles('target/ripr/reports/dx-scoreboard.json') != ''
+        run: cargo xtask dx-trend --report target/ripr/reports/dx-scoreboard.json --history "$RUNNER_TEMP/dx-trend-history"
+
+      - name: Publish the trend page to the job summary
+        if: always() && hashFiles('target/ripr/reports/dx-trend.md') != ''
+        run: cat target/ripr/reports/dx-trend.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload trend page
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dx-trend
+          path: target/ripr/reports/dx-trend.*
+          if-no-files-found: warn
+
+      - name: Upload trend receipts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dx-trend-receipts
+          path: ${{ runner.temp }}/dx-trend-history/dx-trend-*.json
           if-no-files-found: warn

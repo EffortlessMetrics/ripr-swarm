@@ -15,7 +15,7 @@
 
 use super::package::TsFramework;
 use crate::domain::LanguageId;
-use crate::domain::language_capability::{
+use ripr_contract::domain::language_capability::{
     CAPABILITY_CELLS, CapabilityCell, FRAMEWORK_ANY, cells_for,
 };
 

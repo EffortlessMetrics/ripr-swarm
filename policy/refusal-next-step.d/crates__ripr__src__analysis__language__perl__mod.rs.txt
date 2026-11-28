@@ -1,0 +1,2 @@
+crates/ripr/src/analysis/language/perl/mod.rs|failed to read Perl fact packet `{}`: {err}
+crates/ripr/src/analysis/language/perl/mod.rs|ingestion: cannot read file `{}` (`{}`) to verify its digest: {error}

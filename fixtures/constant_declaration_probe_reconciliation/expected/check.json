@@ -29,6 +29,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"unknown","confidence":"low","summary":"Assertions exist, but oracle strength is unknown"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"unknown"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"unknown","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach changed owner: observation_schema_generation_matches_policy", "infection unknown: Changed syntax is not mapped to a high-confidence probe family", "propagation unknown: No propagation model is available for this changed syntax", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator unknown: Assertions exist, but oracle strength is unknown", "local flow reaches unknown sink (line 1)", "related test src/lib.rs:34 observation_schema_generation_matches_policy uses exact value oracle, not graded against this probe: assert_eq!(OBSERVATION_SCHEMA_GENERATION, 3);", "source assertion argument value 3 at line 35"],
       "flow_sinks": [
         {"kind":"unknown","text":"unknown sink","line":1}
@@ -74,8 +81,8 @@
       "stop_reasons": ["no_changed_rust_line"],
       "oracle_kind": "exact_value",
       "oracle_strength": "unknown",
-      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
-      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

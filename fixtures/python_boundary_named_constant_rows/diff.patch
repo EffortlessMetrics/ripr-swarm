@@ -1,0 +1,9 @@
+diff --git a/fmt/tiers.py b/fmt/tiers.py
+--- a/fmt/tiers.py
++++ b/fmt/tiers.py
+@@ -1,4 +1,4 @@
+ def tier(points):
+-    if points > 100:
++    if points >= 100:
+         return "gold"
+     return "basic"

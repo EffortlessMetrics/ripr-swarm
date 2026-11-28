@@ -1,0 +1,9 @@
+diff --git a/src/fmt.ts b/src/fmt.ts
+index 0000000..1111111 100644
+--- a/src/fmt.ts
++++ b/src/fmt.ts
+@@ -1,3 +1,3 @@
+ export function fmt(input: unknown): string {
+-  return typeof input === "object" ? JSON.stringify(input) : String(input);
++  return typeof input !== "object" ? JSON.stringify(input) : String(input);
+ }

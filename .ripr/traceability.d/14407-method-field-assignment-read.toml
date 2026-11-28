@@ -1,0 +1,33 @@
+# Registers the method field-assignment read through a crate-qualified struct
+# literal receiver and a short field name (#14407) under RIPR-SPEC-0228.
+[[extend]]
+id = "RIPR-SPEC-0228"
+tests = [
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::a_crate_qualified_struct_literal_receiver_asks_the_crate_authority",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::a_latest_let_names_the_crate_qualified_literal_exactly",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::owner_call_precedes_read_in_crate_admits_only_the_own_crate_literal",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::an_exact_read_of_the_assigned_field_confirms_a_short_field_write",
+  "crates/ripr/tests/method_field_assignment_read.rs::crate_qualified_literal_receiver_field_read_is_exposed",
+  "crates/ripr/tests/method_field_assignment_read.rs::imported_literal_receiver_short_field_read_is_exposed",
+  "crates/ripr/tests/method_field_assignment_read.rs::in_crate_unit_test_short_field_read_is_exposed",
+  "crates/ripr/tests/method_field_assignment_read.rs::weaker_reads_keep_the_field_write_gap_open",
+  "crates/ripr/tests/method_field_assignment_read.rs::local_module_shadowing_the_crate_name_gets_no_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::a_namesake_counter_in_the_test_file_gets_no_credit",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::a_read_restating_the_seeded_field_value_is_refused",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::only_a_struct_literal_receiver_has_a_visible_seed",
+  "crates/ripr/tests/method_field_assignment_read.rs::a_constructor_built_receiver_gets_no_short_field_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::a_workspace_member_namesake_gets_no_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::an_earlier_owner_write_of_the_field_gets_no_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::raw_identifier_spellings_get_no_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::a_path_remapped_module_gets_no_reexport_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::an_unwritten_expected_value_or_a_custom_drop_gets_no_credit",
+  "crates/ripr/src/analysis/classify/activation.rs::only_a_single_plain_literal_write_names_the_written_value",
+  "crates/ripr/tests/method_field_assignment_read.rs::a_namesake_counter_in_the_owner_file_gets_no_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::an_external_namesake_receiver_gets_no_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::a_crate_root_literal_names_a_module_owner_only_through_its_reexport",
+  "crates/ripr/tests/method_field_assignment_read.rs::an_unrelated_namesake_elsewhere_keeps_the_credit",
+  "crates/ripr/tests/method_field_assignment_read.rs::unbound_namesake_routes_get_no_credit",
+  "crates/ripr/src/analysis/classify/activation.rs::tests::only_a_single_plain_field_write_admits_the_owner",
+  "crates/ripr/src/analysis/classify/related_tests.rs::tests::a_library_file_maps_to_its_module_path",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::only_a_plain_pub_use_is_a_reexport",
+]

@@ -1,0 +1,10 @@
+# Analyzer-limit-only completion record for the agent loop (#14821).
+[[extend]]
+id = "RIPR-SPEC-0147"
+tests = [
+  "crates/ripr/src/app/check_verification.rs::tests::analyzer_limits_alone_complete_with_limits_and_stay_disclosed",
+  "crates/ripr/src/app/check_verification.rs::tests::any_test_closable_finding_keeps_the_refusal",
+  "crates/ripr/src/app/check_verification.rs::tests::limits_never_complete_beside_another_refusal",
+  "crates/ripr/tests/cli_smoke/verify_complete_with_limits.rs::exact_tests_leaving_only_analyzer_limits_complete_with_limits",
+  "crates/ripr/tests/cli_smoke/verify_complete_with_limits.rs::smoke_unrelated_or_assertion_free_tests_over_the_same_limits_still_refuse",
+]

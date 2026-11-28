@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- On Windows, a suppression-policy refusal from `ripr check --suppression-policy` and the root-relative policy loader now names the policy with one separator style, so `--root .` prints `./.ripr/suppressions.toml` instead of `.\.ripr/suppressions.toml`, both in the header and on every problem line. On Unix a `\` in a file name is unchanged, because it is part of the name (#16357).

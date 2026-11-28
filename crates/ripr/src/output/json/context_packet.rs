@@ -1,9 +1,10 @@
+use crate::analysis::owner_opt_out::OwnerOptOut;
 use crate::domain::{Finding, MissingDiscriminatorFact, ValueFact, context_packet::ContextPacket};
 use std::path::Path;
 
 use super::{array_field, escape, field, float_field, number_field};
 use crate::config::RiprConfig;
-use crate::output::json::report::{related_test_json, stop_reason_values};
+use crate::output::json::report::{flow_sink_json, related_test_json, stop_reason_values};
 use crate::output::next_step::reconcile_next_step;
 use crate::output::preview_actionability::projected_preview_actionability_missing;
 
@@ -12,6 +13,9 @@ use crate::output::preview_actionability::projected_preview_actionability_missin
 // 1.1 (#8743): the packet now carries the finding's `classification`,
 // `severity`, and `confidence`, mirroring the `ripr check --json` finding
 // shape so packet consumers can state the verdict without a second command.
+// Additive within 1.1 (#10516): each `missing_discriminators` entry carries
+// `flow_sink` (`{kind,text,line}` or null), the field and shape the check
+// finding's entries carry.
 pub(crate) const CONTEXT_PACKET_VERSION_CONTRACT: &str = "1.1";
 
 pub fn render_context_packet(
@@ -35,13 +39,46 @@ pub(crate) fn render_context_packet_with_explain_command(
     explain_command: Option<String>,
     root: &Path,
 ) -> String {
-    let stop_reasons = stop_reason_values(finding);
+    render_selected_context_packet(
+        finding,
+        max_related_tests,
+        config,
+        explain_command,
+        root,
+        None,
+    )
+}
+
+/// Render the packet for a selected finding together with the producer's
+/// owner opt-out decision for it (#14133), taken from the same run's
+/// `CheckOutput::owner_opt_outs` or the artifact's recorded copy. A withheld
+/// finding keeps its probe, stages and evidence, adds the decision's reason
+/// to `stop_reasons` and offers no `recommended_next_step`, as the agent
+/// explanation's `stop=` record does. `None` renders the ordinary packet.
+pub(crate) fn render_selected_context_packet(
+    finding: &Finding,
+    max_related_tests: usize,
+    config: &RiprConfig,
+    explain_command: Option<String>,
+    root: &Path,
+    owner_opt_out: Option<&OwnerOptOut>,
+) -> String {
+    let mut stop_reasons = stop_reason_values(finding);
+    if let Some(opt_out) = owner_opt_out {
+        let reason = opt_out.reason.as_str();
+        if !stop_reasons.iter().any(|existing| existing == reason) {
+            stop_reasons.push(reason.to_string());
+        }
+    }
     let mut packet = ContextPacket::from_finding(finding, max_related_tests, stop_reasons, root);
     // #8743: resolve severity through the caller's config so the packet
     // matches `ripr check --json` exactly, including user overrides. The
     // DTO's `from_finding` seed is the class profile default for callers
     // that hold no config.
-    packet.severity = config.severity().for_exposure(&finding.class).as_str();
+    packet.severity = config
+        .severity_for_file(&finding.probe.location.file)
+        .for_exposure(&finding.class)
+        .as_str();
     // The DTO starts with raw analysis evidence; resolve the provisional preview
     // packet-availability message using the same validator-backed projection as
     // the check surface and next-step reconciliation. Keep real missing facts.
@@ -52,7 +89,12 @@ pub(crate) fn render_context_packet_with_explain_command(
     // Reconcile the next step so the context packet does not diverge from the
     // human/JSON/SARIF surfaces. See #2597: every renderer MUST call
     // reconcile_next_step.
-    let reconciled = reconcile_next_step(finding);
+    // A withheld finding has no repair route on any surface (#14133).
+    let reconciled = if owner_opt_out.is_some() {
+        String::new()
+    } else {
+        reconcile_next_step(finding)
+    };
     packet.recommended_next_step = if reconciled.is_empty() {
         None
     } else {
@@ -222,23 +264,28 @@ fn discriminator_array(
             out.push_str(", ");
         }
         out.push_str(&format!(
-            "{{\"value\":\"{}\",\"reason\":\"{}\"}}",
+            "{{\"value\":\"{}\",\"reason\":\"{}\",\"flow_sink\":",
             escape(&value.value),
             escape(&value.reason)
         ));
+        match &value.flow_sink {
+            Some(sink) => flow_sink_json(out, sink),
+            None => out.push_str("null"),
+        }
+        out.push('}');
     }
     out.push(']');
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{render_context_packet, render_context_packet_dto};
+    use super::{render_context_packet, render_context_packet_dto, render_selected_context_packet};
     use crate::domain::context_packet::ContextPacket;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, DiagnosticConfidence, DiagnosticWitness,
-        ExposureClass, Finding, FindingCanonicalGap, MissingDiscriminatorFact, OracleKind,
-        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
+        DiscriminatorShape, ExposureClass, Finding, FindingCanonicalGap, MissingDiscriminatorFact,
+        OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence,
+        RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId, ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -300,6 +347,8 @@ mod tests {
                 value: "v == \"boundary\"".to_string(),
                 reason: "No test checks \"boundary\"\ncase".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
 
         let packet = render_context_packet(&finding, 5, &test_config(), Path::new("."));
@@ -343,6 +392,7 @@ mod tests {
             probe_family: "predicate".to_string(),
             changed_expression: "x >= 0".to_string(),
             before: None,
+            before_condition: None,
             after: Some("x >= 0".to_string()),
             expected_sink: None,
             missing_discriminators: Vec::new(),
@@ -433,6 +483,58 @@ mod tests {
         ));
     }
 
+    /// #14133: a withheld finding's packet is the ordinary packet with the
+    /// opt-out reason appended to `stop_reasons` and an empty next step;
+    /// every other field, including the probe and evidence, is unchanged.
+    #[test]
+    fn withheld_packet_differs_from_the_ordinary_one_only_by_its_stop() -> Result<(), String> {
+        use crate::analysis::owner_opt_out::{OwnerOptOut, OwnerOptOutReason, OwnerOptOutScope};
+        let mut finding = sample_finding();
+        // The ordinary packet must offer a step for the withheld one to drop.
+        finding.recommended_next_step = Some("Add an equality-boundary assertion.".to_string());
+        let opt_out = OwnerOptOut {
+            finding_id: finding.id.clone(),
+            owner: "sample".to_string(),
+            reason: OwnerOptOutReason::MutantsSkip,
+            scope: OwnerOptOutScope::Fn,
+            scope_label: String::new(),
+        };
+        let render = |opt_out| {
+            render_selected_context_packet(
+                &finding,
+                5,
+                &test_config(),
+                None,
+                Path::new("."),
+                opt_out,
+            )
+        };
+        let parse = |text: &str| -> Result<serde_json::Value, String> {
+            serde_json::from_str(text).map_err(|err| format!("{err}: {text}"))
+        };
+        let ordinary_text = render(None);
+        assert_eq!(
+            ordinary_text,
+            render_context_packet(&finding, 5, &test_config(), Path::new(".")),
+            "without a decision the packet is the existing render"
+        );
+        let mut ordinary = parse(&ordinary_text)?;
+        let withheld = parse(&render(Some(&opt_out)))?;
+        assert!(
+            ordinary["recommended_next_step"]
+                .as_str()
+                .is_some_and(|step| !step.is_empty()),
+            "premise: the ordinary packet offers a next step: {ordinary}"
+        );
+        let stops = ordinary["stop_reasons"]
+            .as_array_mut()
+            .ok_or("stop_reasons is an array")?;
+        stops.push(serde_json::Value::from("owner_mutants_skip"));
+        ordinary["recommended_next_step"] = serde_json::Value::from("");
+        assert_eq!(withheld, ordinary);
+        Ok(())
+    }
+
     fn sample_finding() -> Finding {
         Finding {
             analysis_scope: crate::domain::AnalysisScope::Diff,
@@ -440,6 +542,7 @@ mod tests {
             id: "probe:src_lib_rs:9:error_path".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:9:error_path".to_string()),
                 location: SourceLocation::new("src/lib.rs", 9, 1),
                 owner: Some(SymbolId("crate::sample".to_string())),

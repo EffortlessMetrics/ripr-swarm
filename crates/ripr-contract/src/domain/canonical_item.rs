@@ -1,0 +1,192 @@
+//! Portable canonical repair/gap identity (`CanonicalItemId`, #4805 / ID02).
+//!
+//! The wire spelling remains the producer-owned `gap:…` burn-down key. This
+//! wrapper rejects cross-class aliases and malformed values at parse time.
+
+use std::fmt;
+
+/// Producer-defined semantic repair/gap identity. Not a seam location, probe
+/// transport id, or session action id.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize)]
+#[serde(transparent)]
+pub struct CanonicalItemId(pub String);
+
+impl<'de> serde::Deserialize<'de> for CanonicalItemId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_canonical_gap_id(&value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Why a value was refused as a [`CanonicalItemId`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanonicalItemParseError {
+    /// The value was empty or only whitespace.
+    Empty,
+    /// The value is not a `gap:rust:` id, a `gap:pr:` id, or `gap:` followed
+    /// by 16 hex digits.
+    WrongClass {
+        /// The refused value, trimmed.
+        value: String,
+        /// The field being parsed, such as `canonical_gap_id`.
+        expected: &'static str,
+    },
+}
+
+impl fmt::Display for CanonicalItemParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("canonical item id must not be empty"),
+            Self::WrongClass { value, expected } => write!(
+                f,
+                "value `{value}` is not a {expected}; canonical items use `gap:` ids"
+            ),
+        }
+    }
+}
+
+impl CanonicalItemId {
+    /// Parse the canonical `canonical_gap_id` wire field.
+    pub fn from_canonical_gap_id(value: &str) -> Result<Self, CanonicalItemParseError> {
+        parse_gap_class(value, "canonical_gap_id")
+    }
+
+    /// Parse the governed compatibility alias `gap_id` when it names the same
+    /// burn-down key (#4804 removal window).
+    pub fn from_gap_id_alias(value: &str) -> Result<Self, CanonicalItemParseError> {
+        parse_gap_class(value, "gap_id alias")
+    }
+
+    /// Returns the id string. An id built by a parser is trimmed, with its
+    /// case kept.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+fn parse_gap_class(
+    value: &str,
+    label: &'static str,
+) -> Result<CanonicalItemId, CanonicalItemParseError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(CanonicalItemParseError::Empty);
+    }
+    if !trimmed.starts_with("gap:") {
+        return Err(CanonicalItemParseError::WrongClass {
+            value: trimmed.to_string(),
+            expected: label,
+        });
+    }
+    if trimmed.starts_with("gap:rust:") || trimmed.starts_with("gap:pr:") {
+        return Ok(CanonicalItemId(trimmed.to_string()));
+    }
+    // Content-hash canonical gaps: `gap:` + 16 hex digits. The producer
+    // (`ripr::analysis::canonical_gap`) writes lowercase; uppercase is still
+    // accepted and kept as given, so a hand-copied id is never refused and
+    // never silently rewritten (#14070).
+    let digest = trimmed.strip_prefix("gap:").unwrap_or("");
+    if digest.len() == 16 && digest.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Ok(CanonicalItemId(trimmed.to_string()));
+    }
+    Err(CanonicalItemParseError::WrongClass {
+        value: trimmed.to_string(),
+        expected: label,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_gap_id_round_trips_hash_and_readable_forms() -> Result<(), String> {
+        let hash = CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(hash.as_str(), "gap:67f9714ba37b3967");
+        let readable = CanonicalItemId::from_canonical_gap_id(
+            "gap:rust:src/lib.rs:demo:return_value:return_value:x",
+        )
+        .map_err(|error| error.to_string())?;
+        assert!(readable.as_str().starts_with("gap:rust:"));
+        Ok(())
+    }
+
+    #[test]
+    fn gap_id_alias_accepts_only_matching_gap_class() -> Result<(), String> {
+        let id = CanonicalItemId::from_gap_id_alias("gap:0102030405060708")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(id.as_str(), "gap:0102030405060708");
+        Ok(())
+    }
+
+    #[test]
+    fn probe_and_action_ids_reject_as_canonical_item() -> Result<(), String> {
+        match CanonicalItemId::from_canonical_gap_id("probe:demo") {
+            Err(_) => {}
+            Ok(value) => {
+                return Err(format!("expected parse failure, got {value:?}"));
+            }
+        }
+        match CanonicalItemId::from_gap_id_alias("action:demo") {
+            Err(_) => {}
+            Ok(value) => {
+                return Err(format!("expected parse failure, got {value:?}"));
+            }
+        }
+        match CanonicalItemId::from_canonical_gap_id("seam:demo") {
+            Err(_) => {}
+            Ok(value) => {
+                return Err(format!("expected failure, got {value:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn formatting_only_changes_do_not_change_parsed_identity() -> Result<(), String> {
+        let first = CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967")
+            .map_err(|error| error.to_string())?;
+        let second = CanonicalItemId::from_canonical_gap_id(" gap:67f9714ba37b3967 ")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(first, second);
+        Ok(())
+    }
+
+    #[test]
+    fn content_hash_gap_needs_exactly_sixteen_hex_digits() {
+        for refused in [
+            "gap:67f9714ba37b396",
+            "gap:67f9714ba37b39670",
+            "gap:67f9714ba37b396g",
+            "gap:",
+        ] {
+            assert_eq!(
+                CanonicalItemId::from_canonical_gap_id(refused),
+                Err(CanonicalItemParseError::WrongClass {
+                    value: refused.to_string(),
+                    expected: "canonical_gap_id",
+                }),
+                "{refused:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_hash_gap_accepts_either_hex_case_and_keeps_the_spelling() {
+        for accepted in ["gap:67f9714ba37b3967", "gap:67F9714BA37B3967"] {
+            assert_eq!(
+                CanonicalItemId::from_canonical_gap_id(accepted).map(|id| id.0),
+                Ok(accepted.to_string()),
+                "{accepted:?}"
+            );
+        }
+        assert_ne!(
+            CanonicalItemId::from_canonical_gap_id("gap:67F9714BA37B3967"),
+            CanonicalItemId::from_canonical_gap_id("gap:67f9714ba37b3967"),
+        );
+    }
+}

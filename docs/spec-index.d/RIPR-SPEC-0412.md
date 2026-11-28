@@ -1,0 +1,1 @@
+| [RIPR-SPEC-0412](../specs/RIPR-SPEC-0412-collection-push-contents-check-next-step.md) | proposed | Collection push next step names a contents check only on the repair route's precondition (#12456) |

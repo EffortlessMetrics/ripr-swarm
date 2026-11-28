@@ -3,11 +3,12 @@ mode: fast
 root: fixtures/fixture_receiver_unread_data/input
 
 Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 2 static_unknown; 2 of 2 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 2 changed file(s), 4 changed line(s), 2 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -59,6 +60,7 @@ Limitation detail
 Next step
   `cfg_pin` (src/cfg_rows.rs:8) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_unread_data/input --diff <cwd>/fixtures/fixture_receiver_unread_data/diff.patch --mode fast probe:src_cfg_rows.rs:return_value:8e82fa17
   ripr context --root <cwd>/fixtures/fixture_receiver_unread_data/input --diff <cwd>/fixtures/fixture_receiver_unread_data/diff.patch --mode fast --at probe:src_cfg_rows.rs:return_value:8e82fa17
 
@@ -109,5 +111,6 @@ Limitation detail
 Next step
   `raw_pin` (src/raw_owner.rs:10) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_unread_data/input --diff <cwd>/fixtures/fixture_receiver_unread_data/diff.patch --mode fast probe:src_raw_owner.rs:return_value:d4ace2c1
   ripr context --root <cwd>/fixtures/fixture_receiver_unread_data/input --diff <cwd>/fixtures/fixture_receiver_unread_data/diff.patch --mode fast --at probe:src_raw_owner.rs:return_value:d4ace2c1

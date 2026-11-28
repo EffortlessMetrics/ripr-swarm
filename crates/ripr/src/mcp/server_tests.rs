@@ -67,6 +67,103 @@ async fn delayed_durable_read_leaves_the_async_executor_and_status_available() -
     Ok(())
 }
 
+/// #15244: prepare reads the durable store on a blocking worker without the
+/// session lock (production runs a current-thread runtime), then re-takes the
+/// lock and refuses `stale_snapshot` when a refresh replaced the snapshot it
+/// admitted. The injected reader is the only substitute; the lookup, its read
+/// and the final step are the production ones.
+#[tokio::test(flavor = "current_thread")]
+async fn delayed_prepare_store_read_releases_the_session_lock_and_revalidates_its_snapshot()
+-> Result<(), String> {
+    for replace_snapshot in [false, true] {
+        let server = Arc::new(healthy_server()?);
+        // Not repair-ready, so the production read touches no store and the
+        // delay below is the whole worker.
+        let mut finding = gaps::test_finding()?;
+        finding.canonical_gap = None;
+        *server.session.lock().await =
+            repair::tests::session_with(&[finding.clone()], "root:sha256:a")?;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let prepare_server = server.clone();
+        let worker = tokio::spawn(async move {
+            prepare_server
+                .prepare_repair_document_with("finding:test:1", None, move |lookup| {
+                    let _ = started_tx.send(());
+                    release_rx
+                        .recv_timeout(std::time::Duration::from_secs(2))
+                        .map_err(|error| {
+                            workspace::AttemptFailure::new(
+                                workspace::CODE_ANALYSIS_FAILED,
+                                format!("delayed store read was not released: {error}"),
+                                "test reader release",
+                            )
+                        })?;
+                    lookup.read(std::path::Path::new("."))
+                })
+                .await
+        });
+        let started = tokio::time::timeout(std::time::Duration::from_secs(1), started_rx).await;
+        // The session lock is free while the store is read: status answers,
+        // and a refresh can commit a replacement snapshot.
+        let live = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            server.status_tool(super::super::MAX_RESPONSE_BYTES),
+        )
+        .await;
+        let replaced = if replace_snapshot {
+            // Same item, different committed evidence: a new snapshot id.
+            let mut refreshed = finding;
+            refreshed.evidence.push("refreshed evidence".to_string());
+            let replacement = repair::tests::session_with(&[refreshed], "root:sha256:a")?;
+            let locked =
+                tokio::time::timeout(std::time::Duration::from_millis(250), server.session.lock())
+                    .await;
+            match locked {
+                Ok(mut session) => {
+                    let before = session.last_good.as_ref().map(|s| s.snapshot_id.clone());
+                    session.last_good = replacement.last_good;
+                    let after = session.last_good.as_ref().map(|s| s.snapshot_id.clone());
+                    Some(before != after)
+                }
+                Err(_elapsed) => None,
+            }
+        } else {
+            Some(false)
+        };
+        let completed_early = worker.is_finished();
+        let _ = release_tx.send(());
+        let observed = worker.await.map_err(|error| error.to_string())?;
+        assert!(
+            !completed_early,
+            "the delayed store read ran synchronously or timed out before release"
+        );
+        started
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
+        live.map_err(|error| format!("async status blocked behind the store read: {error}"))?
+            .map_err(|error| error.to_string())?;
+        let replaced = replaced.ok_or("the session lock was held across the durable store read")?;
+        assert_eq!(
+            replaced, replace_snapshot,
+            "the replacement must change the snapshot id"
+        );
+        if replace_snapshot {
+            let failure = observed
+                .err()
+                .ok_or("a snapshot replaced during the store read must refuse")?;
+            assert_eq!(failure.code, workspace::CODE_STALE_SNAPSHOT);
+        } else {
+            let document = observed.map_err(|failure| failure.detail)?;
+            assert_eq!(document["repair_packet_ready"], false);
+        }
+        if !server.session.lock().await.repairs.is_empty() {
+            return Err("prepare created a session transaction".to_string());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn oversized_status_envelope_gets_typed_too_large_like_every_tool() -> Result<(), String> {
     // `ripr_workspace_status` goes through the shared response bound
@@ -322,8 +419,11 @@ async fn oversized_gap_item_leaves_mcp_through_the_real_routes() -> Result<(), S
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -437,8 +537,11 @@ async fn window_sized_gap_item_refuses_typed_instead_of_dropping_structured_cont
         untracked_working_tree_source_paths: Vec::new(),
         ignored_working_tree_source_paths: Vec::new(),
         unlinked_python_tests: None,
+        owner_opt_outs: Vec::new(),
         suppression: None,
         partial_scope: None,
+        file_fact_cache: None,
+
         analyzed_revisions: None,
     };
     let snapshot = workspace::Snapshot::from_output(&output, Some("root:sha256:test"))
@@ -684,7 +787,9 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
         serde_json::json!({}),
         serde_json::json!({"offset": 0}),
         serde_json::json!({"offset": 3, "limit": 10}),
-        serde_json::json!({"snapshot_id": "snapshot:sha256:x", "offset": 0, "limit": 1}),
+        serde_json::json!({"independent_pages": true}),
+        serde_json::json!({"independent_pages": false}),
+        serde_json::json!({"snapshot_id": format!("snapshot:sha256:{}", "a".repeat(64)), "offset": 0, "limit": 1}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
         let response = server
@@ -714,6 +819,8 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
         serde_json::json!({"offset": "3"}),
         serde_json::json!({"limit": 0}),
         serde_json::json!({"limit": true}),
+        serde_json::json!({"independent_pages": "true"}),
+        serde_json::json!({"independent_pages": null}),
         serde_json::json!({"verbose": true}),
     ] {
         let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
@@ -1488,6 +1595,148 @@ fn unknown_arguments_are_refused_by_name_and_allowed_ones_pass() -> Result<(), S
         .ok_or_else(|| format!("unknown-argument refusal lost structured data: {error:?}"))?;
     assert_eq!(data["argument"], serde_json::json!("verbose"));
     assert_eq!(data["allowed"], serde_json::json!(allowed));
+    assert!(data.get("argument_truncated").is_none());
+    assert!(data.get("argument_bytes").is_none());
+    Ok(())
+}
+
+/// #13154: diagnostic previews must not turn an admitted caller error into
+/// a generic output-limit failure. Validation still uses the complete key.
+#[test]
+fn unknown_argument_names_keep_bounded_explicit_diagnostics() -> Result<(), String> {
+    let allowed = ["base", "source"];
+    for (name, preview, truncated) in [
+        ("x".repeat(128), "x".repeat(128), false),
+        ("x".repeat(129), "x".repeat(128), true),
+        ("雪".repeat(128), "雪".repeat(128), false),
+        ("雪".repeat(129), "雪".repeat(128), true),
+        (
+            format!("base{}", "x".repeat(128)),
+            format!("base{}", "x".repeat(124)),
+            true,
+        ),
+        ("x".repeat(150_000), "x".repeat(128), true),
+        ("\u{1}".repeat(40_000), "\u{1}".repeat(128), true),
+    ] {
+        let arguments = argument_map(serde_json::json!({ name.clone(): true }));
+        let error = reject_unknown_arguments(&arguments, &allowed)
+            .err()
+            .ok_or("the complete unknown argument name must be refused")?;
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        let failure = invalid_argument_failure(&error);
+        let envelope = protocol::tool_failure(&failure, workspace::REFRESH_SCHEMA_VERSION)?;
+        let bytes = serde_json::to_vec(&envelope)
+            .map_err(|error| error.to_string())?
+            .len();
+        assert!(bytes <= 8 * 1024, "typed diagnostic grew to {bytes} bytes");
+        assert_eq!(envelope["isError"], serde_json::json!(true));
+        assert_eq!(failure.code, workspace::CODE_INVALID_ARGUMENT);
+        assert_eq!(failure.data["argument"], serde_json::json!(preview));
+        assert_eq!(failure.data["allowed"], serde_json::json!(allowed));
+        if truncated {
+            assert_eq!(failure.data["argument_truncated"], serde_json::json!(true));
+            assert_eq!(
+                failure.data["argument_bytes"],
+                serde_json::json!(name.len())
+            );
+            assert!(failure.detail.contains("truncated"), "{}", failure.detail);
+        } else {
+            assert!(failure.data.get("argument_truncated").is_none());
+            assert!(failure.data.get("argument_bytes").is_none());
+        }
+        // Allowed names remain visible even when Debug escaping expands
+        // the preview beyond the shared human-detail character bound.
+        assert!(failure.detail.contains("base"), "{}", failure.detail);
+        assert!(failure.detail.contains("source"), "{}", failure.detail);
+        assert!(
+            failure.recovery.contains("inputSchema"),
+            "{}",
+            failure.recovery
+        );
+    }
+    // A preview equal to a permitted name is still an unknown full key.
+    // This rejects a wrong implementation that validates after clipping.
+    let allowed_name = "x".repeat(128);
+    let arguments = argument_map(serde_json::json!({ format!("{allowed_name}x"): true }));
+    assert!(reject_unknown_arguments(&arguments, &[allowed_name.as_str()]).is_err());
+    Ok(())
+}
+
+/// #14186: only the SDK's bare-name `-32601` is rewritten. Every other error
+/// passes through untouched, so the rewrite cannot rename a real diagnostic.
+#[test]
+fn only_the_sdk_bare_method_not_found_is_renamed() {
+    use rmcp::model::{ErrorCode, ErrorData};
+    let bare = ErrorData::new(ErrorCode::METHOD_NOT_FOUND, "prompts/get", None);
+    let renamed = name_missing_method(bare, "prompts/get");
+    assert_eq!(renamed.code, ErrorCode::METHOD_NOT_FOUND);
+    assert_eq!(renamed.message.as_ref(), "Method not found: prompts/get");
+    assert!(renamed.data.is_none());
+
+    for untouched in [
+        // Another code whose message happens to equal the method.
+        ErrorData::new(ErrorCode::INVALID_PARAMS, "prompts/get", None),
+        // A method-not-found that already explains itself.
+        ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            "Method not found: prompts/get",
+            None,
+        ),
+        // A bare-name message that carries data of its own.
+        ErrorData::new(
+            ErrorCode::METHOD_NOT_FOUND,
+            "prompts/get",
+            Some(serde_json::json!({"method": "prompts/get"})),
+        ),
+        // A bare name that is not this request's method.
+        ErrorData::new(ErrorCode::METHOD_NOT_FOUND, "tasks/get", None),
+    ] {
+        assert_eq!(
+            name_missing_method(untouched.clone(), "prompts/get"),
+            untouched
+        );
+    }
+}
+
+/// #13220: preserve the protocol category and ordinary message while making
+/// a long method name a disclosed preview, never a response-sized echo.
+#[test]
+fn unknown_method_names_keep_bounded_explicit_diagnostics() -> Result<(), String> {
+    for (name, preview, truncated) in [
+        ("nope/never".to_string(), "nope/never".to_string(), false),
+        ("x".repeat(128), "x".repeat(128), false),
+        ("x".repeat(129), "x".repeat(128), true),
+        ("雪".repeat(128), "雪".repeat(128), false),
+        ("雪".repeat(129), "雪".repeat(128), true),
+        ("x".repeat(150_000), "x".repeat(128), true),
+        ("\u{1}".repeat(40_000), "\u{1}".repeat(128), true),
+        ("😀".repeat(40_000), "😀".repeat(128), true),
+    ] {
+        let error = unknown_method_error(&name);
+        assert_eq!(error.code, rmcp::model::ErrorCode::METHOD_NOT_FOUND);
+        let expected_message = if truncated {
+            format!("Method not found: {preview} (name truncated)")
+        } else {
+            format!("Method not found: {preview}")
+        };
+        assert_eq!(error.message.as_ref(), expected_message.as_str());
+        if truncated {
+            assert_eq!(
+                error.data,
+                Some(serde_json::json!({
+                    "method": preview,
+                    "method_truncated": true,
+                    "method_bytes": name.len(),
+                }))
+            );
+        } else {
+            assert!(error.data.is_none());
+        }
+        let bytes = serde_json::to_vec(&error)
+            .map_err(|error| error.to_string())?
+            .len();
+        assert!(bytes <= 4 * 1024, "method diagnostic grew to {bytes} bytes");
+    }
     Ok(())
 }
 
@@ -1762,6 +2011,24 @@ fn mcp_doc_error_table_matches_vocabulary_and_resource_failure_mapping() -> Resu
 /// next request, and the refresh after the failure analyzes normally, so a
 /// contained failure never ends the MCP process or leaves a half-committed
 /// snapshot behind.
+/// The one test-side Git launch in this file (shared by every fixture so the
+/// process-spawn allowance stays a single site).
+fn git_in(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("git {args:?}: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
 async fn worktree_refresh(
     server: &McpServer,
 ) -> Result<rmcp::model::CallToolResponse, rmcp::model::ErrorData> {
@@ -1793,21 +2060,7 @@ async fn refresh_contains_a_language_adapter_panic() -> Result<(), String> {
         "pub fn gate_state(flag: bool) -> bool { flag }\n",
     )
     .map_err(|error| error.to_string())?;
-    let run_git = |args: &[&str]| -> Result<(), String> {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(&root)
-            .output()
-            .map_err(|error| format!("git {args:?}: {error}"))?;
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(format!(
-                "git {args:?}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
-    };
+    let run_git = |args: &[&str]| git_in(&root, args);
     run_git(&["init"])?;
     run_git(&["config", "user.email", "ripr@example.invalid"])?;
     run_git(&["config", "user.name", "RIPR Test"])?;
@@ -2053,4 +2306,561 @@ fn typed_failure_carries_the_remedy_its_recovery_prose_states() {
     )
     .value();
     assert_eq!(pointless["remedy"]["retry_stated"], false, "{pointless}");
+}
+
+/// A throwaway Git repository with one committed Rust file and an uncommitted
+/// edit, so a worktree refresh has something to analyze (#13196).
+fn verify_route_fixture(label: &str) -> Result<PathBuf, String> {
+    static NEXT_FIXTURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-{label}-{}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos(),
+        NEXT_FIXTURE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-verify\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool { flag }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let run_git = |args: &[&str]| git_in(&root, args);
+    run_git(&["init"])?;
+    run_git(&["config", "user.email", "ripr@example.invalid"])?;
+    run_git(&["config", "user.name", "RIPR Test"])?;
+    run_git(&["add", "Cargo.toml", "src/lib.rs"])?;
+    run_git(&["commit", "-m", "base"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn gate_state(flag: bool) -> bool {\n    if flag { true } else { false }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(root)
+}
+
+/// One `ripr_refresh` through the real tool route; returns the wire document
+/// (`isError` and `structuredContent`).
+async fn refresh_wire(
+    server: &McpServer,
+    base: Option<&str>,
+    source: &str,
+) -> Result<Value, String> {
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("source".to_string(), Value::String(source.to_string()));
+    if let Some(base) = base {
+        arguments.insert("base".to_string(), Value::String(base.to_string()));
+    }
+    let response = server
+        .refresh_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES)
+        .await
+        .map_err(|error| format!("refresh must answer, not error: {error:?}"))?;
+    let rmcp::model::CallToolResponse::Complete(result) = response else {
+        return Err("refresh did not complete".to_string());
+    };
+    serde_json::to_value(&result).map_err(|error| error.to_string())
+}
+
+/// #13196: the emitted post-edit `verify.mcp` arguments follow the retained
+/// snapshot's analysed scope, never a later request's. A default-base snapshot
+/// followed by a failed other-base request keeps the base-less route; an
+/// explicit-base snapshot keeps its own base; with no snapshot at all the
+/// requested base is the only scope there is.
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_verify_route_follows_the_retained_snapshot_base() -> Result<(), String> {
+    let root = verify_route_fixture("verify-base")?;
+    let server = McpServer::new(
+        WorkspaceStatus::resolve_with_root(Some(root.clone())).0,
+        Some(root.clone()),
+    )
+    .map_err(|error| error.to_string())?;
+    let verify_arguments =
+        |wire: &Value| wire["structuredContent"]["verify"]["mcp"]["arguments"].clone();
+
+    let default_wire = refresh_wire(&server, None, "worktree").await?;
+    assert_eq!(
+        default_wire["isError"],
+        serde_json::json!(false),
+        "{default_wire}"
+    );
+    assert_eq!(
+        verify_arguments(&default_wire),
+        serde_json::json!({ "source": "worktree" }),
+        "default-base control keeps the base-less route"
+    );
+
+    let failed_wire = refresh_wire(&server, Some("no-such-revision-13196"), "worktree").await?;
+    assert_eq!(
+        failed_wire["isError"],
+        serde_json::json!(true),
+        "{failed_wire}"
+    );
+    assert_eq!(
+        verify_arguments(&failed_wire),
+        serde_json::json!({ "source": "worktree" }),
+        "a failed other-base request must not become the retained default snapshot's scope"
+    );
+
+    let explicit_wire = refresh_wire(&server, Some("HEAD"), "worktree").await?;
+    assert_eq!(
+        explicit_wire["isError"],
+        serde_json::json!(false),
+        "{explicit_wire}"
+    );
+    assert_eq!(
+        verify_arguments(&explicit_wire),
+        serde_json::json!({ "source": "worktree", "base": "HEAD" }),
+        "an explicit-base snapshot keeps its base"
+    );
+
+    let fresh = McpServer::new(
+        WorkspaceStatus::resolve_with_root(Some(root.clone())).0,
+        Some(root.clone()),
+    )
+    .map_err(|error| error.to_string())?;
+    let no_snapshot = refresh_wire(&fresh, Some("no-such-revision-13196"), "worktree").await?;
+    assert_eq!(
+        no_snapshot["isError"],
+        serde_json::json!(true),
+        "{no_snapshot}"
+    );
+    assert_eq!(
+        verify_arguments(&no_snapshot),
+        serde_json::json!({ "source": "worktree", "base": "no-such-revision-13196" }),
+        "with no snapshot the requested base is the only scope"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    Ok(())
+}
+
+#[test]
+fn echoed_arguments_escape_control_and_bidi_characters_and_stay_bounded() {
+    let escaped = crate::mcp::escape_echoed_argument("a\u{1b}b\nc\u{202e}d\u{200b}e");
+    assert_eq!(escaped, "a\\u{1b}b\\nc\\u{202e}d\\u{200b}e");
+    // Line and paragraph separators are not `is_control`, but render as line
+    // breaks: escaped so an echo cannot forge a line.
+    assert_eq!(
+        crate::mcp::escape_echoed_argument("a\u{2028}b\u{2029}c"),
+        "a\\u{2028}b\\u{2029}c"
+    );
+    assert_eq!(
+        crate::mcp::escape_echoed_argument("plain/id.rs:1 é"),
+        "plain/id.rs:1 é"
+    );
+    let long = "x".repeat(1000);
+    let bounded = crate::mcp::escape_echoed_argument(&long);
+    assert!(bounded.ends_with("..."), "{bounded}");
+    assert!(bounded.len() < 300, "{}", bounded.len());
+}
+
+#[test]
+fn malformed_snapshot_ids_are_invalid_arguments_and_well_formed_ones_pass() {
+    let args = |value: &str| serde_json::from_value(serde_json::json!({"snapshot_id": value})).ok();
+    for bad in [
+        "",
+        "abc",
+        "snapshot:sha256:x",
+        "snapshot:sha256:ABCDEF",
+        "sha256:aa",
+    ] {
+        let error = super::optional_snapshot_id_argument(&args(bad));
+        assert!(
+            matches!(&error, Err(e) if e.message.contains("snapshot:sha256:<64 lowercase hex")),
+            "{bad:?} must be refused: {error:?}"
+        );
+    }
+    let good = format!("snapshot:sha256:{}", "0123456789abcdef".repeat(4));
+    assert_eq!(
+        super::optional_snapshot_id_argument(&args(&good))
+            .ok()
+            .flatten(),
+        Some(good)
+    );
+    assert_eq!(
+        super::optional_snapshot_id_argument(&None).ok().flatten(),
+        None
+    );
+}
+
+fn invalid_params_data(error: &ErrorData) -> Result<&Value, String> {
+    assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    error
+        .data
+        .as_ref()
+        .ok_or_else(|| format!("refusal lost structured data: {error:?}"))
+}
+
+#[test]
+fn scalar_argument_parsers_refuse_coercion_and_name_the_argument() -> Result<(), String> {
+    let none: Option<serde_json::Map<String, Value>> = None;
+    let empty = argument_map(serde_json::json!({}));
+    for absent in [&none, &empty] {
+        assert_eq!(optional_string_argument(absent, "file"), Ok(None));
+        assert_eq!(optional_nonempty_string_argument(absent, "file"), Ok(None));
+        assert_eq!(optional_bool_argument(absent, "repair_ready"), Ok(None));
+    }
+
+    let text = argument_map(serde_json::json!({"file": "src/lib.rs", "empty": ""}));
+    assert_eq!(
+        optional_string_argument(&text, "file"),
+        Ok(Some("src/lib.rs".to_string()))
+    );
+    // A plain string accepts empty; the non-empty filter variant does not.
+    assert_eq!(
+        optional_string_argument(&text, "empty"),
+        Ok(Some(String::new()))
+    );
+    let error = optional_nonempty_string_argument(&text, "empty")
+        .err()
+        .ok_or("an empty filter string must be refused")?;
+    assert_eq!(error.message, "empty must be a non-empty string");
+    let data = invalid_params_data(&error)?;
+    assert_eq!(data["argument"], serde_json::json!("empty"));
+    assert_eq!(data["expected"], serde_json::json!("non-empty string"));
+
+    for wrong in [
+        serde_json::json!(7),
+        serde_json::json!(true),
+        serde_json::json!(null),
+        serde_json::json!(["a"]),
+    ] {
+        let arguments = argument_map(serde_json::json!({"file": wrong.clone()}));
+        let error = optional_string_argument(&arguments, "file")
+            .err()
+            .ok_or_else(|| format!("{wrong} must not coerce to a string"))?;
+        // Null is the one wrong value whose fix is to send nothing.
+        let expected = if wrong.is_null() {
+            "file must be a string, not null; omit file to use its default"
+        } else {
+            "file must be a string"
+        };
+        assert_eq!(error.message, expected);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("file"));
+        assert_eq!(data["expected"], serde_json::json!("string"));
+    }
+
+    let flags = argument_map(serde_json::json!({"on": true, "off": false}));
+    assert_eq!(optional_bool_argument(&flags, "on"), Ok(Some(true)));
+    assert_eq!(optional_bool_argument(&flags, "off"), Ok(Some(false)));
+    for wrong in [
+        serde_json::json!("true"),
+        serde_json::json!(1),
+        serde_json::json!(0),
+        serde_json::json!(null),
+    ] {
+        let arguments = argument_map(serde_json::json!({"repair_ready": wrong.clone()}));
+        let error = optional_bool_argument(&arguments, "repair_ready")
+            .err()
+            .ok_or_else(|| format!("{wrong} must not coerce to a boolean"))?;
+        let expected = if wrong.is_null() {
+            "repair_ready must be a boolean, not null; omit repair_ready to use its default"
+        } else {
+            "repair_ready must be a boolean"
+        };
+        assert_eq!(error.message, expected);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("repair_ready"));
+        assert_eq!(data["expected"], serde_json::json!("boolean"));
+    }
+    Ok(())
+}
+
+/// A fresh canonical directory for one file-filter test, removed on drop.
+struct FilterRoot(std::path::PathBuf);
+impl FilterRoot {
+    fn new(name: &str) -> Result<Self, String> {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "ripr-mcp-file-filter-{name}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+        std::fs::canonicalize(&path)
+            .map(Self)
+            .map_err(|error| error.to_string())
+    }
+}
+impl Drop for FilterRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// An agent usually holds the absolute path its editor gave it, while items
+/// are keyed by repository-relative paths. An absolute filter under the root
+/// narrows as its relative form; one outside the root is refused instead of
+/// matching nothing, which would read as "no gaps in that file".
+#[test]
+fn absolute_file_filter_is_relativized_under_the_root_and_refused_outside() -> Result<(), String> {
+    let temp = FilterRoot::new("lexical")?;
+    let root = temp.0.clone();
+    let nested = root.join("src").join("lib.rs");
+    let spell = |path: &std::path::Path| -> Result<String, String> {
+        path.to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("fixture path is not UTF-8: {path:?}"))
+    };
+
+    // Relative filters pass through untouched, with or without a root.
+    for relative in ["src/lib.rs", "./src/lib.rs", "lib.rs", "src/"] {
+        assert_eq!(
+            workspace_relative_file_filter(relative.to_string(), Some(&root)),
+            Ok(relative.to_string())
+        );
+        assert_eq!(
+            workspace_relative_file_filter(relative.to_string(), None),
+            Ok(relative.to_string())
+        );
+    }
+
+    // Under the root: the relative form, whether or not the file exists.
+    assert_eq!(
+        workspace_relative_file_filter(spell(&nested)?, Some(&root)),
+        Ok("src/lib.rs".to_string())
+    );
+    assert_eq!(
+        workspace_relative_file_filter(spell(&root.join("src"))?, Some(&root)),
+        Ok("src".to_string())
+    );
+
+    // A literal `%` takes the rendering item paths carry, so the absolute
+    // spelling matches the item the relative spelling does.
+    assert_eq!(
+        workspace_relative_file_filter(spell(&root.join("sale%off").join("lib.rs"))?, Some(&root)),
+        Ok("sale%25off/lib.rs".to_string())
+    );
+
+    // Outside the root, a sibling sharing the root's name as a string prefix,
+    // a `..` escape, the root itself and a rootless server are all refused.
+    let sibling = std::path::PathBuf::from(format!("{}-sibling", spell(&root)?)).join("lib.rs");
+    let escape = root.join("..").join("lib.rs");
+    let outside = "does not resolve below this workspace root";
+    for (path, root, needle) in [
+        (spell(&sibling)?, Some(root.as_path()), outside),
+        (spell(&escape)?, Some(root.as_path()), outside),
+        (spell(&nested)?, None, outside),
+        (
+            spell(&root)?,
+            Some(root.as_path()),
+            "omit file to list every item",
+        ),
+    ] {
+        let error = workspace_relative_file_filter(path.clone(), root)
+            .err()
+            .ok_or_else(|| format!("{path} must be refused"))?;
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(error.message.contains(needle), "{}", error.message);
+        // The refusal never echoes a host path.
+        assert!(!error.message.contains(path.as_str()), "{}", error.message);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("file"));
+    }
+    Ok(())
+}
+
+/// A symlinked spelling of the canonical root still resolves when the file
+/// exists, which is the macOS `/tmp` versus `/private/tmp` case.
+#[cfg(unix)]
+#[test]
+fn absolute_file_filter_resolves_a_symlinked_root_spelling() -> Result<(), String> {
+    let temp = FilterRoot::new("symlink")?;
+    let base = temp.0.clone();
+    let root = base.join("real");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src").join("lib.rs"), "").map_err(|error| error.to_string())?;
+    let alias = base.join("alias");
+    std::os::unix::fs::symlink(&root, &alias).map_err(|error| error.to_string())?;
+    let through_alias = alias.join("src").join("lib.rs");
+    let through_alias = through_alias.to_str().ok_or("fixture path is not UTF-8")?;
+    assert_eq!(
+        workspace_relative_file_filter(through_alias.to_string(), Some(&root)),
+        Ok("src/lib.rs".to_string())
+    );
+    // The same spelling for a file that does not exist cannot be resolved and
+    // is refused rather than matched against nothing.
+    let missing = alias.join("src").join("missing.rs");
+    let missing = missing.to_str().ok_or("fixture path is not UTF-8")?;
+    if let Ok(applied) = workspace_relative_file_filter(missing.to_string(), Some(&root)) {
+        return Err(format!("an unresolvable spelling was applied as {applied}"));
+    }
+    Ok(())
+}
+
+/// A required argument has no default, so a null there is never answered
+/// with the optional parser's "omit it" sentence.
+#[test]
+fn required_string_null_refusal_does_not_say_to_omit() -> Result<(), String> {
+    let arguments = argument_map(serde_json::json!({"canonical_id": null}));
+    let error = required_string_argument(&arguments, "canonical_id")
+        .err()
+        .ok_or("a null required argument must be refused")?;
+    assert_eq!(error.message, "canonical_id must be a string");
+    Ok(())
+}
+
+#[test]
+fn required_string_and_refresh_source_arguments_fail_closed() -> Result<(), String> {
+    let present = argument_map(serde_json::json!({"canonical_id": "gap:1"}));
+    assert_eq!(
+        required_string_argument(&present, "canonical_id"),
+        Ok("gap:1".to_string())
+    );
+    let none: Option<serde_json::Map<String, Value>> = None;
+    let empty_map = argument_map(serde_json::json!({}));
+    let other_key = argument_map(serde_json::json!({"unrelated": "value"}));
+    let empty = argument_map(serde_json::json!({"canonical_id": ""}));
+    let numeric = argument_map(serde_json::json!({"canonical_id": 5}));
+    for (arguments, message, expected) in [
+        (
+            &none,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &empty_map,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &other_key,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (
+            &empty,
+            "canonical_id is required and must be a non-empty string",
+            "non-empty string",
+        ),
+        (&numeric, "canonical_id must be a string", "string"),
+    ] {
+        let error = required_string_argument(arguments, "canonical_id")
+            .err()
+            .ok_or("a missing, empty or non-string required argument must be refused")?;
+        assert_eq!(error.message, message);
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("canonical_id"));
+        assert_eq!(data["expected"], serde_json::json!(expected));
+    }
+
+    for absent in [&none, &empty_map, &other_key] {
+        assert_eq!(
+            refresh_source_argument(absent),
+            Ok(None),
+            "an omitted source defers to the session default"
+        );
+    }
+    for (value, expected) in [
+        ("committed", workspace::RefreshSource::Committed),
+        ("worktree", workspace::RefreshSource::Worktree),
+    ] {
+        let arguments = argument_map(serde_json::json!({"source": value}));
+        assert_eq!(refresh_source_argument(&arguments), Ok(Some(expected)));
+    }
+    for (wrong, message, expected) in [
+        (
+            serde_json::json!(""),
+            "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
+        ),
+        (
+            serde_json::json!("Worktree"),
+            "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
+        ),
+        (
+            serde_json::json!("HEAD"),
+            "source must be one of: committed, worktree",
+            serde_json::json!(["committed", "worktree"]),
+        ),
+        (
+            serde_json::json!(1),
+            "source must be a string",
+            serde_json::json!("string"),
+        ),
+    ] {
+        let arguments = argument_map(serde_json::json!({"source": wrong.clone()}));
+        let error = refresh_source_argument(&arguments)
+            .err()
+            .ok_or_else(|| format!("{wrong} must not select a refresh source"))?;
+        assert_eq!(error.message, message, "{wrong}");
+        let data = invalid_params_data(&error)?;
+        assert_eq!(data["argument"], serde_json::json!("source"), "{wrong}");
+        assert_eq!(data["expected"], expected, "{wrong}");
+    }
+    Ok(())
+}
+
+#[test]
+fn list_cursors_are_refused_and_absent_cursors_pass() -> Result<(), String> {
+    assert_eq!(reject_pagination_cursor(None, "tools/list"), Ok(()));
+    let without: PaginatedRequestParams =
+        serde_json::from_value(serde_json::json!({})).map_err(|error| error.to_string())?;
+    assert_eq!(
+        reject_pagination_cursor(Some(without), "tools/list"),
+        Ok(())
+    );
+    let with: PaginatedRequestParams = serde_json::from_value(serde_json::json!({"cursor": "x"}))
+        .map_err(|error| error.to_string())?;
+    let error = reject_pagination_cursor(Some(with), "resources/list")
+        .err()
+        .ok_or("a client-supplied cursor must be refused")?;
+    assert_eq!(
+        error.message,
+        "resources/list does not paginate: this server returns the complete list in one response and never issues a nextCursor; drop the cursor argument"
+    );
+    let data = invalid_params_data(&error)?;
+    assert_eq!(data["argument"], serde_json::json!("cursor"));
+    assert_eq!(
+        data["expected"],
+        serde_json::json!("omit; the complete list fits one page")
+    );
+    Ok(())
+}
+
+/// #15983: a `ripr_refresh` the transport admitted beside a running one is
+/// refused `analysis_in_flight` from that mark alone. The session here has no
+/// attempt running, which is the state after the first attempt commits
+/// between the repeat's admission and its handler: the repeat must not start
+/// an analysis. The scope is the one `call_tool` enters from the mark.
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_admitted_beside_a_running_one_is_refused_after_it_commits() -> Result<(), String> {
+    let server = healthy_server()?;
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("source".to_string(), Value::String("committed".to_string()));
+    let response = BESIDE_RUNNING_REFRESH
+        .scope(
+            true,
+            server.refresh_tool(Some(arguments), super::super::MAX_RESPONSE_BYTES),
+        )
+        .await
+        .map_err(|error| format!("refresh must answer, not error: {error:?}"))?;
+    let rmcp::model::CallToolResponse::Complete(result) = response else {
+        return Err("refresh did not complete".to_string());
+    };
+    let result = serde_json::to_value(&result).map_err(|error| error.to_string())?;
+    if result.pointer("/isError") != Some(&Value::Bool(true))
+        || result
+            .pointer("/structuredContent/failure/code")
+            .and_then(Value::as_str)
+            != Some("analysis_in_flight")
+    {
+        return Err(format!(
+            "the marked refresh was not refused in flight: {result}"
+        ));
+    }
+    if server.session.lock().await.in_flight {
+        return Err("the refused refresh left an attempt in flight".to_string());
+    }
+    Ok(())
 }

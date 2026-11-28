@@ -3,6 +3,10 @@ use std::collections::BTreeSet;
 use super::model::*;
 
 impl CrossLanguageEdgeRegistryV1 {
+    /// Checks the schema version, nonblank generations, the supported families
+    /// and producer registrations, and every edge (see [`CrossLanguageEdgeV1`]).
+    /// When `semantic_digest` is present it must match the recomputed digest.
+    /// Returns the first failure.
     pub fn validate(&self) -> Result<(), CrossLanguageEdgeRegistryErrorV1> {
         if self.schema_version != RIPR_CROSS_LANGUAGE_EDGE_REGISTRY_SCHEMA_VERSION {
             return Err(error(
@@ -60,6 +64,8 @@ impl CrossLanguageEdgeRegistryV1 {
 }
 
 impl CrossLanguageSubjectV1 {
+    /// Checks a nonblank language and subject id, a `sha256:` body digest, a
+    /// nonblank display name when present, and the project identity.
     pub fn validate(&self) -> Result<(), CrossLanguageEdgeRegistryErrorV1> {
         require_non_empty("language", &self.language)?;
         require_non_empty("subject_id", &self.subject_id)?;
@@ -68,6 +74,9 @@ impl CrossLanguageSubjectV1 {
         self.project.validate()
     }
 
+    /// Portable identity key: language, subject id, canonical body digest and
+    /// project key, each length-prefixed where free text. Leaves out the display
+    /// name.
     pub fn portable_identity_key(&self) -> String {
         format!(
             "{}|{}|{}|{}",
@@ -80,12 +89,16 @@ impl CrossLanguageSubjectV1 {
 }
 
 impl CrossLanguageProjectIdentityV1 {
+    /// Checks a nonblank project id, a nonblank package id when present, and a
+    /// `sha256:` configuration digest.
     pub fn validate(&self) -> Result<(), CrossLanguageEdgeRegistryErrorV1> {
         require_non_empty("project_id", &self.project_id)?;
         require_optional_non_empty("package_id", self.package_id.as_deref())?;
         require_sha256("config_digest", &self.config_digest)
     }
 
+    /// Portable key: length-prefixed project and package ids plus the canonical
+    /// configuration digest.
     pub fn portable_key(&self) -> String {
         format!(
             "{}|{}|{}",
@@ -97,6 +110,8 @@ impl CrossLanguageProjectIdentityV1 {
 }
 
 impl CrossLanguageGeneratedArtifactV1 {
+    /// Checks nonblank artifact and generator ids and `sha256:` input and output
+    /// digests.
     pub fn validate(&self) -> Result<(), CrossLanguageEdgeRegistryErrorV1> {
         require_non_empty("artifact_id", &self.artifact_id)?;
         require_non_empty("generator_id", &self.generator_id)?;
@@ -114,8 +129,18 @@ pub fn subjects_related_by_registered_edge(
 ) -> bool {
     registry.edges.iter().any(|edge| {
         edge.disposition == EdgeDispositionV1::PositiveRegistered
-            && edge_matches_subjects(edge, left, right)
+            && edge_connects_subjects(edge, left, right)
     })
+}
+
+/// Returns `true` when the edge endpoints match the two subjects in either
+/// orientation.
+pub fn edge_connects_subjects(
+    edge: &CrossLanguageEdgeV1,
+    left: &CrossLanguageSubjectV1,
+    right: &CrossLanguageSubjectV1,
+) -> bool {
+    edge_matches_subjects(edge, left, right)
 }
 
 fn edge_matches_subjects(

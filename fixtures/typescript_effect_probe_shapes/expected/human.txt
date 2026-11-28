@@ -3,7 +3,7 @@ mode: fast
 root: fixtures/typescript_effect_probe_shapes/input
 config: <cwd>/fixtures/typescript_effect_probe_shapes/input/ripr.toml
 
-Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed, 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
+Summary: 2 changed behaviors checked: 0 appear noticed by tests, 2 partly noticed (2 through a test link ripr could not confirm), 0 reached but not noticed, 0 no test path. 2 found, 0 suppressed by your settings
 
 Changed file(s) by language: typescript = 1
 
@@ -16,9 +16,9 @@ Start here:
   File: src/profile.ts:4
   Language: typescript
   Language status: preview
-  Static exposure: weak (severity: warning, confidence 0.40)
+  Static exposure: weak (severity: note, confidence 0.40)
   Why capped: preview adapter: infection/propagation not modeled (TypeScript); syntax-first, no type or import resolution; no related test reaches the changed owner. Preview score, not on the same scale as Rust confidence.
-  Why weak: a related test reaches this change but does not observe the exact changed value
+  Why weak: test reach to this change is not established
   Changed behavior: profile.status = status;
   Missing check (1 of 2): Only heuristic TypeScript test links were found for `updateProfile`;
     verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value
@@ -34,7 +34,8 @@ Start here:
     States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;
       missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused
     Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;
-      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;
+      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;
+      both can rest on a test link ripr could not confirm; the reach stage says which;
       no test path = no test path found; unclear = analysis limited, not a verdict;
       found = listed for review; suppressed by your settings = hidden by your suppression policy;
       base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers
@@ -43,6 +44,7 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/typescript_effect_probe_shapes/input --diff <cwd>/fixtures/typescript_effect_probe_shapes/diff.patch --mode fast probe:src_profile.ts:typescript_preview:7c5ce045
   ripr context --root <cwd>/fixtures/typescript_effect_probe_shapes/input --diff <cwd>/fixtures/typescript_effect_probe_shapes/diff.patch --mode fast --at probe:src_profile.ts:typescript_preview:7c5ce045
   no repair start offered: this finding has no gap ID, so there is no gap to start a repair from; follow the Next step above
@@ -54,6 +56,5 @@ Hidden:
     weak = tests reach it but check it only loosely
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
-
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

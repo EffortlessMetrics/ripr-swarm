@@ -62,3 +62,90 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_indirect_owner_item_scope (6)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_indirect_owner_item_scope --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_indirect_owner_item_scope (7)
+
+Reason:
+RIPR-SPEC-0122: the digest drops the generic Why unknown hint when the rust_indirect_owner_call_unresolved Analyzer limit and Next step already name the reason, keeping the first-view check on fastrand-2.3.0 within the 60-line read budget (#11519)
+
+Command:
+`cargo xtask goldens bless rust_indirect_owner_item_scope --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_indirect_owner_item_scope (8)
+
+Reason:
+RIPR-SPEC-0001: evidence-first human output now states a repeated related-test miss sentence once per test and the explain verdict block references the Evidence row instead of re-listing the assertion and reason; every fact remains exactly once (agent-efficiency study, Nov 2-4)
+
+Command:
+`cargo xtask goldens bless rust_indirect_owner_item_scope --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_indirect_owner_item_scope (9)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless rust_indirect_owner_item_scope --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_indirect_owner_item_scope (10)
+
+Reason:
+RIPR-SPEC-0001: #7807 a removed line read as static_unknown only for lack of context is not reported again when its block replacement's modeled probe carries the whole removed text as before
+
+Command:
+`cargo xtask goldens bless rust_indirect_owner_item_scope --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_indirect_owner_item_scope (11)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_indirect_owner_item_scope --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_indirect_owner_item_scope (12)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_indirect_owner_item_scope --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -1,0 +1,9 @@
+use crate::Span;
+use quickcheck::Arbitrary as Arb;
+
+impl Arb for Span {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+        let a = u8::arbitrary(g);
+        Span(a, a.wrapping_add(3))
+    }
+}

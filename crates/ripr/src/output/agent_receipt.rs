@@ -47,6 +47,28 @@ pub(crate) struct AgentReceiptReading {
     pub(crate) verification_status: Option<String>,
     /// The test file the edit cage measured changing, when one was named.
     pub(crate) test_changed: Option<String>,
+    /// The focused test run the caller reported at finish (`--test-result`),
+    /// when the attempt retained one (#14079). The receipt never carries it:
+    /// the attempt reader fills it from the manifest's committed record, so
+    /// `from_value` leaves it `None`.
+    pub(crate) reported_test_run: Option<ReportedTestRun>,
+}
+
+/// A caller-reported focused test run retained with a finished attempt. ripr
+/// checked the result's shape and its binding to the attempt, HEAD and test
+/// file; it did not run or observe the tests, so this is the caller's claim
+/// and a separate axis from the receipt's static movement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReportedTestRun {
+    pub(crate) file: String,
+    /// Unique tests that ran in the selected file or module.
+    pub(crate) ran: usize,
+    pub(crate) passed: usize,
+    pub(crate) failed: usize,
+    /// Whether a ran test is one the attempt's edit added or changed
+    /// (#16311): `covered`, `not_covered` or `unknown`; `None` for a record
+    /// retained before that reading existed.
+    pub(crate) edited_test: Option<&'static str>,
 }
 
 impl AgentReceiptReading {
@@ -67,6 +89,7 @@ impl AgentReceiptReading {
             analysis_outcome_error: text("/analysis_outcome_error"),
             verification_status: text("/verification/status"),
             test_changed: text("/test_changed"),
+            reported_test_run: None,
         }
     }
 
@@ -365,7 +388,7 @@ pub(crate) fn agent_receipt_input_paths_from_value(
 ) -> Result<AgentReceiptInputPaths, String> {
     let inputs = verify
         .get("inputs")
-        .ok_or_else(|| "agent verify JSON is missing `inputs`".to_string())?;
+        .ok_or_else(|| "agent verify JSON is missing `inputs`; pass the unedited JSON that `ripr agent verify` wrote as --verify-json".to_string())?;
     Ok(AgentReceiptInputPaths {
         before: required_string(inputs, "before", "agent verify inputs")?,
         after: required_string(inputs, "after", "agent verify inputs")?,
@@ -432,7 +455,7 @@ fn find_receipt_seam(verify: &Value, seam_id: &str) -> Result<AgentReceiptSeam, 
     }
 
     Err(format!(
-        "agent receipt seam_id {seam_id} was not found in agent verify JSON"
+        "agent receipt seam_id {seam_id} was not found in agent verify JSON; pass a --seam-id that the verify JSON lists"
     ))
 }
 
@@ -524,7 +547,7 @@ fn receipt_next_step(
         "Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON"
     };
     let step = format!(
-        "This receipt is not review evidence because its status is `{status}`{reason}; do not include it in review. {recovery}, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints."
+        "This receipt is not review evidence because its status is `{status}`{reason}; do not include it in review. {recovery}, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the after-phase command it prints."
     );
     (step.clone(), step)
 }
@@ -587,7 +610,7 @@ fn array_field<'a>(value: &'a Value, key: &str) -> Result<&'a Vec<Value>, String
     value
         .get(key)
         .and_then(Value::as_array)
-        .ok_or_else(|| format!("agent verify JSON is missing `{key}` array"))
+        .ok_or_else(|| format!("agent verify JSON is missing `{key}` array; pass the unedited JSON that `ripr agent verify` wrote as --verify-json"))
 }
 
 fn required_string(value: &Value, key: &str, context: &str) -> Result<String, String> {
@@ -595,7 +618,7 @@ fn required_string(value: &Value, key: &str, context: &str) -> Result<String, St
         .get(key)
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| format!("{context} is missing string field `{key}`"))
+        .ok_or_else(|| format!("{context} is missing string field `{key}`; pass the unedited JSON that `ripr agent verify` wrote as --verify-json"))
 }
 
 fn required_usize(value: &Value, key: &str, context: &str) -> Result<usize, String> {
@@ -603,7 +626,7 @@ fn required_usize(value: &Value, key: &str, context: &str) -> Result<usize, Stri
         .get(key)
         .and_then(Value::as_u64)
         .and_then(|line| usize::try_from(line).ok())
-        .ok_or_else(|| format!("{context} is missing numeric field `{key}`"))
+        .ok_or_else(|| format!("{context} is missing numeric field `{key}`; pass the unedited JSON that `ripr agent verify` wrote as --verify-json"))
 }
 
 fn string_array_field(value: &Value, key: &str) -> Vec<String> {
@@ -1163,7 +1186,7 @@ mod tests {
                 &[],
                 fixed_provenance(),
             ),
-            Err("agent receipt seam_id missing was not found in agent verify JSON".to_string())
+            Err("agent receipt seam_id missing was not found in agent verify JSON; pass a --seam-id that the verify JSON lists".to_string())
         );
     }
 
@@ -1957,7 +1980,7 @@ mod tests {
             status: AgentReceiptUnavailableStatus::Invalid,
             reason: "Analysis outcome artifact base does not match its typed identity.".to_string(),
         })?;
-        let invalid_step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints.";
+        let invalid_step = "This receipt is not review evidence because its status is `invalid` (Analysis outcome artifact base does not match its typed identity); do not include it in review. Regenerate the analysis outcome for this workspace with `ripr check --format json`, written beside the agent verify JSON, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the after-phase command it prints.";
         assert_eq!(invalid["status"], "invalid");
         assert_eq!(
             invalid["summary"]["next_action"]["recommended_action"],
@@ -1980,7 +2003,7 @@ mod tests {
         )))?;
         assert_eq!(
             partial["summary"]["next_action"]["recommended_action"],
-            "This receipt is not review evidence because its status is `incomplete` (the analysis outcome is not complete; see `analysis_outcome`); do not include it in review. Resolve what kept the analysis from completing, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the `--phase after` command it prints."
+            "This receipt is not review evidence because its status is `incomplete` (the analysis outcome is not complete; see `analysis_outcome`); do not include it in review. Resolve what kept the analysis from completing, then rerun agent verify and agent receipt; in the repair loop, start a new attempt with `ripr agent repair --seam-id <seam-id> --phase before` and run the after-phase command it prints."
         );
         for receipt in [&invalid, &missing, &partial] {
             assert_ne!(receipt["status"], "advisory", "{receipt}");

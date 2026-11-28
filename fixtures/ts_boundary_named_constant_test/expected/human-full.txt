@@ -4,11 +4,12 @@ root: fixtures/ts_boundary_named_constant_test/input
 config: <cwd>/fixtures/ts_boundary_named_constant_test/input/ripr.toml
 
 Summary: 2 changed behavior(s) checked: 2 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Changed file(s) by language: typescript = 1
 
@@ -82,6 +83,7 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:129143e0
   ripr context --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:129143e0
 
@@ -152,8 +154,8 @@ TypeScript repair packet (advisory)
 Next step
   TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:1c8a3e62
   ripr context --root <cwd>/fixtures/ts_boundary_named_constant_test/input --diff <cwd>/fixtures/ts_boundary_named_constant_test/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:1c8a3e62
-
 
 Note: 1 TypeScript file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

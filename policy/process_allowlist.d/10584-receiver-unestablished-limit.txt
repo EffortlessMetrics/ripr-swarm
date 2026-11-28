@@ -1,2 +1,2 @@
-crates/ripr/tests/receiver_unestablished_limit.rs|Command::new|1|receiver-unestablished-limit|RIPR-SPEC-0352: runs the built ripr binary over a temp linked-A/generated-B workspace to read the diff finding and repo-exposure seam; no network or credential operation.
+crates/ripr/tests/receiver_unestablished_limit.rs|Command::new|2|receiver-unestablished-limit|RIPR-SPEC-0352: runs the built ripr binary over a temp linked-A/generated-B workspace to read the diff finding and repo-exposure seam; no network or credential operation.
 crates/ripr/tests/receiver_unestablished_limit.rs|use std::process::Command|1|receiver-unestablished-limit|RIPR-SPEC-0352: imports Command only for the bounded binary invocation described above.

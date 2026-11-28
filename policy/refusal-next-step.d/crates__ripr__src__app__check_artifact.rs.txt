@@ -1,0 +1,2 @@
+crates/ripr/src/app/check_artifact.rs|check artifact at {} cannot be reused: {err}
+crates/ripr/src/app/check_artifact.rs|failed to canonicalize diff file {}: {err}

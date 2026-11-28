@@ -163,3 +163,72 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_glob_shadow (14)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_glob_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_glob_shadow (15)
+
+Reason:
+RIPR-SPEC-0122: describe unestablished test reach without claiming owner invocation (#7330)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_glob_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_glob_shadow (16)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_glob_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_glob_shadow (17)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_glob_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_glob_shadow (18)
+
+Reason:
+RIPR-SPEC-0122: the Summary names findings whose reach is a test link ripr could not confirm (#15295)
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_glob_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — owner_return_pin_pointer_glob_shadow (19)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless owner_return_pin_pointer_glob_shadow --reason "..."`
+
+Updated:
+- `expected/human.txt`

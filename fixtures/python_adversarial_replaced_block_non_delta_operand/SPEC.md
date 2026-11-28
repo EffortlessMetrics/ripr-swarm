@@ -42,6 +42,13 @@ the clamp applied passes (labeled in the Python verdict corpus as
 
 **This fixture must NEVER read `exposed`.**
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_account.py:python_preview:c7d70a2d -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` from a `changed_sink_token` match on an operand that is

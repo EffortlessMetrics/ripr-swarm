@@ -18,6 +18,7 @@ undocumented override.
 | `policy/ci-budget.toml` | LEM bands and enforcement posture | `cargo xtask check-ci-lane-whitelist` |
 | `policy/ci-lane-whitelist.toml` | Lane definitions and base LEM | `cargo xtask check-ci-lane-whitelist` |
 | `policy/ci-risk-packs.toml` | Changed-path → risk-pack mapping | `cargo xtask check-ci-lane-whitelist` |
+| `policy/test-time-budget.toml` | Per-test time budget, advisory/enforced decision and baseline of tests over budget | `cargo xtask slow-test-report` (advisory unless `mode = "enforced"`) |
 | `policy/ripr-soft-gate.toml` | Soft-gate threshold and calibration | `cargo xtask check-pr` |
 
 ## Related policy ledgers
@@ -76,7 +77,8 @@ line/count caps bound the exception instead of authorizing growth.
 
 ## Source suppression governance
 
-Source-level suppressions still require a reason-bearing `#[expect]`.
+Prefer a reason-bearing `#[expect]` for source-level suppressions. When a lint
+only fires in some builds, the workspace permits a documented `#[allow]`.
 Counted suppressions are budgeted in `.ripr/allow-attributes.txt`;
 `policy/clippy-exceptions.toml` is the reviewable TOML counterpart.
 `cargo xtask check-covered-by` parses that TOML for required fields,
@@ -94,13 +96,14 @@ count-allowlist row.
 
 ```rust
 #[allow(clippy::indexing_slicing)]          // bare allow, no reason
-#[allow(clippy::indexing_slicing, reason = "...")] // allow instead of expect
 #[expect(clippy::indexing_slicing)]         // expect without reason
 ```
 
 `clippy::allow_attributes_without_reason` is denied at the workspace level.
 `cargo xtask check-allow-attributes` counts source suppressions against
-`.ripr/allow-attributes.txt`. A guarded suppression with no row, or a count
+`.ripr/allow-attributes.txt`. For unguarded lints, the gate also checks that each source `allow`
+outside fixture inputs carries its own reason, including inside `cfg_attr`.
+A guarded suppression with no row, or a count
 above its row, fails. A row whose `max_count` is higher than the current
 source count also fails, including a row whose suppression is gone. It does
 not match

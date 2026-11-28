@@ -14,14 +14,33 @@ restate their contracts.
 All findings use static vocabulary. A baseline checkpoints reviewed static
 findings; it is not a suppression and not runtime mutation evidence.
 
+## Quickest start: the Action
+
+For an advisory check before adopting the generated workflow, two steps are enough:
+
+```yaml
+- uses: actions/checkout@v6
+- uses: EffortlessMetrics/ripr/.github/actions/ripr-check@<release tag or commit SHA>
+```
+
+It handles the default shallow checkout, caches analysis, prints the report to
+the job log and summary, and fails only when ripr could not complete. Details:
+[CI strategy](CI.md#composite-action-ripr-check).
+
 ## 1. Generate the workflow
 
 ```bash
 ripr init --ci github
 ```
 
+Run it at the repository root. GitHub reads workflows only from the
+repository's top-level `.github/workflows`, and the generated workflow
+analyzes the checkout root, so `ripr init --ci <provider> --root <subdir>`
+with a subdirectory of the repository refuses (exit 2) and names the command
+to run at the root (`--ci gitlab` has the same rule for `.gitlab-ci.yml`).
+
 Add `--dry-run` to print the workflow without writing it. The generated
-workflow reads two repository variables and leaves both unset, so it is
+workflow reads two gate repository variables and leaves both unset, so it is
 advisory only: it summarizes findings and uploads reports, and the job never
 fails.
 
@@ -102,6 +121,32 @@ a stronger test exists. Open `gate-decision.md` for the exact reason on each
 candidate. The same applies when a test changed in the pull request next to the
 gap: that candidate stays advisory with the reason stated.
 
+## When the summary says `blocked`
+
+`blocked` under First-run status means the pull-request analysis did not run,
+not that the pull request is blocked. The summary gives the reason on the next
+lines:
+
+- `Reason:` names a base branch that is not in the checkout. The generated
+  workflow checks out with `fetch-depth: 0`; a shallow checkout (a lower
+  `fetch-depth`, or another checkout action) cannot compare against the base.
+- `No pull request in this run` appears on a manual run (`workflow_dispatch`).
+  Repository-wide reports do not need a pull request; the changed-behavior
+  findings do.
+
+## Fork and Dependabot pull requests
+
+The generated workflow runs on `pull_request`, so a pull request from a fork or
+from Dependabot gets a read-only `GITHUB_TOKEN`. The steps that write to the
+pull request (the summary comment and the inline comments) carry a guard and
+are skipped for those heads. The analysis (which also writes the gate
+decision) and the `ripr-reports` artifact upload are not guarded and still
+run, so a contributor and a maintainer can read the same `gate-decision.md`. SARIF upload needs `security-events: write`; it is
+`continue-on-error`, and when it fails the `Explain failed SARIF upload` step
+names the usual causes (a read-only token among them) without failing the job.
+Nothing here makes a fork pull request a trusted run: the workflow does not use
+`pull_request_target`, and it should not be changed to.
+
 ## Misconfiguration: baseline-check without a baseline
 
 `baseline-check` with no baseline, or an invalid one, is a `config_error` and
@@ -110,6 +155,26 @@ message names the way out: use `visible-only` to start without blocking, then
 run `ripr baseline create --from target/ripr/reports/gate-decision.json --out .ripr/gate-baseline.json`,
 commit the result and pass it with `--baseline` (`RIPR_GATE_BASELINE`). A
 `blocked` decision, by contrast, exits 3.
+
+A `RIPR_GATE_MODE` value that is not a gate mode (`visible_only`, say) also
+fails the job: the workflow treats any value other than empty or
+`visible-only` as blocking, and the gate refuses the value. In all three
+cases the failing `Run RIPR` step's error annotation and the first block of
+the job summary state the cause and, for a setup problem, the way out.
+
+## GitLab merge requests
+
+Steps 2 to 4 above are GitHub-only: they use the GitHub workflow's `RIPR_GATE_MODE`
+and `RIPR_GATE_BASELINE` variables. For GitLab, `ripr init --ci gitlab` writes
+`.gitlab-ci.yml` with one `ripr-advisory` job that runs only on merge-request
+pipelines and has `allow_failure: true`, so it never blocks a merge request. It
+runs `ripr check` and `ripr review-comments` and keeps `target/ripr/` as a job
+artifact for 14 days. It does not post merge-request comments, render SARIF, or
+configure gate modes. For a merge request from a fork, it fetches the target
+project's branch as the diff base. It needs no secrets (only public release downloads), so
+keep protected CI/CD variables out of merge-request pipelines. To turn it off, delete
+the `ripr-advisory` job from `.gitlab-ci.yml`; "Rolling back" below is GitHub-only.
+Details: [CI strategy](CI.md).
 
 ## Rolling back
 
@@ -124,3 +189,5 @@ Unset `RIPR_GATE_MODE` to return to advisory-only. The job is
 - [Blocking readiness](BLOCKING_READINESS.md): when each gate mode is ready.
 - [Calibrated gate policy](CALIBRATED_GATE_POLICY.md): the mode after
   `baseline-check`.
+- [Coming from cargo-mutants](FROM_CARGO_MUTANTS.md): the `missed.txt` and
+  exit-`2` equivalents, with a two-command `acknowledgeable` gate.

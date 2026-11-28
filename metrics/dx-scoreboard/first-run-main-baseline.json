@@ -4,10 +4,10 @@
   "boards": [
     {
       "counts": {
-        "below_target": 1,
+        "below_target": 3,
         "comparison_failed": 0,
         "failed": 0,
-        "meets_target": 6,
+        "meets_target": 4,
         "not_measured": 2,
         "regressed": 0
       },
@@ -92,18 +92,18 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from first-run: verdicts: semver-1.0.23=exposed, fastrand-2.3.0=exposed, bytesize-1.3.0=exposed",
+          "detail": "ingested from first-run: verdicts: semver-1.0.23=static_unknown, fastrand-2.3.0=static_unknown, bytesize-1.3.0=static_unknown",
           "repo": null,
-          "status": "meets_target",
-          "value": 0.0
+          "status": "below_target",
+          "value": 3.0
         }
       ],
       "source": "ingest:first-run",
-      "status": "meets_target",
+      "status": "below_target",
       "target": 0.0,
       "title": "Simple boundary edits on unfamiliar crates that get an `*_unknown` verdict",
       "unit": "cases",
-      "value": 0.0
+      "value": 3.0
     },
     {
       "baseline": {
@@ -118,18 +118,18 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "ingested from first-run: readings: semver-1.0.23=agrees with the tests, fastrand-2.3.0=agrees with the tests, bytesize-1.3.0=agrees with the tests",
+          "detail": "ingested from first-run: readings: semver-1.0.23=unresolved, fastrand-2.3.0=unresolved, bytesize-1.3.0=unresolved",
           "repo": null,
-          "status": "meets_target",
-          "value": 3.0
+          "status": "below_target",
+          "value": 0.0
         }
       ],
       "source": "ingest:first-run",
-      "status": "meets_target",
+      "status": "below_target",
       "target": 2.0,
       "title": "Simple boundary edits on unfamiliar crates where ripr gives a decisive verdict that agrees with what the tests catch (of the 3 first-run crates)",
       "unit": "cases",
-      "value": 3.0
+      "value": 0.0
     },
     {
       "baseline": {
@@ -369,10 +369,10 @@
   ],
   "revision": "8d5d0d011ec797501caf7ba97088da7bb4ea04e1",
   "rollup": {
-    "below_target": 1,
+    "below_target": 3,
     "comparison_failed": 0,
     "failed": 0,
-    "meets_target": 6,
+    "meets_target": 4,
     "not_measured": 2,
     "regressed": 0
   },

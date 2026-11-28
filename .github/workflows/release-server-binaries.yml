@@ -1,5 +1,9 @@
 # Swarm builds release-shaped assets for inspection. Public release authority
 # belongs to EffortlessMetrics/ripr; this workflow cannot publish assets.
+#
+# After the five server archives qualify, package-family-qualification.yml
+# wraps the same payload bytes into the PyPI and npm package family and
+# installs it on each native runner. Nothing here uploads to a registry.
 name: Rehearse ripr Server Binaries (read-only)
 
 on:
@@ -27,4 +31,12 @@ jobs:
     with:
       candidate_sha: ${{ github.sha }}
       candidate_ref: ${{ inputs.candidate_ref }}
+      version: ${{ inputs.version }}
+
+  packages:
+    # Wrap the qualified payloads into wheels and npm packages, then install
+    # each on its native runner (#5378). Read-only, like the archive rehearsal.
+    needs: rehearse
+    uses: ./.github/workflows/package-family-qualification.yml
+    with:
       version: ${{ inputs.version }}

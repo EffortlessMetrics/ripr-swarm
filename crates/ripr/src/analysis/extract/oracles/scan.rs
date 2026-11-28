@@ -5,7 +5,7 @@ use super::arguments::{
     assertion_oracle_text, complete_block_body, delimited_contents_at, discarded_matcher_scrutinee,
     parenthesized_contents, starts_discarded_matcher_computation,
 };
-use super::classify::{classify_assertion, classify_assertion_with};
+use super::classify::{classify_assertion, classify_assertion_with, without_unfilled_expected};
 use super::pattern_admission::LazyDecls;
 use super::patterns::{
     ExpectErrForm, contains_macro_invocation, contains_named_enum_variant, has_argument_tokens,
@@ -27,6 +27,10 @@ pub(crate) fn extract_assertions_in(
     decls: &LazyDecls,
 ) -> Vec<OracleFact> {
     let bound_error_vars = unwrap_err_bound_variables(body);
+    // #14810: a local the body binds only to an unfilled placeholder macro
+    // (`let expected: i32 = todo!(..)`) pins no expected value, so an
+    // assertion compared with it earns no strong credit.
+    let scope = super::PlaceholderScope::from_body(body);
     // #3709: the dedicated guarded-Result-match scanner owns every recognized
     // `match <direct-call> { Ok.. Err.. }` statement. Skipping its start lines
     // keeps the generic statement joiner from swallowing the whole match block
@@ -34,6 +38,7 @@ pub(crate) fn extract_assertions_in(
     // shape through one authority.
     let guarded = guarded_result_match_scan(body, start_line);
     let mut out = Vec::new();
+    let row_tables = RowTables::new(body);
     let mut lines = body.lines().enumerate().peekable();
     let mut guard_condition_tail: Option<(usize, String)> = None;
     while let Some((offset, line)) = lines.next() {
@@ -49,13 +54,22 @@ pub(crate) fn extract_assertions_in(
         if guarded.match_start_lines.contains(&(start_line + offset)) {
             continue;
         }
+        // #7878: a row wholly inside a block comment or string literal opened
+        // on an earlier row is not live code, though alone it reads as Rust.
+        if !row_tables.is_live(offset) {
+            continue;
+        }
         // Give the existing terminal-failure authority first refusal before
         // generic name admission can join or misclassify a matcher guard.
         // #3284: peek without consuming the block, preserving assertions
         // inside it; only its condition and first body statement participate.
         if (trimmed.starts_with("if ") || trimmed.starts_with("if("))
-            && let Some((oracle, condition_end_line, tail)) =
-                peeked_err_return_guard_oracle(&trimmed, lines.clone(), start_line + offset)
+            && let Some((oracle, condition_end_line, tail)) = peeked_err_return_guard_oracle(
+                &trimmed,
+                lines.clone(),
+                start_line + offset,
+                &scope.on_line(body, offset, &trimmed),
+            )
         {
             out.push(oracle);
             // A guard and another observer may share the closing header row.
@@ -73,7 +87,8 @@ pub(crate) fn extract_assertions_in(
         // first depth-0 `;` so the existing statement-start and receiver
         // gates see the whole statement (#7955).
         let mut fact_offset = offset;
-        if starts_statement(body, offset)
+        if row_tables.starts_statement(offset)
+            && row_tables.window_mentions_err_unwrap(offset)
             && let Some((err_facts, extra_lines, leftover)) =
                 uncompared_unwrap_err_facts_opening_on_line(body, offset, start_line)
         {
@@ -83,7 +98,8 @@ pub(crate) fn extract_assertions_in(
             }
             match leftover {
                 Some(rest)
-                    if is_assertion_line(&rest) || starts_discarded_matcher_computation(&rest) =>
+                    if may_start_assertion(&rest)
+                        || starts_discarded_matcher_computation(&rest) =>
                 {
                     trimmed = rest;
                     fact_offset = offset + extra_lines;
@@ -91,13 +107,30 @@ pub(crate) fn extract_assertions_in(
                 _ => continue,
             }
         }
-        if is_assertion_line(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
-            let admitted = is_assertion_line(&trimmed);
+        join_wrapped_expect_comparison(&mut trimmed, &mut lines);
+        if may_start_assertion(&trimmed) || starts_discarded_matcher_computation(&trimmed) {
+            let admitted = may_start_assertion(&trimmed);
             if !collect_owned_observer_statement(&mut trimmed, &mut lines, admitted) {
                 continue;
             }
             trimmed = without_discarded_matcher_computations(&trimmed);
-            if !is_assertion_line(&mask_comments_and_strings(&trimmed)) {
+            // #7878: the statement is parsed alone, so read an expect-test
+            // comparison in the body's lexical context: drop the first row's
+            // part still inside an earlier comment or string, and refuse a
+            // comparison whose receiver is not live code or sits in a closure.
+            let mut expect_comparison = false;
+            if has_expect_receiver_macro(&without_whitespace(&trimmed)) {
+                trimmed = row_tables.without_dead_prefix(body, &trimmed, fact_offset);
+                if crate::analysis::syntax::ra::is_expect_test_comparison_line(&trimmed) {
+                    if !row_tables.admits_expect_receiver(body, &trimmed, fact_offset) {
+                        continue;
+                    }
+                    expect_comparison = true;
+                }
+            }
+            // The expect-test parse reads comments and strings structurally;
+            // masking would blank string arguments into unparsable text (#7878).
+            if !is_assertion_line(&mask_comments_and_strings(&trimmed)) && !expect_comparison {
                 continue;
             }
             if has_unasserted_matcher(&trimmed) {
@@ -123,6 +156,11 @@ pub(crate) fn extract_assertions_in(
                 classification.kind = OracleKind::ExactErrorVariant;
                 classification.strength = OracleStrength::Strong;
             }
+            let classification = without_unfilled_expected(
+                classification,
+                &trimmed,
+                &scope.on_line(body, fact_offset + preceding_lines, &trimmed),
+            );
             let observed_tokens = extract_identifier_tokens(&trimmed);
             out.push(OracleFact {
                 line: start_line + fact_offset + preceding_lines,
@@ -146,15 +184,23 @@ pub(crate) fn extract_assertions_in(
 /// as its assertion twin (#3284). Used by the ra parser path, whose
 /// assertion facts come from the AST — joining the guard block here
 /// cannot swallow sibling assertions.
-pub(crate) fn err_return_guard_oracles(body: &str, start_line: usize) -> Vec<OracleFact> {
+pub(crate) fn err_return_guard_oracles(
+    body: &str,
+    start_line: usize,
+    scope: &super::PlaceholderScope,
+) -> Vec<OracleFact> {
     let mut out = Vec::new();
     let mut lines = body.lines().enumerate().peekable();
     while let Some((offset, line)) = lines.next() {
         let mut trimmed = line.trim().to_string();
         let guard_line = trimmed.starts_with("if ") || trimmed.starts_with("if(");
         if guard_line
-            && let Some(oracle) =
-                err_return_guard_oracle(&mut trimmed, &mut lines, start_line + offset)
+            && let Some(oracle) = err_return_guard_oracle(
+                &mut trimmed,
+                &mut lines,
+                start_line + offset,
+                &scope.on_line(body, offset, line.trim()),
+            )
         {
             out.push(oracle);
         }
@@ -2077,13 +2123,14 @@ fn peeked_err_return_guard_oracle<'a, I>(
     line: &str,
     mut lines: std::iter::Peekable<I>,
     line_number: usize,
+    placeholders: &std::collections::BTreeSet<String>,
 ) -> Option<(OracleFact, usize, String)>
 where
     I: Iterator<Item = (usize, &'a str)>,
 {
     let mut statement = line.to_string();
     collect_terminal_guard(&mut statement, &mut lines);
-    let oracle = terminal_err_return_guard_oracle(&statement, line_number)?;
+    let oracle = terminal_err_return_guard_oracle(&statement, line_number, placeholders)?;
     let brace = terminal_guard_body_open(&statement).ok()??;
     let condition_end_line = line_number + statement[..brace].matches('\n').count();
     let tail = guard_condition_line_tail(&statement, brace).unwrap_or_default();
@@ -2181,10 +2228,14 @@ fn guard_condition_line_tail(statement: &str, brace: usize) -> Option<String> {
 
 /// Shared by lexical guards and traversed inline-trial guard spans. The
 /// actual first body statement must return Err; only the assertion twin's
-/// condition determines kind, strength and observed tokens.
+/// condition determines kind, strength and observed tokens. #14882: a twin
+/// that reads a local bound only to an unfilled placeholder (`placeholders`,
+/// from [`placeholder_bound_variables`]) pins nothing, as the assertion
+/// itself would not (#14810).
 pub(crate) fn terminal_err_return_guard_oracle(
     statement: &str,
     line_number: usize,
+    placeholders: &std::collections::BTreeSet<String>,
 ) -> Option<OracleFact> {
     let brace = terminal_guard_body_open(statement).ok()??;
     let head = statement[..brace].trim();
@@ -2193,7 +2244,7 @@ pub(crate) fn terminal_err_return_guard_oracle(
         return None;
     }
     let twin = err_return_guard_assertion(statement)?;
-    let classification = classify_assertion(&twin);
+    let classification = without_unfilled_expected(classify_assertion(&twin), &twin, placeholders);
     let observed_tokens = extract_identifier_tokens(condition);
     Some(OracleFact {
         line: line_number,
@@ -2210,13 +2261,19 @@ fn err_return_guard_oracle<'a, I>(
     trimmed: &mut String,
     lines: &mut std::iter::Peekable<I>,
     line: usize,
+    placeholders: &std::collections::BTreeSet<String>,
 ) -> Option<OracleFact>
 where
     I: Iterator<Item = (usize, &'a str)>,
 {
     collect_terminal_guard(trimmed, lines);
     let equivalent_assertion = err_return_guard_assertion(trimmed)?;
-    let classification = classify_assertion(&equivalent_assertion);
+    // #14882: lowered like the assertion twin it stands for (#14810).
+    let classification = without_unfilled_expected(
+        classify_assertion(&equivalent_assertion),
+        &equivalent_assertion,
+        placeholders,
+    );
     let brace = terminal_guard_body_open(trimmed).ok()??;
     let condition = trimmed[..brace].trim().strip_prefix("if")?.trim();
     let observed_tokens = extract_identifier_tokens(condition);
@@ -2345,6 +2402,47 @@ where
     }
 }
 
+/// #7878: rustfmt wraps `.assert_eq(..)` below an `expect![..]` receiver
+/// that already balances, where ordinary collection stops. Commit the cloned
+/// lookahead only when the joined statement parses as an expect-test
+/// comparison, so an unrelated next statement keeps its own row.
+fn join_wrapped_expect_comparison<'a, I>(statement: &mut String, lines: &mut std::iter::Peekable<I>)
+where
+    I: Iterator<Item = (usize, &'a str)> + Clone,
+{
+    let compact = without_whitespace(statement);
+    if !has_expect_receiver_macro(&compact) || has_expect_comparison_method(&compact) {
+        return;
+    }
+    let mut candidate = statement.clone();
+    let mut lookahead = lines.clone();
+    collect_multiline_assertion(&mut candidate, &mut lookahead);
+    // `expect![[` / `"w12"` / `]].assert_eq(..)` is complete once collected.
+    if crate::analysis::syntax::ra::is_expect_test_comparison_line(&candidate) {
+        *statement = candidate;
+        *lines = lookahead;
+        return;
+    }
+    let Some((_, next)) = lookahead.peek() else {
+        return;
+    };
+    let next = next.trim();
+    if !EXPECT_COMPARISON_METHODS
+        .iter()
+        .any(|method| without_whitespace(next).starts_with(method))
+    {
+        return;
+    }
+    candidate.push('\n');
+    candidate.push_str(next);
+    let _ = lookahead.next();
+    collect_multiline_assertion(&mut candidate, &mut lookahead);
+    if crate::analysis::syntax::ra::is_expect_test_comparison_line(&candidate) {
+        *statement = candidate;
+        *lines = lookahead;
+    }
+}
+
 /// An opening block is only a collection hint. Commit cloned lookahead after
 /// establishing that the first complete statement owns a discarded matcher;
 /// unrelated block observers must retain the original row traversal.
@@ -2436,14 +2534,22 @@ fn delimiter_depth(text: &str) -> i32 {
 /// (RIPR-SPEC-0106, Part A).
 pub(crate) fn unwrap_err_bound_variables(body: &str) -> std::collections::BTreeSet<String> {
     let mut vars = std::collections::BTreeSet::new();
-    // Split into statement-sized chunks on `;`/`{`/`}` so a
+    // Split into statement-sized chunks on a depth-0 `;` or a brace so a
     // `let <ident> = <expr>.unwrap_err()` binding is recognized regardless of
-    // source formatting — not only when `let` begins a trimmed source line.
+    // source formatting - not only when `let` begins a trimmed source line.
     // Without this, a single-line test body (`fn t() { let e = f().unwrap_err();
     // assert_eq!(e, E::V); }`, e.g. un-rustfmt'd) hides the binding, the
     // assertion is never upgraded to ExactErrorVariant, and the seam carries a
     // contradictory `missing_discriminators` line despite being discriminated.
-    for stmt in body.split([';', '{', '}']) {
+    // The split is depth-aware (#14810 round 3), so `f(&[1; 3]).unwrap_err()`
+    // stays one statement. It runs over the masked body, like
+    // [`placeholder_bound_variables`] below: a bracket inside a string or
+    // comment would otherwise invert the depth and swallow the assertion that
+    // follows the `;`. Masking preserves byte length and leaves the binding
+    // text intact, so the collected names are the same.
+    let masked = mask_comments_and_strings(body);
+    for (start, end) in split_statement_ranges(&masked) {
+        let stmt = &body[start..end];
         if let Some(binding) = let_binding_substring(stmt)
             && let Some(var) = extract_unwrap_err_binding(binding)
         {
@@ -2451,6 +2557,386 @@ pub(crate) fn unwrap_err_bound_variables(body: &str) -> std::collections::BTreeS
         }
     }
     vars
+}
+
+/// Names `body` binds in a `let` whose every visible initializer is a diverging
+/// placeholder macro (`todo!`, `unimplemented!`, `unreachable!`, `panic!`).
+///
+/// `ripr agent stub --write` writes
+/// `let expected: T = todo!("ripr: write the value ...");` and then
+/// `assert_eq!(call(..), expected);`. Until the value is filled in, the
+/// assertion cannot fail for a wrong result, so it pins no expected value
+/// (#14810). The scan is statement-sized like [`unwrap_err_bound_variables`],
+/// so a single-line body is read too.
+///
+/// A name is lowered only when *every* binding of it is a placeholder. A second
+/// `let` of the same name to anything else drops it, and so does any other
+/// binding form — a function or closure parameter, a `match` arm, a `for`
+/// pattern, an `if let`/`while let` pattern, or a destructuring `let`. In each
+/// of those the name holds a real value at the assertion, so the body keeps
+/// today's credit (#14810 round 2).
+pub(crate) fn placeholder_bound_variables(body: &str) -> std::collections::BTreeSet<String> {
+    let masked = mask_comments_and_strings(body);
+    let mut seen: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
+    for stmt in split_statements(&masked) {
+        let Some(binding) = let_binding_substring(stmt) else {
+            continue;
+        };
+        if let Some((var, initializer)) = let_binding_parts(binding) {
+            let placeholder = is_diverging_placeholder(initializer);
+            seen.entry(var.to_string())
+                .and_modify(|every| *every = *every && placeholder)
+                .or_insert(placeholder);
+        } else if let Some(eq) = binding.find('=') {
+            // A destructuring or let-else pattern (`let (a, b) = ..`,
+            // `let Some(v) = .. else { .. }`) binds names that are not
+            // placeholders.
+            for name in pattern_binding_names(&binding[..eq]) {
+                seen.insert(name, false);
+            }
+        }
+    }
+    for name in non_placeholder_bound_names(&masked) {
+        seen.insert(name, false);
+    }
+    seen.into_iter()
+        .filter(|(_, every)| *every)
+        .map(|(var, _)| var)
+        .collect()
+}
+
+/// Names `masked` binds anywhere other than a placeholder `let`: a function or
+/// closure parameter, a `match` arm, a `for` pattern, or an `if let`/`while let`
+/// pattern. Over-collecting is safe — it only keeps today's credit.
+fn non_placeholder_bound_names(masked: &str) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    collect_function_parameters(masked, &mut names);
+    collect_closure_parameters(masked, &mut names);
+    collect_match_arm_bindings(masked, &mut names);
+    collect_for_patterns(masked, &mut names);
+    collect_let_chain_patterns(masked, &mut names);
+    names
+}
+
+fn is_ident_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+/// Identifiers a pattern binds: `Some(expected)`, `Foo { expected }`, `(a, b)`,
+/// `expected`. A path segment (`Foo::Bar`) and a constructor name (`Some(`) are
+/// not bindings.
+fn pattern_binding_names(pattern: &str) -> std::collections::BTreeSet<String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut names = std::collections::BTreeSet::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !(chars[i].is_ascii_alphabetic() || chars[i] == '_') {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && is_ident_char(chars[i]) {
+            i += 1;
+        }
+        let word: String = chars[start..i].iter().collect();
+        let preceded_by_path = start >= 2 && chars[start - 1] == ':' && chars[start - 2] == ':';
+        let mut j = i;
+        while j < chars.len() && chars[j] == ' ' {
+            j += 1;
+        }
+        let followed_by_ctor = j < chars.len()
+            && (chars[j] == '('
+                || chars[j] == '{'
+                || (chars[j] == ':' && j + 1 < chars.len() && chars[j + 1] == ':'));
+        let keyword = matches!(
+            word.as_str(),
+            "mut"
+                | "ref"
+                | "in"
+                | "if"
+                | "let"
+                | "while"
+                | "for"
+                | "match"
+                | "move"
+                | "dyn"
+                | "impl"
+                | "as"
+                | "self"
+                | "Self"
+                | "true"
+                | "false"
+                | "_"
+        );
+        if !preceded_by_path && !followed_by_ctor && !keyword {
+            names.insert(word);
+        }
+    }
+    names
+}
+
+fn collect_function_parameters(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    let mut search = 0;
+    while let Some(rel) = masked[search..].find("fn ") {
+        let idx = search + rel;
+        search = idx + 3;
+        let prev_ok = idx == 0 || !masked[..idx].chars().next_back().is_some_and(is_ident_char);
+        if !prev_ok {
+            continue;
+        }
+        let Some(open_rel) = masked[search..].find('(') else {
+            continue;
+        };
+        let open = search + open_rel;
+        let Some(close) = matching_delimiter(masked, open, '(', ')') else {
+            continue;
+        };
+        for param in split_top_level(&masked[open + 1..close], ',') {
+            let name_part = param.split(':').next().unwrap_or("");
+            out.extend(pattern_binding_names(name_part));
+        }
+    }
+}
+
+fn collect_closure_parameters(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    let chars: Vec<char> = masked.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '|' {
+            i += 1;
+            continue;
+        }
+        let prev = chars[..i]
+            .iter()
+            .rev()
+            .find(|ch| !ch.is_whitespace())
+            .copied()
+            .unwrap_or(' ');
+        let after_move = i >= 5 && chars[i - 5..i - 1].iter().collect::<String>() == "move";
+        let starts_closure =
+            after_move || matches!(prev, '(' | ',' | '=' | '{' | ';' | '>' | '|' | ']' | '}');
+        if !starts_closure {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        let mut closed = false;
+        while j < chars.len() {
+            let ch = chars[j];
+            if ch == '|' {
+                closed = true;
+                break;
+            }
+            if !(is_ident_char(ch)
+                || matches!(
+                    ch,
+                    ':' | '&' | '\'' | '<' | '>' | ',' | ' ' | '(' | ')' | '[' | ']'
+                ))
+            {
+                break;
+            }
+            j += 1;
+        }
+        if !closed {
+            i += 1;
+            continue;
+        }
+        let inner: String = chars[i + 1..j].iter().collect();
+        for param in split_top_level(&inner, ',') {
+            let name_part = param.split(':').next().unwrap_or("");
+            out.extend(pattern_binding_names(name_part));
+        }
+        i = j + 1;
+    }
+}
+
+fn collect_match_arm_bindings(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    let mut search = 0;
+    while let Some(rel) = masked[search..].find("=>") {
+        let idx = search + rel;
+        search = idx + 2;
+        let before = &masked[..idx];
+        let start = before
+            .rfind([';', '{', '}', ','])
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let pattern = before[start..].trim();
+        let pattern = pattern.split(" if ").next().unwrap_or(pattern);
+        out.extend(pattern_binding_names(pattern));
+    }
+}
+
+fn collect_for_patterns(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    let mut search = 0;
+    while let Some(rel) = masked[search..].find("for ") {
+        let idx = search + rel;
+        search = idx + 4;
+        let prev_ok = idx == 0 || !masked[..idx].chars().next_back().is_some_and(is_ident_char);
+        if !prev_ok {
+            continue;
+        }
+        let rest = &masked[search..];
+        let Some(in_rel) = rest.find(" in ") else {
+            continue;
+        };
+        out.extend(pattern_binding_names(&rest[..in_rel]));
+    }
+}
+
+fn collect_let_chain_patterns(masked: &str, out: &mut std::collections::BTreeSet<String>) {
+    for keyword in ["if let ", "while let "] {
+        let mut search = 0;
+        while let Some(rel) = masked[search..].find(keyword) {
+            let idx = search + rel;
+            search = idx + keyword.len();
+            let rest = &masked[search..];
+            let Some(eq_rel) = rest.find('=') else {
+                continue;
+            };
+            out.extend(pattern_binding_names(&rest[..eq_rel]));
+        }
+    }
+}
+
+fn matching_delimiter(text: &str, open: usize, open_ch: char, close_ch: char) -> Option<usize> {
+    let mut depth = 0usize;
+    for (offset, ch) in text[open..].char_indices() {
+        if ch == open_ch {
+            depth += 1;
+        } else if ch == close_ch {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(open + offset);
+            }
+        }
+    }
+    None
+}
+
+fn split_top_level(text: &str, sep: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, ch) in text.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            _ => {}
+        }
+        if ch == sep && depth == 0 {
+            parts.push(&text[start..i]);
+            start = i + ch.len_utf8();
+        }
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// Split a masked body into statement-sized chunks: a `;` at paren/bracket
+/// depth 0, or any brace (a block boundary, which also resets the depth).
+/// A `;` inside a type such as `[i32; 3]` is not a boundary, and neither is
+/// a `,` or `=` inside a generic (#14810 round 3).
+fn split_statements(text: &str) -> Vec<&str> {
+    split_statement_ranges(text)
+        .into_iter()
+        .map(|(start, end)| &text[start..end])
+        .collect()
+}
+
+/// [`split_statements`] as byte ranges, so a caller that splits the *masked*
+/// body can still read the raw statement at the same offsets - masking
+/// preserves byte length (#14810 round 3).
+fn split_statement_ranges(text: &str) -> Vec<(usize, usize)> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0;
+    for (i, ch) in text.char_indices() {
+        match ch {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth -= 1,
+            '{' | '}' => {
+                parts.push((start, i));
+                start = i + ch.len_utf8();
+                depth = 0;
+            }
+            ';' if depth == 0 => {
+                parts.push((start, i));
+                start = i + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push((start, text.len()));
+    parts
+}
+
+/// The first `=` at bracket depth 0, counting `()[]{}` and generic `<>`.
+/// `->` and `=>` do not close a generic, and `<=`/`<<` do not open one, so a
+/// type like `Box<dyn Iterator<Item = u8>>` yields the binding `=`, not the
+/// one inside `Item = u8` (#14810 round 3).
+fn find_top_level_eq(text: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut angle = 0i32;
+    let mut prev: Option<char> = None;
+    let mut iter = text.char_indices().peekable();
+    while let Some((i, ch)) = iter.next() {
+        let next = iter.peek().map(|(_, c)| *c);
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '<' => {
+                let opens = next != Some('=')
+                    && next != Some('<')
+                    && prev
+                        .is_some_and(|p| p.is_alphanumeric() || p == '_' || p == ':' || p == '>');
+                if opens {
+                    angle += 1;
+                }
+            }
+            '>' if angle > 0 && prev != Some('-') && prev != Some('=') => angle -= 1,
+            '=' if depth == 0 && angle == 0 => return Some(i),
+            _ => {}
+        }
+        prev = Some(ch);
+    }
+    None
+}
+
+/// The `let` binding's `(name, initializer)` when `line` is
+/// `let [mut] <ident>[: <type>] = <initializer>`.
+fn let_binding_parts(line: &str) -> Option<(&str, &str)> {
+    let rest = line.strip_prefix("let ")?.trim_start();
+    let rest = rest
+        .strip_prefix("mut ")
+        .map(str::trim_start)
+        .unwrap_or(rest);
+    let ident_end = rest
+        .char_indices()
+        .find(|(_, ch)| !ch.is_ascii_alphanumeric() && *ch != '_')
+        .map(|(i, _)| i)
+        .unwrap_or(rest.len());
+    if ident_end == 0 {
+        return None;
+    }
+    let var = &rest[..ident_end];
+    let after_var = rest[ident_end..].trim_start();
+    // Allow an optional type annotation: `let expected: i32 = todo!(..)`.
+    let after_colon = if after_var.starts_with(':') {
+        let eq = find_top_level_eq(after_var)?;
+        &after_var[eq..]
+    } else {
+        after_var
+    };
+    let after_eq = after_colon.strip_prefix('=')?.trim_start();
+    Some((var, after_eq.trim_end_matches(';').trim_start()))
+}
+
+/// Whether `initializer` is exactly a diverging placeholder macro call, so the
+/// value it would hold does not exist until a person writes it.
+fn is_diverging_placeholder(initializer: &str) -> bool {
+    ["todo!", "unimplemented!", "unreachable!", "panic!"]
+        .iter()
+        .any(|macro_name| initializer.starts_with(macro_name))
 }
 
 /// Return the slice of `stmt` starting at a `let ` token boundary (preceded by
@@ -2492,8 +2978,16 @@ fn extract_unwrap_err_binding(line: &str) -> Option<String> {
     let after_var = rest[ident_end..].trim_start();
     // Allow optional type annotation: `let err: MyError = ...`
     let after_colon = if after_var.starts_with(':') {
-        // Skip the type annotation up to the `=`
-        after_var.find('=').map(|i| &after_var[i..])?
+        // Skip the type annotation up to the binding `=` at depth 0. This is
+        // consistency with `let_binding_parts`, not a fixed defect: the tail
+        // after any `=` still ends in `.unwrap_err()`, so the return value is
+        // the same either way (#14810 round 3). Comments are masked first: an
+        // unbalanced `<` in a comment or a nested generic would otherwise
+        // leave the angle depth open and hide the `=`. Masking preserves byte
+        // length, so the index still slices `after_var`.
+        let masked = crate::analysis::extract::mask::mask_comments_and_strings(after_var);
+        let eq = find_top_level_eq(&masked)?;
+        &after_var[eq..]
     } else {
         after_var
     };
@@ -2516,23 +3010,14 @@ const UNWRAP_ERR_JOIN_LIMIT: usize = 16;
 /// line `offset`, including rustfmt-wrapped tails and same-row siblings.
 /// Extra lines are continuations of those statements, not later rows.
 /// `leftover` is same-row text that is not itself an uncompared error-side
-/// observer, so the generic assertion path can still read it.
+/// observer, so the generic assertion path can still read it. The caller
+/// gates on [`RowTables::window_mentions_err_unwrap`] so rows that cannot
+/// yield a fact skip the join and delimiter scans.
 fn uncompared_unwrap_err_facts_opening_on_line(
     body: &str,
     offset: usize,
     start_line: usize,
 ) -> Option<(Vec<OracleFact>, usize, Option<String>)> {
-    // Cheap textual gate: only rows whose bounded wrapped window mentions
-    // an error-side unwrap can yield a fact, so skip the join and delimiter
-    // scans for every other statement start.
-    let window_mentions_err_unwrap = body
-        .lines()
-        .skip(offset)
-        .take(UNWRAP_ERR_JOIN_LIMIT)
-        .any(|row| row.contains("unwrap_err") || row.contains("expect_err"));
-    if !window_mentions_err_unwrap {
-        return None;
-    }
     let (first, extra_lines, first_suffix) = take_semicolon_terminated_statement(body, offset)?;
     let suffix_line = offset.saturating_add(extra_lines);
     let mut statements = vec![(first, offset)];
@@ -2746,21 +3231,207 @@ fn is_unwrap_err_statement_continuation(joined_so_far: &str, next: &str) -> bool
     let depth = masked_group_depth(&masked);
     if depth == 0 {
         let incomplete_let = masked.trim_start().starts_with("let ") && masked.contains('=');
-        return incomplete_let && !is_assertion_line(next) && !next.starts_with("let ");
+        return incomplete_let && !may_start_assertion(next) && !next.starts_with("let ");
     }
-    !is_assertion_line(next) && !is_control_or_block_start(next) && !next.starts_with("let ")
+    !may_start_assertion(next) && !is_control_or_block_start(next) && !next.starts_with("let ")
 }
 
-/// Whether body line `offset` starts a statement: the previous non-empty
-/// line ends one. After `let e =` the next line is the value, not a
-/// discarded expression.
-fn starts_statement(body: &str, offset: usize) -> bool {
-    body.lines()
-        .take(offset)
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .last()
-        .is_none_or(|previous| previous.ends_with([';', '{', '}']))
+/// Per-row facts about a body, computed once per scan. Asking each row
+/// "does the previous non-empty line end a statement" or "does the bounded
+/// window mention an error-side unwrap" by re-walking the body from its top
+/// made a scan quadratic in body length: a 52,000-line Rust data file took
+/// minutes (#11895).
+struct RowTables {
+    /// Whether the previous non-empty line before each row ends a statement
+    /// (`;`, `{` or `}`); true when there is none. After `let e =` the next
+    /// line is the value, not a discarded expression.
+    starts_statement: Vec<bool>,
+    /// `err_rows_before[i]` counts rows before `i` mentioning `unwrap_err`
+    /// or `expect_err`.
+    err_rows_before: Vec<usize>,
+    /// Whether each row holds code outside comments and string literals, or
+    /// is blank. A row wholly inside a block comment or string opened on an
+    /// earlier row is not live (#7878).
+    live: Vec<bool>,
+    /// The whole body with comments and strings blanked, byte-aligned.
+    masked: String,
+    /// Byte offset where each body row starts.
+    row_starts: Vec<usize>,
+    /// Byte ranges `(open, close)` of each closure body brace in the masked
+    /// body; an unclosed one runs to the end (#7878).
+    closure_bodies: Vec<(usize, usize)>,
+}
+
+impl RowTables {
+    fn new(body: &str) -> Self {
+        let mut starts_statement = Vec::new();
+        let mut err_rows_before = vec![0];
+        let mut previous_ends_statement = true;
+        for row in body.lines() {
+            starts_statement.push(previous_ends_statement);
+            let trimmed = row.trim();
+            if !trimmed.is_empty() {
+                previous_ends_statement = trimmed.ends_with([';', '{', '}']);
+            }
+            let mentions = row.contains("unwrap_err") || row.contains("expect_err");
+            err_rows_before
+                .push(err_rows_before.last().copied().unwrap_or(0) + usize::from(mentions));
+        }
+        let masked = mask_comments_and_strings(body);
+        let live = body
+            .lines()
+            .zip(masked.lines())
+            .map(|(row, masked_row)| row.trim().is_empty() || !masked_row.trim().is_empty())
+            .collect();
+        let mut row_starts = vec![0];
+        row_starts.extend(
+            body.match_indices('\n')
+                .map(|(index, _)| index + 1)
+                .filter(|start| *start < body.len()),
+        );
+        let closure_bodies = closure_body_spans(&masked);
+        Self {
+            starts_statement,
+            err_rows_before,
+            live,
+            masked,
+            row_starts,
+            closure_bodies,
+        }
+    }
+
+    /// The body byte where column `column` of the trimmed statement row `text`
+    /// sits, when `text` is the trailing part of body row `row`.
+    fn body_byte(&self, body: &str, row: usize, text: &str, column: usize) -> Option<usize> {
+        let start = *self.row_starts.get(row)?;
+        let end = body[start..].find('\n').map_or(body.len(), |at| start + at);
+        let row_text = body[start..end].trim_end();
+        let text = text.trim_end();
+        if !row_text.ends_with(text) || column >= text.len() {
+            return None;
+        }
+        Some(start + row_text.len() - text.len() + column)
+    }
+
+    /// Whether body byte `at` is code: the whole-body mask kept it.
+    fn is_live_byte(&self, body: &str, at: usize) -> bool {
+        let byte = body.as_bytes().get(at).copied();
+        byte.is_some_and(|byte| !byte.is_ascii_whitespace())
+            && self.masked.as_bytes().get(at).copied() == byte
+    }
+
+    /// `statement` (whose first row is body row `first_row`) without the part
+    /// of that first row that a block comment or string opened on an earlier
+    /// row still covers: `*/ expect![..].assert_eq(..)` reads from `expect`, and
+    /// a comparison before `// */ code` drops out (#7878).
+    fn without_dead_prefix(&self, body: &str, statement: &str, first_row: usize) -> String {
+        let (head, tail) = statement.split_once('\n').unwrap_or((statement, ""));
+        let Some(start) = self.body_byte(body, first_row, head, 0) else {
+            return statement.to_string();
+        };
+        if head.is_empty() || self.is_live_byte(body, start) {
+            return statement.to_string();
+        }
+        let cut = (0..head.len())
+            .find(|column| {
+                head.is_char_boundary(*column) && self.is_live_byte(body, start + column)
+            })
+            .unwrap_or(head.len());
+        let mut live = head[cut..].to_string();
+        if statement.contains('\n') {
+            live.push('\n');
+            live.push_str(tail);
+        }
+        live
+    }
+
+    /// Whether some expect-test comparison `statement` holds (first row at
+    /// body row `first_row`) has a receiver that is live code outside any
+    /// closure, including a closure body opened on an earlier row (#7878).
+    /// A receiver that cannot be placed in the body is refused.
+    fn admits_expect_receiver(&self, body: &str, statement: &str, first_row: usize) -> bool {
+        crate::analysis::syntax::ra::expect_test_comparison_receiver_offsets(statement)
+            .into_iter()
+            .any(|offset| {
+                let row = statement[..offset].matches('\n').count();
+                let row_start = statement[..offset].rfind('\n').map_or(0, |at| at + 1);
+                let row_end = statement[row_start..]
+                    .find('\n')
+                    .map_or(statement.len(), |at| row_start + at);
+                let Some(at) = self.body_byte(
+                    body,
+                    first_row + row,
+                    &statement[row_start..row_end],
+                    offset - row_start,
+                ) else {
+                    return false;
+                };
+                self.is_live_byte(body, at)
+                    && !closure_head_precedes(&self.masked[..at])
+                    && !self
+                        .closure_bodies
+                        .iter()
+                        .any(|(open, close)| *open < at && at < *close)
+            })
+    }
+
+    /// Whether body line `offset` holds live code (true past the table).
+    fn is_live(&self, offset: usize) -> bool {
+        self.live.get(offset).copied().unwrap_or(true)
+    }
+
+    /// Whether body line `offset` starts a statement.
+    fn starts_statement(&self, offset: usize) -> bool {
+        self.starts_statement.get(offset).copied().unwrap_or(true)
+    }
+
+    /// Whether the bounded wrapped window opening at `offset` mentions an
+    /// error-side unwrap.
+    fn window_mentions_err_unwrap(&self, offset: usize) -> bool {
+        let rows = self.err_rows_before.len().saturating_sub(1);
+        let start = offset.min(rows);
+        let end = offset.saturating_add(UNWRAP_ERR_JOIN_LIMIT).min(rows);
+        self.err_rows_before[end] > self.err_rows_before[start]
+    }
+}
+
+/// Whether masked text ending at a brace or expression ends a closure head:
+/// `|..|` or `|..| -> Type`. A `||` boolean operator before a block also
+/// matches, which only withholds credit.
+fn closure_head_precedes(masked_before: &str) -> bool {
+    let before = masked_before.trim_end();
+    if before.ends_with('|') {
+        return true;
+    }
+    before.rfind("->").is_some_and(|arrow| {
+        !before[arrow + 2..].contains([';', '{', '}', '|'])
+            && before[..arrow].trim_end().ends_with('|')
+    })
+}
+
+/// The `(open, close)` byte ranges of closure body braces in `masked`; an
+/// unclosed closure brace runs to the end of the text (#7878).
+fn closure_body_spans(masked: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut open_braces: Vec<Option<usize>> = Vec::new();
+    for (index, byte) in masked.bytes().enumerate() {
+        match byte {
+            b'{' => open_braces.push(closure_head_precedes(&masked[..index]).then_some(index)),
+            b'}' => {
+                if let Some(Some(open)) = open_braces.pop() {
+                    spans.push((open, index));
+                }
+            }
+            _ => {}
+        }
+    }
+    spans.extend(
+        open_braces
+            .into_iter()
+            .flatten()
+            .map(|open| (open, masked.len())),
+    );
+    spans
 }
 
 /// RIPR-SPEC-0227 decision 2: a semicolon-terminated statement whose value
@@ -3129,6 +3800,32 @@ fn append_matcher_free_statement(statement: &str, output: &mut String, depth: us
     output.extend(std::iter::repeat_n('\n', remaining_lines));
 }
 
+const EXPECT_COMPARISON_METHODS: [&str; 3] =
+    [".assert_eq(", ".assert_debug_eq(", ".assert_json_eq("];
+
+fn without_whitespace(text: &str) -> String {
+    text.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn has_expect_receiver_macro(compact: &str) -> bool {
+    compact.contains("expect![") || compact.contains("expect_file![")
+}
+
+fn has_expect_comparison_method(compact: &str) -> bool {
+    EXPECT_COMPARISON_METHODS
+        .iter()
+        .any(|method| compact.contains(method))
+}
+
+fn may_start_assertion(line: &str) -> bool {
+    // Admission may see only the first line of a comparison. The snapshot
+    // classifier checks the complete joined statement and its receiver.
+    let compact = without_whitespace(line);
+    let expect_comparison_start =
+        has_expect_receiver_macro(&compact) && has_expect_comparison_method(&compact);
+    expect_comparison_start || is_assertion_line(line)
+}
+
 fn is_assertion_line(line: &str) -> bool {
     line.contains("assert!")
         || line.contains("assert_eq!")
@@ -3227,6 +3924,100 @@ mod spec_0106_scan_tests {
     }
 
     #[test]
+    fn unwrap_err_binding_survives_a_semicolon_inside_an_array_argument() {
+        // #14810 round 3: the statement split is depth-aware, so the `;` in
+        // `&[1; 3]` does not cut the binding in half.
+        let body = r"
+            let err = compute(&[1; 3]).unwrap_err();
+            assert_eq!(err, CalcError::Negative);
+        ";
+        let vars = unwrap_err_bound_variables(body);
+        assert!(
+            vars.contains("err"),
+            "a `;` inside an array argument must not hide the unwrap_err binding: {vars:?}"
+        );
+    }
+
+    #[test]
+    fn unwrap_err_binding_survives_brackets_in_strings_and_comments() {
+        for receiver in [
+            r#"parse("(")"#,
+            r#"parse(")")"#,
+            r#"parse("{")"#,
+            r#"parse("}")"#,
+            r#"parse("x") /* ( */ "#,
+            r#"parse("x")"#,
+        ] {
+            let body = format!("let err = {receiver}.unwrap_err(); assert_eq!(err, E::Unclosed);");
+            let vars = unwrap_err_bound_variables(&body);
+            assert!(
+                vars.contains("err"),
+                "expected an unwrap_err binding for {receiver}: {vars:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unwrap_err_binding_distinguishes_square_brackets_in_strings_from_syntax() {
+        for (quoted, bare) in [(r#""[""#, "["), (r#""]""#, "]")] {
+            let body =
+                |arg| format!("let err = parse({arg}).unwrap_err(); assert_eq!(err, E::Unclosed);");
+            let quoted_vars = unwrap_err_bound_variables(&body(quoted));
+            assert!(
+                quoted_vars.contains("err"),
+                "a square bracket in the string argument {quoted} must preserve the binding: {quoted_vars:?}"
+            );
+
+            let bare_vars = unwrap_err_bound_variables(&body(bare));
+            assert!(
+                bare_vars.is_empty(),
+                "unmatched square bracket syntax {bare} must leave the binding unrecognized: {bare_vars:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn extract_assertions_keeps_the_discriminator_after_a_bracket_in_a_string() {
+        // End-to-end shape of the same defect: the unit test above pins the
+        // collected name, this pins what the consumer does with it. Without the
+        // binding the assertion is still reported, but as a plain value instead
+        // of an error-variant oracle, so the seam claims a missing
+        // discriminator it has.
+        let body = r#"
+            let err = parse("(").unwrap_err();
+            assert_eq!(err, E::Unclosed);
+        "#;
+        let facts = extract_assertions(body, 1);
+        let actual: Vec<_> = facts
+            .iter()
+            .map(|fact| (fact.line, fact.text.as_str(), &fact.kind))
+            .collect();
+        assert_eq!(
+            actual,
+            [(
+                3,
+                "assert_eq!(err, E::Unclosed);",
+                &OracleKind::ExactErrorVariant
+            )]
+        );
+    }
+
+    #[test]
+    fn unwrap_err_binding_survives_an_unbalanced_angle_in_a_comment() {
+        // #14810 round 3: the comment's `<` must not leave the angle depth
+        // open and hide the binding `=`.
+        let body = r"
+            let err: MyErr /* Array<T */ = compute(-1).unwrap_err();
+            assert_eq!(err, CalcError::Negative);
+        ";
+        let vars = unwrap_err_bound_variables(body);
+        assert!(
+            vars.contains("err"),
+            "an unbalanced `<` in a comment must not hide the unwrap_err binding: {vars:?}"
+        );
+    }
+
+    #[test]
     fn expect_err_binding_also_recognized() {
         let body = r#"
             let err = compute(-1).expect_err("should fail");
@@ -3240,6 +4031,106 @@ mod spec_0106_scan_tests {
     }
 
     // Control 1 end-to-end: extract_assertions upgrades the oracle kind to ExactErrorVariant.
+    #[test]
+    fn multiline_expect_comparison_is_joined_before_classification() {
+        let facts = extract_assertions("expect![[\"x\"]].assert_eq(\n    &render(4));", 1);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].kind, OracleKind::Snapshot);
+        assert_eq!(facts[0].strength, OracleStrength::Medium);
+    }
+
+    #[test]
+    fn expect_comparisons_are_read_in_their_lexical_context() {
+        for body in [
+            "/*\nexpect![\"x\"].assert_eq(&render(4));\n*/",
+            "let note = r#\"\nexpect![\"x\"].assert_eq(&render(4));\n\"#;",
+        ] {
+            let facts = extract_assertions(body, 1);
+            assert!(
+                facts.iter().all(|fact| fact.kind != OracleKind::Snapshot),
+                "{body}: {facts:?}"
+            );
+        }
+        for body in [
+            "expect![\"x\"]\n    .assert_eq(&render(4));",
+            "expect![[\"x\"]].assert_eq(&render(4).replace(\"w\", \"v\"));",
+        ] {
+            let facts = extract_assertions(body, 1);
+            assert_eq!(facts.len(), 1, "{body}: {facts:?}");
+            assert_eq!(facts[0].kind, OracleKind::Snapshot, "{body}");
+            assert_eq!(facts[0].strength, OracleStrength::Medium, "{body}");
+        }
+    }
+
+    fn assert_no_snapshot(body: &str) {
+        let facts = extract_assertions(body, 1);
+        assert!(
+            facts.iter().all(|fact| fact.kind != OracleKind::Snapshot),
+            "{body}: {facts:?}"
+        );
+    }
+
+    fn assert_one_medium_snapshot(body: &str) {
+        let facts = extract_assertions(body, 1);
+        assert_eq!(facts.len(), 1, "{body}: {facts:?}");
+        assert_eq!(facts[0].kind, OracleKind::Snapshot, "{body}");
+        assert_eq!(facts[0].strength, OracleStrength::Medium, "{body}");
+    }
+
+    #[test]
+    fn expect_comparisons_in_a_closure_body_opened_earlier_are_not_snapshot_oracles() {
+        for body in [
+            "let check = || {\nexpect![\"x\"].assert_eq(&render(4));\n};\nlet _ = check;",
+            "let check = move |x: u32| {\n    expect![[\"x\"]].assert_eq(&render(x));\n};\nlet _ = check;",
+            "let check = |x: u32| -> () {\nexpect![\"x\"]\n    .assert_eq(&render(x));\n};\nlet _ = check;",
+            "let check = ||\n    expect![\"x\"].assert_eq(&render(4));\nlet _ = check;",
+        ] {
+            assert_no_snapshot(body);
+        }
+        // A closure that has already closed leaves the next row in plain code.
+        assert_one_medium_snapshot(
+            "let check = || { 1 };\nexpect![\"x\"].assert_eq(&render(check()));",
+        );
+    }
+
+    #[test]
+    fn expect_comparisons_on_a_row_closing_a_block_comment_read_its_live_part() {
+        assert_no_snapshot("/*\nexpect![\"x\"].assert_eq(&render(4)); // */ let marker = 0;");
+        assert_one_medium_snapshot("/* the old snapshot\n*/ expect![\"x\"].assert_eq(&render(4));");
+        // Live code after the closing comment keeps its own admission.
+        let facts = extract_assertions(
+            "/*\nexpect![\"x\"].assert_eq(&render(4)); */ assert_eq!(render(4), \"w12\");",
+            1,
+        );
+        assert_eq!(facts.len(), 1, "{facts:?}");
+        assert_eq!(facts[0].text, "assert_eq!(render(4), \"w12\");");
+        assert_ne!(facts[0].kind, OracleKind::Snapshot);
+    }
+
+    #[test]
+    fn expect_comparison_complete_after_its_receiver_rows_is_committed() {
+        for body in [
+            "expect![[\n    \"x\"\n]].assert_eq(&render(4));",
+            "expect![[\n    \"x\"\n]].assert_eq(&render(4));\nlet after = 1;",
+        ] {
+            assert_one_medium_snapshot(body);
+        }
+    }
+
+    #[test]
+    fn unrelated_or_unrun_comparisons_are_not_snapshot_oracles() {
+        for body in [
+            r#"expect!["x"]; other.assert_eq(&render(4));"#,
+            r#"let unused = || expect!["x"].assert_eq(&render(4));"#,
+        ] {
+            let facts = extract_assertions(body, 1);
+            assert!(
+                facts.iter().all(|fact| fact.kind != OracleKind::Snapshot),
+                "{body}: {facts:?}"
+            );
+        }
+    }
+
     #[test]
     fn extract_assertions_upgrades_unwrap_err_variant_to_exact_error_variant() {
         let body = r"
@@ -5039,8 +5930,9 @@ mod err_guard_parity_tests {
             let twin =
                 err_return_guard_assertion(&guard).ok_or("balanced guard has no assertion twin")?;
             assert!(twin.contains(condition), "operand text changed: {twin}");
-            let fact = terminal_err_return_guard_oracle(&guard, 6)
-                .ok_or("balanced guard has no oracle")?;
+            let fact =
+                terminal_err_return_guard_oracle(&guard, 6, &std::collections::BTreeSet::new())
+                    .ok_or("balanced guard has no oracle")?;
             assert_eq!(fact.line, 6);
             assert_eq!(fact.kind, kind, "{guard}");
             assert_eq!(fact.strength, strength, "{guard}");
@@ -5052,7 +5944,10 @@ mod err_guard_parity_tests {
         }
         let ordinary_call = "if !matches!(value, 2) { returnErr(()); }";
         assert!(err_return_guard_assertion(ordinary_call).is_none());
-        assert!(terminal_err_return_guard_oracle(ordinary_call, 6).is_none());
+        assert!(
+            terminal_err_return_guard_oracle(ordinary_call, 6, &std::collections::BTreeSet::new())
+                .is_none()
+        );
         Ok(())
     }
 
@@ -5080,7 +5975,8 @@ mod err_guard_parity_tests {
                 "{statement}"
             );
             assert!(
-                terminal_err_return_guard_oracle(statement, 6).is_none(),
+                terminal_err_return_guard_oracle(statement, 6, &std::collections::BTreeSet::new())
+                    .is_none(),
                 "{statement}"
             );
             assert!(extract_assertions(statement, 6).is_empty(), "{statement}");
@@ -5091,8 +5987,9 @@ mod err_guard_parity_tests {
             "if !matches!(value, 2) { return Err(()) /* failure */; }",
             "if !matches!(value, 2) { return Err(()) /* failure */ }",
         ] {
-            let fact = terminal_err_return_guard_oracle(statement, 6)
-                .ok_or("genuine terminal Err rejected")?;
+            let fact =
+                terminal_err_return_guard_oracle(statement, 6, &std::collections::BTreeSet::new())
+                    .ok_or("genuine terminal Err rejected")?;
             assert_eq!(fact.kind, OracleKind::ExactValue, "{statement}");
             assert_eq!(fact.strength, OracleStrength::Strong, "{statement}");
         }
@@ -5125,7 +6022,8 @@ mod err_guard_parity_tests {
             "if !matches!(value, 2) { let _prior = (); return Err(()); }",
         ] {
             assert!(
-                terminal_err_return_guard_oracle(statement, 10).is_none(),
+                terminal_err_return_guard_oracle(statement, 10, &std::collections::BTreeSet::new())
+                    .is_none(),
                 "{statement}"
             );
             assert!(
@@ -5511,5 +6409,696 @@ mod call_path_tests {
             super::uncompared_unwrap_err("let _ = f(a).unwrap_err();", ""),
             Some("f(a).unwrap_err()".to_string())
         );
+    }
+}
+
+#[cfg(test)]
+mod row_tables_tests {
+    use super::RowTables;
+
+    /// #11895: the per-row tables answer exactly what re-walking the body
+    /// from its top answered, without the quadratic walk.
+    #[test]
+    fn row_tables_match_the_previous_non_empty_line_and_window_reading() -> Result<(), String> {
+        let body = "let e =\n    f().unwrap_err();\n\n// note\nlet x = 1;\nfoo()\n{\n}\nbar();\n";
+        let tables = RowTables::new(body);
+        let rows: Vec<&str> = body.lines().collect();
+        for offset in 0..rows.len() {
+            let expected = rows[..offset]
+                .iter()
+                .map(|row| row.trim())
+                .rfind(|row| !row.is_empty())
+                .is_none_or(|previous| previous.ends_with([';', '{', '}']));
+            if tables.starts_statement(offset) != expected {
+                return Err(format!("row {offset} starts_statement != {expected}"));
+            }
+            let window = rows
+                .iter()
+                .skip(offset)
+                .take(super::UNWRAP_ERR_JOIN_LIMIT)
+                .any(|row| row.contains("unwrap_err") || row.contains("expect_err"));
+            if tables.window_mentions_err_unwrap(offset) != window {
+                return Err(format!("row {offset} window mention != {window}"));
+            }
+        }
+        // `after let e =` the next row is the value, not a statement start.
+        if tables.starts_statement(1) {
+            return Err("the row after `let e =` must not start a statement".to_string());
+        }
+        // The window is bounded: a mention beyond the join limit is not seen.
+        let far = format!(
+            "{}x.unwrap_err();\n",
+            "a;\n".repeat(super::UNWRAP_ERR_JOIN_LIMIT)
+        );
+        if RowTables::new(&far).window_mentions_err_unwrap(0) {
+            return Err("a mention past the join limit must not open the window".to_string());
+        }
+        // The last row inside the window is seen, and an offset past the end
+        // sees nothing.
+        let edge = format!(
+            "{}x.unwrap_err();\n",
+            "a;\n".repeat(super::UNWRAP_ERR_JOIN_LIMIT - 1)
+        );
+        let edge_tables = RowTables::new(&edge);
+        if !edge_tables.window_mentions_err_unwrap(0) {
+            return Err("a mention on the last windowed row must open the window".to_string());
+        }
+        if edge_tables.window_mentions_err_unwrap(1_000) {
+            return Err("an offset past the end must not open the window".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod unfilled_expected_tests {
+    use super::*;
+    use crate::domain::{OracleKind, OracleStrength};
+
+    /// The `ripr agent stub --write` template: the expected value is still a
+    /// `todo!()`, so the assertion cannot fail for a wrong result (#14810).
+    const STUB_BODY: &str = r#"
+fn price_boundary_discriminator() {
+    use super::*;
+    let amount: u32 = 100;
+    let threshold: u32 = 100;
+    let expected: u32 = todo!("ripr: write the value `price` should return");
+    assert_eq!(price(amount, threshold), expected);
+}
+"#;
+
+    fn only_fact(body: &str) -> Result<OracleFact, String> {
+        let facts = extract_assertions(body, 1);
+        if facts.len() != 1 {
+            return Err(format!("expected one oracle, got {facts:?}"));
+        }
+        facts
+            .into_iter()
+            .next()
+            .ok_or_else(|| "expected one oracle".to_string())
+    }
+
+    #[test]
+    fn an_unfilled_stub_expected_value_earns_no_strong_credit() -> Result<(), String> {
+        let fact = only_fact(STUB_BODY)?;
+        if fact.kind != OracleKind::Unknown || fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "an unfilled todo!() expected value must not read as a discriminator: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_message_word_that_matches_the_placeholder_keeps_its_credit() -> Result<(), String> {
+        // #14810 round 3: the token scan must not read the assertion message.
+        // `expected` here is a word in the message, not a read of the local.
+        let body = r#"
+fn price_boundary_discriminator() {
+    use super::*;
+    let expected: u32 = todo!("x");
+    assert_eq!(price(10), 7, "expected total");
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a message word must not lower a concrete assertion: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn raw_literal_braces_only_read_in_format_arguments() -> Result<(), String> {
+        for (operand, reads) in [
+            (r##"r#"{"expected":1}"#"##, false),
+            (r#"r"{expected}""#, false),
+            (r#"format!("{expected}")"#, true),
+            (r#"format!("{{expected}}")"#, false),
+            (r#"format!(r"{expected}")"#, true),
+            (r#"format!("{}", r"{expected}")"#, false),
+            (r#"format!("{}", expected)"#, true),
+        ] {
+            let body = format!(
+                "fn t() {{\n let expected: i32 = todo!(\"x\");\n assert_eq!(price(100), {operand});\n}}"
+            );
+            let fact = only_fact(&body)?;
+            if reads {
+                assert_eq!(
+                    (fact.kind, fact.strength),
+                    (OracleKind::Unknown, OracleStrength::Unknown),
+                    "{operand}"
+                );
+            } else {
+                assert_eq!(fact.strength, OracleStrength::Strong, "{operand}");
+                if operand.starts_with('r') {
+                    assert_eq!(fact.kind, OracleKind::ExactValue, "{operand}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn macro_operands_read_templates_and_evaluated_values() {
+        let placeholders = std::collections::BTreeSet::from([String::from("expected")]);
+        for (operand, reads) in [
+            (r#"write!(sink(), r"{expected}")"#, true),
+            (r#"write!(sink(), "{}", r"{expected}")"#, false),
+            (r#"write!(sink(), "{}", expected)"#, true),
+            (r#"concat!(r"{expected}")"#, false),
+            (r#"render!("{expected}")"#, true),
+        ] {
+            let assertion = format!("assert_eq!(result(), {operand})");
+            assert_eq!(
+                super::super::classify::assertion_reads_placeholder(&assertion, &placeholders),
+                reads,
+                "{operand}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_placeholder_read_through_a_format_interpolation_still_lowers() -> Result<(), String> {
+        // #14810 round 3: `format!("{expected}")` reads the placeholder, so
+        // masking the literal must not hide it.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(format!("{expected}"), "9_990");
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a format interpolation reads the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_semicolon_inside_the_type_does_not_hide_the_placeholder() -> Result<(), String> {
+        // #14810 round 3: the statement split must not break on the `;` in
+        // `[i32; 3]`, or the initializer is never seen.
+        let body = r#"
+fn t() {
+    let expected: [i32; 3] = todo!("x");
+    assert_eq!(price(10), expected);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a `;` inside the type must not hide the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_equals_inside_the_generic_does_not_hide_the_placeholder() -> Result<(), String> {
+        // #14810 round 3: the binding `=` must be the one at bracket depth 0,
+        // not the `=` in `Item = u8`.
+        let body = r#"
+fn t() {
+    let expected: Box<dyn Iterator<Item = u8>> = todo!("x");
+    assert_eq!(price(10), expected);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "an `=` inside the generic must not hide the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_semicolon_inside_an_array_length_does_not_hide_the_placeholder() -> Result<(), String> {
+        // #14810 round 3: `[u8; 32]` is a shape `agent stub --write` can
+        // actually emit (`u8` is std, `32` is a digit), so the depth-aware
+        // split must keep it one statement.
+        let body = r#"
+fn t() {
+    let expected: [u8; 32] = todo!("x");
+    assert_eq!(price(10), expected);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a `;` inside the array length must not hide the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_equality_operator_in_the_initializer_is_not_the_binding() -> Result<(), String> {
+        // #14810 round 3: the binding `=` is the first at depth 0, so the
+        // `==` in the initializer is never mistaken for it. The placeholder
+        // must survive that split: reading the last `=` instead would leave
+        // `price(10)` as the initializer and wrongly keep a strong exact credit.
+        let body = r#"
+fn t() {
+    let expected: bool = todo!("x") == price(10);
+    assert_eq!(flag(), expected);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.kind != OracleKind::Unknown || fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a misplaced `=` split must not hide the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_string_literal_operand_is_not_a_read() -> Result<(), String> {
+        // #14810 round 3: `"expected"` is text, not a read of the local.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(result(), "expected");
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a string literal operand must not lower the assertion: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_comment_inside_an_operand_is_not_a_read() -> Result<(), String> {
+        // #14810 round 3: a comment is not a read of the local.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(result(), 7 /* expected */);
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a comment inside an operand must not lower the assertion: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_escaped_brace_in_a_format_string_is_not_a_read() -> Result<(), String> {
+        // #14810 round 3: `{{expected}}` is the literal text `{expected}`.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(result(), format!("{{expected}}"));
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "an escaped brace must not lower the assertion: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_format_spec_interpolation_is_a_read() -> Result<(), String> {
+        // #14810 round 3: `{expected:?}` still reads the local.
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("x");
+    assert_eq!(result(), format!("{expected:?}"));
+}
+"#;
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a format-spec interpolation reads the placeholder: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_filled_expected_value_keeps_its_strong_credit() -> Result<(), String> {
+        let filled = STUB_BODY.replace(
+            r#"let expected: u32 = todo!("ripr: write the value `price` should return");"#,
+            "let expected: u32 = 9_990;",
+        );
+        let fact = only_fact(&filled)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a filled expected value must keep its exact credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_real_expression_expected_value_keeps_its_strong_credit() -> Result<(), String> {
+        let computed = STUB_BODY.replace(
+            r#"let expected: u32 = todo!("ripr: write the value `price` should return");"#,
+            "let expected: u32 = price(amount, threshold);",
+        );
+        let fact = only_fact(&computed)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a real expression expected value must keep its exact credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn every_diverging_placeholder_macro_is_read() -> Result<(), String> {
+        for macro_name in ["todo!", "unimplemented!", "unreachable!", "panic!"] {
+            let body = STUB_BODY.replace(
+                r#"todo!("ripr: write the value `price` should return")"#,
+                &format!(r#"{macro_name}("ripr: write the value")"#),
+            );
+            let fact = only_fact(&body)?;
+            if fact.strength != OracleStrength::Unknown {
+                return Err(format!(
+                    "`{macro_name}` must not earn strong credit: {fact:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn an_assertion_that_does_not_read_the_placeholder_keeps_its_credit() -> Result<(), String> {
+        let body = STUB_BODY.replace(
+            "assert_eq!(price(amount, threshold), expected);",
+            "assert_eq!(price(amount, threshold), 9_990);",
+        );
+        let fact = only_fact(&body)?;
+        if fact.kind != OracleKind::ExactValue || fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "an assertion that never reads the placeholder must keep its credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_placeholder_bound_name_is_collected_from_a_single_line_body() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: u32 = todo!(\"x\"); assert_eq!(price(1), expected); }",
+        );
+        assert!(vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_second_binding_of_the_same_name_drops_it() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: u32 = todo!(\"x\"); let expected: u32 = 9_990; }",
+        );
+        assert!(vars.is_empty(), "{vars:?}");
+    }
+
+    #[test]
+    fn a_placeholder_in_a_comment_or_string_is_not_a_binding() {
+        let vars = placeholder_bound_variables(
+            "fn t() { // let expected: u32 = todo!(\"x\");\n let note = \"let expected = todo!()\"; }",
+        );
+        assert!(vars.is_empty(), "{vars:?}");
+    }
+
+    /// #14810 round 2: a non-`let` binding of the same name holds a real value
+    /// at the assertion, so the name must not be lowered.
+    #[test]
+    fn a_closure_parameter_of_the_same_name_drops_the_lowering() -> Result<(), String> {
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("ripr: write the value");
+    let check = |expected: i32| assert_eq!(price(10_000), expected);
+    check(9_990);
+}
+"#;
+        let vars = placeholder_bound_variables(body);
+        if vars.contains("expected") {
+            return Err(format!(
+                "a closure parameter must drop the lowering: {vars:?}"
+            ));
+        }
+        let fact = only_fact(body)?;
+        if fact.strength != OracleStrength::Strong {
+            return Err(format!(
+                "a closure parameter keeps today's credit: {fact:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_match_arm_binding_of_the_same_name_drops_the_lowering() {
+        let body = r#"
+fn t() {
+    let expected: i32 = todo!("ripr: write the value");
+    match price(10_000) {
+        expected => assert_eq!(expected, 9_990),
+    }
+}
+"#;
+        let vars = placeholder_bound_variables(body);
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_function_parameter_of_the_same_name_drops_the_lowering() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); } fn helper(expected: i32) -> i32 { expected }",
+        );
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_for_pattern_of_the_same_name_drops_the_lowering() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); for expected in [1, 2] { assert_eq!(expected, 1); } }",
+        );
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn an_if_let_pattern_of_the_same_name_drops_the_lowering() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); if let Some(expected) = f() { assert_eq!(expected, 1); } }",
+        );
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_destructuring_let_of_the_same_name_drops_the_lowering() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); let (expected, other) = pair(); }",
+        );
+        assert!(!vars.contains("expected"), "{vars:?}");
+    }
+
+    #[test]
+    fn a_placeholder_with_no_other_binding_still_lowers() {
+        let vars = placeholder_bound_variables(
+            "fn t() { let expected: i32 = todo!(\"x\"); assert_eq!(price(1), expected); }",
+        );
+        assert!(vars.contains("expected"), "{vars:?}");
+    }
+
+    /// #14882: a terminal `Err` guard stands for `assert!(price(..) ==
+    /// expected)`, so an unfilled `expected` pins nothing on either adapter
+    /// path, while a real value keeps the twin's `relational_check` reading,
+    /// which the owner return pin may raise.
+    fn guard_body(initializer: &str) -> String {
+        format!(
+            "
+fn boundary() -> Result<(), String> {{
+    let expected: i32 = {initializer};
+    if price(100, 100) != expected {{
+        return Err(\"wrong\".into());
+    }}
+    Ok(())
+}}
+"
+        )
+    }
+
+    fn guard_readings(body: &str) -> Result<[(OracleKind, OracleStrength); 2], String> {
+        let lexical = only_fact(body)?;
+        let parser =
+            err_return_guard_oracles(body, 1, &super::super::PlaceholderScope::from_body(body));
+        let [parser] = parser.as_slice() else {
+            return Err(format!(
+                "expected one parser-path guard oracle, got {parser:?}"
+            ));
+        };
+        if !lexical.text.starts_with("if price(100, 100) != expected") {
+            return Err(format!(
+                "premise: the lexical oracle is the guard, got {lexical:?}"
+            ));
+        }
+        Ok([
+            (lexical.kind, lexical.strength),
+            (parser.kind.clone(), parser.strength.clone()),
+        ])
+    }
+
+    #[test]
+    fn a_terminal_guard_on_an_unfilled_expected_value_earns_no_strong_credit() -> Result<(), String>
+    {
+        for placeholder in ["todo!(\"write the value\")", "unimplemented!()"] {
+            let body = guard_body(placeholder);
+            for reading in guard_readings(&body)? {
+                if reading != (OracleKind::Unknown, OracleStrength::Unknown) {
+                    return Err(format!(
+                        "a guard on an unfilled {placeholder} must not read as a discriminator: {reading:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_terminal_guard_on_a_real_expected_value_keeps_its_reading() -> Result<(), String> {
+        let body = guard_body("90");
+        for reading in guard_readings(&body)? {
+            if reading != (OracleKind::RelationalCheck, OracleStrength::Weak) {
+                return Err(format!(
+                    "a guard on a real expected value keeps its twin's reading: {reading:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #14882: the weak `assert!(a == expected)` reading is lowered too,
+    /// because the owner return pin raises it to strong for the probe.
+    #[test]
+    fn a_weak_equality_on_an_unfilled_expected_value_is_lowered() -> Result<(), String> {
+        let lowered = only_fact(
+            "
+fn t() {
+    let expected: i32 = todo!(\"x\");
+    assert!(price(100) == expected);
+}
+",
+        )?;
+        if lowered.kind != OracleKind::Unknown || lowered.strength != OracleStrength::Unknown {
+            return Err(format!(
+                "a weak read of a placeholder pins nothing: {lowered:?}"
+            ));
+        }
+        let kept = only_fact(
+            "
+fn t() {
+    let expected: i32 = 90;
+    assert!(price(100) == expected);
+}
+",
+        )?;
+        if kept.kind != OracleKind::RelationalCheck {
+            return Err(format!(
+                "a filled value keeps its relational reading: {kept:?}"
+            ));
+        }
+        // A placeholder the assertion never reads lowers nothing.
+        let unrelated = only_fact(
+            "
+fn t() {
+    let later: i32 = todo!(\"x\");
+    assert!(price(100) == 90);
+}
+",
+        )?;
+        if unrelated.kind != OracleKind::RelationalCheck {
+            return Err(format!(
+                "an unread placeholder keeps the relational reading: {unrelated:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// #14882 review: a member or path segment that shares the placeholder's
+    /// name is not a read of the local, and neither is the brace text of an
+    /// ordinary string literal. A root read through a field is still a read.
+    #[test]
+    fn only_a_real_read_of_the_placeholder_lowers() -> Result<(), String> {
+        let reading = |statement: &str| -> Result<(OracleKind, OracleStrength), String> {
+            let body = format!(
+                "fn t() -> Result<(), String> {{\n    let expected: i32 = todo!(\"x\");\n    {statement}\n    Ok(())\n}}\n"
+            );
+            let lexical = only_fact(&body)?;
+            let parser = err_return_guard_oracles(
+                &body,
+                1,
+                &super::super::PlaceholderScope::from_body(&body),
+            );
+            if statement.starts_with("if ") {
+                let [parser] = parser.as_slice() else {
+                    return Err(format!(
+                        "expected one guard oracle for {statement}: {parser:?}"
+                    ));
+                };
+                if (parser.kind.clone(), parser.strength.clone())
+                    != (lexical.kind.clone(), lexical.strength.clone())
+                {
+                    return Err(format!(
+                        "lexical and parser guard readings disagree for {statement}: {lexical:?} vs {parser:?}"
+                    ));
+                }
+            }
+            Ok((lexical.kind, lexical.strength))
+        };
+        for kept in [
+            "assert!(price(100) == fixture.expected);",
+            "assert!(price(100) == Self::expected);",
+            "assert!(render() == \"{expected}\");",
+            "if render() != \"{expected}\" { return Err(\"wrong\".into()); }",
+            "if price(100) != fixture.expected { return Err(\"wrong\".into()); }",
+        ] {
+            let got = reading(kept)?;
+            if got.1 == OracleStrength::Unknown {
+                return Err(format!("{kept} does not read the placeholder: {got:?}"));
+            }
+        }
+        for lowered in [
+            "assert!(price(100) == expected.value);",
+            "assert!(render() == format!(\"{expected}\"));",
+            "if price(100) != expected.value { return Err(\"wrong\".into()); }",
+        ] {
+            let got = reading(lowered)?;
+            if got != (OracleKind::Unknown, OracleStrength::Unknown) {
+                return Err(format!("{lowered} reads the placeholder: {got:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// A smoke reading claims no comparison and keeps its kind.
+    #[test]
+    fn a_smoke_reading_of_a_placeholder_keeps_its_kind() -> Result<(), String> {
+        let fact = only_fact(
+            "
+fn t() {
+    let expected: Option<i32> = todo!(\"x\");
+    assert!(expected.is_some());
+}
+",
+        )?;
+        if fact.kind == OracleKind::Unknown {
+            return Err(format!("a smoke reading is not lowered: {fact:?}"));
+        }
+        Ok(())
     }
 }

@@ -1,0 +1,2 @@
+crates/ripr/tests/diff_json_schema.rs|Command::new|2|cli-tests|#14067: the diff schema conformance tests run the worktree-built binary (CARGO_BIN_EXE_ripr) with `diff --json` against an isolated temporary fixture repository, once for reports and once for refusals; no shell, network or mutation outside the fixture root.
+crates/ripr/tests/diff_json_schema.rs|use std::process::Command|1|cli-tests|#14067: import for the exact-binary `diff --json` invocations described above.

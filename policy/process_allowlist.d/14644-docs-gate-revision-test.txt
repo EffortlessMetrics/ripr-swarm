@@ -1,0 +1,1 @@
+tools/repo-policy/tests/docs_gate.rs|Command::new|1|repo-policy|The revision-mode regression test shells out to git only to build a two-commit temp fixture repository and prove the gate reads committed bytes; no network, shell, or user-repository mutation.

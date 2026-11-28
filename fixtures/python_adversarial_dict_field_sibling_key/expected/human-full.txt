@@ -4,11 +4,12 @@ root: fixtures/python_adversarial_dict_field_sibling_key/input
 config: <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input/ripr.toml
 
 Summary: 1 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Changed file(s) by language: python = 1
 
@@ -35,6 +36,7 @@ Language
 
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; the assertion is not confirmed to observe the changed value. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `build_config`
@@ -43,11 +45,14 @@ Evidence
   - observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)
   - discriminator weak: Related Python test uses an `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior
   - local flow reaches constructed field: return {"host": "localhost", "port": 9090} (line 2)
-  - related test tests/test_conf.py:4 test_host uses strong exact value oracle: assert build_config()["host"] == "localhost"; unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  - related test tests/test_conf.py:4 test_host uses strong exact value oracle: assert build_config()["host"] == "localhost"
 
 Weakness
   - A strong Python oracle reaches `build_config`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output
-  - missing discriminator host == "localhost": changed Python field/object value at line 2 lacks a concrete repair discriminator
+  - missing discriminator port == 9090: changed Python field/object value at line 2 lacks a concrete repair discriminator
+
+Next step
+  Python preview: strengthen the existing related test with a field/object assertion for the missing check `port == 9090`
 
 Python repair card (preview/advisory)
   card version: python_repair_card.v1
@@ -57,9 +62,9 @@ Python repair card (preview/advisory)
   changed owner: build_config
   changed behavior: field_value changed at src/conf.py:2: `return {"host": "localhost", "port": 9090}`
   current test evidence: tests/test_conf.py:4 test_host currently has oracle_strength=strong, oracle_kind=exact_value: assert build_config()["host"] == "localhost"
-  missing discriminator: host == "localhost"
-  recommended test shape: Strengthen the existing pytest returned mapping field assertion for `host == "localhost"`.
-  suggested assertion: Assert the returned mapping field directly, e.g. `assert result["host"] == "localhost"`.
+  missing discriminator: port == 9090
+  recommended test shape: Strengthen the existing pytest returned mapping field assertion for `port == 9090`.
+  suggested assertion: Assert the returned mapping field directly, e.g. `assert result["port"] == 9090`.
   suggested file: tests/test_conf.py
   suggested test: test_host
   pytest node: tests/test_conf.py::test_host
@@ -74,12 +79,9 @@ Python repair card (preview/advisory)
     - Syntax-first Python preview evidence only.
     - No source edits, generated tests, mutation execution, provider calls, or gate authority.
     - Verify success alone is not a gap-closure receipt.
-
-Next step
-  Python preview: strengthen the existing related test with a field/object assertion for the missing check `host == "localhost"`
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast probe:src_conf.py:python_preview:932c667d
   ripr context --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast --at probe:src_conf.py:python_preview:932c667d
-
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

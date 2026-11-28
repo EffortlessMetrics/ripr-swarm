@@ -66,8 +66,18 @@ fn clean_open_rust_file_is_indexed_without_seeding_findings() -> Result<(), Stri
             ));
         }
     }
-    if cold.snapshot.rust_consumed_sources.file_fact_cache.misses == 0
-        || warm.snapshot.rust_consumed_sources.file_fact_cache.hits == 0
+    if cold
+        .snapshot
+        .rust_consumed_sources
+        .file_fact_cache
+        .as_ref()
+        .is_none_or(|stats| stats.misses == 0)
+        || warm
+            .snapshot
+            .rust_consumed_sources
+            .file_fact_cache
+            .as_ref()
+            .is_none_or(|stats| stats.hits == 0)
     {
         return Err("clean open file did not exercise cold and warm fact-cache loads".into());
     }
@@ -222,7 +232,12 @@ fn actual_saved_producer_commits_raw_bytes_on_cold_and_warm_cache_paths() -> Res
             content_digest(&fs::read(&path).map_err(|error| format!("read {label}: {error}"))?);
         let cold =
             crate::lsp::diagnostics::workspace_diagnostics_with_config(root.path(), &config, true)?;
-        let cold_stats = &cold.snapshot.rust_consumed_sources.file_fact_cache;
+        let cold_stats = cold
+            .snapshot
+            .rust_consumed_sources
+            .file_fact_cache
+            .as_ref()
+            .ok_or("SETUP: cold run produced no file_fact_cache stats")?;
         if cold.snapshot.findings.is_empty() || cold_stats.misses == 0 || cold_stats.stores == 0 {
             return Err(format!(
                 "SETUP: {label} lacks actual nonempty cold producer: {cold_stats:?}"
@@ -230,7 +245,12 @@ fn actual_saved_producer_commits_raw_bytes_on_cold_and_warm_cache_paths() -> Res
         }
         let warm =
             crate::lsp::diagnostics::workspace_diagnostics_with_config(root.path(), &config, true)?;
-        let warm_stats = &warm.snapshot.rust_consumed_sources.file_fact_cache;
+        let warm_stats = warm
+            .snapshot
+            .rust_consumed_sources
+            .file_fact_cache
+            .as_ref()
+            .ok_or("SETUP: warm run produced no file_fact_cache stats")?;
         if warm.snapshot.findings.is_empty() || warm_stats.hits == 0 || warm_stats.misses != 0 {
             return Err(format!(
                 "SETUP: {label} lacks actual nonempty warm hit: {warm_stats:?}"
@@ -869,7 +889,7 @@ fn snapshot_alias_lookup_is_root_scoped_unique_and_exact_preferred() -> Result<(
     std::os::unix::fs::symlink(&fixture.file, &inner_link)
         .map_err(|error| format!("create in-workspace lexical alias: {error}"))?;
     let inner_uri = file_uri_for_path(&fixture.alias.join("src/linked.rs"))?;
-    snapshot.diagnostics_by_uri.clear();
+    snapshot.diagnostics_by_uri.to_mut().clear();
     snapshot
         .diagnostics_by_uri
         .insert(inner_uri.clone(), vec![first.clone()]);
@@ -997,7 +1017,7 @@ fn snapshot_alias_index_refuses_changed_roots_and_same_count_keys() -> Result<()
     std::os::unix::fs::symlink(&fixture.root, &second_alias)
         .map_err(|error| format!("create replacement alias: {error}"))?;
     let replacement = file_uri_for_path(&second_alias.join("src/lib.rs"))?;
-    snapshot.diagnostics_by_uri.clear();
+    snapshot.diagnostics_by_uri.to_mut().clear();
     snapshot
         .diagnostics_by_uri
         .insert(replacement, vec![diagnostic.clone()]);

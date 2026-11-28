@@ -17,21 +17,29 @@ entry (`routed-rust.yml:4-20`). `ready_for_review` requests nothing, and any
 other label event still runs the workflow but names its result job
 `Merge-ready Nonrequest` — a skipped required job reports success, so the
 required context must be earned by a merge-ready run or stay absent
-(`routed-rust.yml:472`). A branch or tag `workflow_dispatch` is diagnostic-only:
+(`routed-rust.yml:696`, `routed-rust.yml:987`). A branch or tag `workflow_dispatch` is diagnostic-only:
 the result job fails itself on purpose
-(`routed-rust.yml:621-624`), so it can never produce a passing required check
+(`routed-rust.yml:988-990`), so it can never produce a passing required check
 on a PR head.
 
 The aggregate result job re-binds live eligibility to the admission recorded at
 the start of the run. Admission writes the request as
-`GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT` (`routed-rust.yml:294`), and the recheck
+`GITHUB_RUN_ID-GITHUB_RUN_ATTEMPT` (`routed-rust.yml:328`), and the recheck
 requires that exact string to equal the live run and attempt
-(`routed-rust.yml:486`, `routed-rust.yml:499`). An in-place rerun of failed
+(`routed-rust.yml:756`, `routed-rust.yml:758`). An in-place rerun of failed
 jobs runs under a new attempt while the succeeded admission step keeps its
 original output, so a rerun can structurally never pass. To converge a stale or
 failed qualification, remove and re-apply `merge-ready` for a fresh run on the
-exact head; do not re-apply the label on an unchanged head while a required run
-is queued or running, because it cancels that run.
+exact head (or re-queue the PR to qualify a new merge group); do not re-apply the
+label on an unchanged head while a required run is queued or running, because it
+cancels that run.
+
+Cancellation is routed through the workflow's concurrency group, so a fresh
+trigger from any other actor — a re-fired `merge-ready` label or any
+`routed-rust` event — cancels your in-flight qualification run. An in-flight run that
+disappears is usually someone else's fresh run, not an infrastructure
+failure; check the newest run on the head before re-firing the label again
+(observed on #10647).
 
 ## Merge refs: what the label event actually tests
 
@@ -40,19 +48,20 @@ to a conflicting PR produces no usable qualification subject — the run dies
 without posting a fresh required check. Resolve conflicts first, then re-fire
 the label.
 
-Label events can also reuse a stale merge ref built against an older base:
-GitHub does not recompute the ref on a draft-to-ready route or a re-route.
-Pushing to the branch (a synchronize event) forces a fresh ref, so after main
-moves under a PR, merge main into the branch and push instead of toggling the
-label alone. Distrust a re-routed gate until a fetched
-`refs/pull/<N>/merge` shows the expected base as an ancestor
+Label events can reuse a merge ref built against an older base. Inspect the
+actual job checkout, its parents and tree against the reviewed candidate and
+required integration basis. Reconcile a material mismatch or conflict; main
+moving alone does not require restacking or repeating unaffected proof. Do not
+relabel a run's older checkout as execution of a newer combined tree
 ([LEARNINGS: combined-tree rules](../LEARNINGS.md)).
 
 ## Writer guards before every push
 
-- Judge another writer's activity from the commits API, never from `updatedAt`
-  on the PR: bot sweeps and label churn pollute the timestamp.
-- Treat four hours as the activity window for convergence ownership.
+- Reconcile the current head, owner's disposition, active work or qualification
+  and any accepted handoff. Commit author dates are object metadata, not push
+  times; PR `updatedAt` also includes bot and label activity. A claim aged four
+  hours prompts inspection, never automatic takeover; inspect sooner when other
+  evidence warrants it. Preserve unknown custody.
 - Run `git ls-remote origin refs/heads/<branch>` before every push; it must
   equal the head you recorded. A mismatch means someone moved the branch —
   fetch and reconcile, never force.
@@ -61,25 +70,52 @@ label alone. Distrust a re-routed gate until a fetched
 
 ## Merge mechanics
 
-Merge with the normal protected squash (`gh pr merge --squash`). The protection
-here is one required check with `strict: false`, so a behind-only branch stays
-valid and an old-head green check does not expire.
+`main` requires the native merge queue (ruleset `main`, id `18845973`, active
+since 2026-11-10T21:32Z with `bypass_actors: []`); direct expected-head
+`PUT .../merge` squash calls are refused with HTTP 405 (#13899, recorded on
+#4838).
 
-A `BLOCKED` merge state while the required check is green and threads are
-resolved is usually GitHub's recompute lag, not a policy wall. The documented
-route is `gh pr merge --squash --auto --delete-branch`, which queues the merge
-until the state settles ([LEARNINGS: BLOCKED is recompute lag](../LEARNINGS.md)).
-When the CLI still refuses, the REST endpoint is the sanctioned fallback:
+After current-head substantive review, addressed findings, applicable proof, and
+all live required PR obligations are established, follow the live queue-landing
+sequence in [merge flow](../MERGE_FLOW.md): confirm `Ripr Rust Small Result` and
+other required checks/review threads, enqueue the PR on the native merge queue
+through the [enqueue interface](../MERGE_FLOW.md#enqueue-interface) the session has,
+and let the queue run qualify and squash the exact queued merge commit. Read the
+current requirements rather than assuming a fixed protection configuration. A
+behind-only branch does not itself invalidate unaffected proof; a green old-head
+check does not qualify a new head. Do not bypass a rule.
 
-```bash
-gh api --method PUT repos/EffortlessMetrics/ripr-swarm/pulls/<N>/merge \
-  -f merge_method=squash
-```
+`BLOCKED` is a state to investigate, not proof of recompute lag or permission
+to enqueue. Reconcile current review, checks and applicable rules; preserve any
+actual refusal. If the head moves, refresh the review and affected proof before
+another guarded operation.
 
 After any `gh` error, verify the actual PR and merge state through the API
 before retrying: a non-zero merge exit is ambiguous, and a merge that actually
 landed makes a blind retry a second-merge error
 ([LEARNINGS: merge-then-cleanup](../LEARNINGS.md)).
+
+A green required check is not the last verification step either: fix tranches
+are followed by an empirical verification pass that re-runs the original
+failing scenarios on the merged build, with the results recorded in the
+campaign logs — a red witness before the fix and a green build after prove
+less than the scenario passing end-to-end.
+
+## GitHub API mechanics
+
+- The comments endpoints are not interchangeable: `pulls/{n}/comments`
+  returns only review comments, while issue comments live at
+  `issues/{n}/comments`. A detection or fetch routed through the pulls
+  endpoint silently returns an empty result and looks like "no data" — the
+  trap behind the ownership-signaling claim-comment design
+  ([PR automation](../PR_AUTOMATION.md#multi-actor-ownership-signaling)),
+  caught during #11736 research.
+- Issue and PR comment POSTs can 403 under a secondary content-creation
+  limit for around 40 minutes, independent of the core and GraphQL budgets.
+  The GraphQL `addComment` mutation is a separate surface and cleared the
+  limit in practice: on a comment-creation 403 that persists after the
+  standard 60-second retry, back off for minutes and fall back to
+  `addComment` instead of retrying the REST POST.
 
 ## Reconciliation traps
 
@@ -91,13 +127,37 @@ close, including inside sentences that say the opposite.
 
 ## Ownership before working a PR
 
-Before pushing, relabeling or editing a PR you did not open, read its commits
-API for another convergence actor inside the activity window. Both fleets work
-the same repository, and one wave raced eleven of fourteen lanes this way.
+Before pushing, relabeling or editing a PR you did not open, reconcile its
+current head, owner disposition, active work and accepted handoff. Both fleets
+work the same repository, and one wave raced eleven of fourteen lanes this way.
 When a race is confirmed, yield: preserve proven work under new branch refs,
 leave a handback comment that names the head, evidence and resume condition,
 and move to another claim. Deleting or overwriting a raced candidate is not a
 repair.
+
+## Plans are hypotheses
+
+An issue's Investigation comment is a researched plan, not a spec: it records
+what was true when it was written. Before implementing, re-resolve every
+anchor — cited files, symbols, line numbers, issue states, linked PRs — at
+current main. If the plan is wrong at code time, stop and record the
+discrepancy as the lane's blocker; do not improvise around it. The lanes that
+did this (the rival-race skips and the plan-discrepancy stop) were the
+convergence campaign's correct yields, and the lanes that improvised around
+wrong plans produced unused work. Premises rot at fleet velocity
+([LEARNINGS: premise rot](../LEARNINGS.md)).
+
+## Decision briefs
+
+When a lane needs an owner ruling, post ONE comment at the ruling site that
+makes ruling cheap: option-by-option concrete costs, an empirical check of
+the decision's hinge, and a ready-to-execute plan for the recommended
+default. The convergence campaign collapsed a six-item decision ledger
+(#11501) to minutes-scale bookkeeping this way — four of the six items
+dissolved on investigation before any ruling, because the brief's empirical
+check showed main had already merged the resolution. Re-verify the hinge
+against current main immediately before posting
+([LEARNINGS: premise rot](../LEARNINGS.md)).
 
 ## Platform discipline
 

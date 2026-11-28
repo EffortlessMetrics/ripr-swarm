@@ -11,6 +11,18 @@ pub enum OutputFormat {
     HumanFull,
     /// Versioned JSON report for automation.
     Json,
+    /// The same versioned JSON report as [`OutputFormat::Json`], minified
+    /// for machine/agent consumers (#13103). Parsed values are identical;
+    /// only insignificant whitespace differs.
+    JsonCompact,
+    /// The same findings, verdicts and identity fields as
+    /// [`OutputFormat::Json`], semantically compacted for token-priced LLM
+    /// consumers: repeated prose templates in `evidence_path`/`evidence`/
+    /// `missing`/`assertion_texts` become legend codes, and same-value alias
+    /// fields are emitted once. The full strings are recoverable from the
+    /// document-head `evidence_legend`; nothing is silently dropped. See
+    /// `docs/OUTPUT_SCHEMA.md` "json-terse".
+    JsonTerse,
     /// Unbounded `json` check findings with the producer `artifact` identity
     /// envelope (ADR 0020 amendment), so a gap-keyed verify can reject a
     /// fabricated, edited or incomplete snapshot.
@@ -19,6 +31,16 @@ pub enum OutputFormat {
     Github,
     /// SARIF 2.1.0 report for diff-scoped static exposure Findings.
     Sarif,
+    /// Minified SARIF 2.1.0 report (#13195). Parsed values match
+    /// [`OutputFormat::Sarif`] exactly, including its
+    /// `RIPR_SARIF_RESULTS_BYTES` bound and disclosed truncation (#13102).
+    SarifCompact,
+    /// Plain-text gap list (#13626): one sorted
+    /// `path:line:col: <classification> <family>: <expression> -> <missing discriminator>`
+    /// line per candidate-actionable, unsuppressed, non-exposed finding;
+    /// nothing for exposed findings. A projection of the shared finding
+    /// owner in static vocabulary; it claims no runtime mutation outcome.
+    MissedTxt,
     /// Native `ripr` badge JSON (snake_case wire shape with full counts,
     /// reason counts, and policy). Consumed by tools and CI artifacts.
     BadgeJson,
@@ -71,6 +93,9 @@ pub enum OutputFormat {
     RepoExposureMd,
     /// SARIF 2.1.0 report for repo-scoped classified seam evidence.
     RepoSarif,
+    /// Minified repo-scoped SARIF 2.1.0 report (#13195). Parsed values
+    /// match [`OutputFormat::RepoSarif`] exactly, bound included (#13102).
+    RepoSarifCompact,
     /// Agent-ready seam packets per RIPR-SPEC-0005 - one
     /// `write_targeted_test` packet per headline-eligible classified
     /// seam, plus conservative `inspect_static_limitation` packets for
@@ -133,6 +158,20 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
+        format: OutputFormat::JsonCompact,
+        cli_names: &["json-compact"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::JsonTerse,
+        cli_names: &["json-terse"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
         format: OutputFormat::CheckFindingsJson,
         cli_names: &["check-findings-json"],
         is_full_repo_analysis: false,
@@ -147,6 +186,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         is_repo_seam_inventory: false,
     },
     OutputFormatSpec {
+        format: OutputFormat::MissedTxt,
+        cli_names: &["missed-txt"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
         format: OutputFormat::Agent,
         cli_names: &["agent"],
         is_full_repo_analysis: false,
@@ -156,6 +202,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
     OutputFormatSpec {
         format: OutputFormat::Sarif,
         cli_names: &["sarif"],
+        is_full_repo_analysis: false,
+        is_seam_fact_cache_backed: false,
+        is_repo_seam_inventory: false,
+    },
+    OutputFormatSpec {
+        format: OutputFormat::SarifCompact,
+        cli_names: &["sarif-compact"],
         is_full_repo_analysis: false,
         is_seam_fact_cache_backed: false,
         is_repo_seam_inventory: false,
@@ -266,6 +319,13 @@ const FORMAT_SPECS: &[OutputFormatSpec] = &[
         is_repo_seam_inventory: true,
     },
     OutputFormatSpec {
+        format: OutputFormat::RepoSarifCompact,
+        cli_names: &["repo-sarif-compact"],
+        is_full_repo_analysis: true,
+        is_seam_fact_cache_backed: true,
+        is_repo_seam_inventory: true,
+    },
+    OutputFormatSpec {
         format: OutputFormat::AgentSeamPacketsJson,
         cli_names: &["agent-seam-packets-json"],
         is_full_repo_analysis: true,
@@ -350,8 +410,11 @@ impl OutputFormat {
     pub(crate) fn is_machine_readable(&self) -> bool {
         match self {
             Self::Json
+            | Self::JsonCompact
+            | Self::JsonTerse
             | Self::CheckFindingsJson
             | Self::Sarif
+            | Self::SarifCompact
             | Self::BadgeJson
             | Self::BadgeShields
             | Self::BadgePlusJson
@@ -364,13 +427,54 @@ impl OutputFormat {
             | Self::RepoExposureJson
             | Self::RepoExposureSummaryJson
             | Self::RepoSarif
+            | Self::RepoSarifCompact
             | Self::AgentSeamPacketsJson
+            | Self::MissedTxt
             | Self::Agent => true,
             Self::Human
             | Self::HumanFull
             | Self::Github
             | Self::RepoSeamsMd
             | Self::RepoExposureMd => false,
+        }
+    }
+
+    /// Returns `true` for formats whose stdout is a JSON document a caller
+    /// parses as JSON: the `json` family and every `*-json` document. An
+    /// explicit `--format` naming one is a JSON request, so a usage error on
+    /// that run also writes the `cli_refusal` document (#11584). SARIF and
+    /// the Shields endpoint projections are their own external document
+    /// shapes and are not JSON requests. Exhaustive on purpose: a new format
+    /// must decide.
+    pub(crate) fn is_json_request(&self) -> bool {
+        match self {
+            Self::Json
+            | Self::JsonCompact
+            | Self::JsonTerse
+            | Self::CheckFindingsJson
+            | Self::BadgeJson
+            | Self::BadgePlusJson
+            | Self::RepoBadgeJson
+            | Self::RepoBadgePlusJson
+            | Self::RepoSeamsJson
+            | Self::RepoExposureJson
+            | Self::RepoExposureSummaryJson
+            | Self::AgentSeamPacketsJson => true,
+            Self::Human
+            | Self::HumanFull
+            | Self::Github
+            | Self::Agent
+            | Self::Sarif
+            | Self::SarifCompact
+            | Self::BadgeShields
+            | Self::BadgePlusShields
+            | Self::RepoBadgeShields
+            | Self::RepoBadgePlusShields
+            | Self::RepoSeamsMd
+            | Self::RepoExposureMd
+            | Self::RepoSarif
+            | Self::RepoSarifCompact
+            | Self::MissedTxt => false,
         }
     }
 
@@ -395,12 +499,23 @@ impl OutputFormat {
     /// cache-backed classified/compact-classified walks claim seam-facts
     /// cache reuse; the raw `repo-seams-*` walks disclose that every run
     /// pays the full walk (#4945 review).
-    pub(crate) fn repo_audit_path_disclosure(&self) -> Option<String> {
+    pub(crate) fn repo_audit_path_disclosure(
+        &self,
+        workspace_root: &std::path::Path,
+    ) -> Option<String> {
         if !self.is_full_repo_analysis() {
             return None;
         }
         let warm_rerun_clause = if self.is_seam_fact_cache_backed() {
-            "warm reruns reuse the seam-facts cache and are much faster."
+            let compact = matches!(self, OutputFormat::RepoExposureSummaryJson);
+            if crate::analysis::seam_cache::RepoSeamFactCache::seam_facts_cache_has_stored_entries(
+                workspace_root,
+                compact,
+            ) {
+                "warm reruns can reuse the seam-facts cache when an entry matches this workspace state, and are much faster."
+            } else {
+                "no seam-facts cache present yet; the first run on this workspace pays the full walk."
+            }
         } else {
             "raw seam inventory does not read the seam-facts cache, so every run pays the full walk."
         };
@@ -422,10 +537,15 @@ mod tests {
     fn machine_readable_formats_are_the_documents_and_the_agent_report() {
         for (name, machine) in [
             ("json", true),
+            ("json-compact", true),
+            ("json-terse", true),
             ("sarif", true),
+            ("sarif-compact", true),
+            ("repo-sarif-compact", true),
             ("badge-json", true),
             ("repo-exposure-json", true),
             ("agent", true),
+            ("missed-txt", true),
             ("human", false),
             ("human-full", false),
             ("github", false),
@@ -438,6 +558,15 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn parses_missed_txt_as_a_single_name() {
+        assert_eq!(
+            OutputFormat::parse_cli_name("missed-txt"),
+            Some(OutputFormat::MissedTxt)
+        );
+        assert_eq!(OutputFormat::MissedTxt.primary_cli_name(), "missed-txt");
     }
 
     #[test]
@@ -495,8 +624,22 @@ mod tests {
     #[test]
     fn repo_format_audit_path_disclosure_covers_exactly_the_full_repo_analysis_group()
     -> Result<(), String> {
+        let workspace_root = std::env::temp_dir().join(format!(
+            "ripr-format-audit-disclosure-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&workspace_root);
+        std::fs::create_dir_all(&workspace_root).map_err(|err| err.to_string())?;
+        if crate::analysis::seam_cache::RepoSeamFactCache::at(&workspace_root).has_stored_entries()
+        {
+            // An inherited `RIPR_CACHE_DIR` already holds entries; the cold
+            // assertions below need an empty cache scoped to this workspace.
+            eprintln!("skipped: ambient cache directory already holds entries");
+            let _ = std::fs::remove_dir_all(&workspace_root);
+            return Ok(());
+        }
         for spec in FORMAT_SPECS {
-            let disclosure = spec.format.repo_audit_path_disclosure();
+            let disclosure = spec.format.repo_audit_path_disclosure(&workspace_root);
             assert_eq!(
                 spec.format.is_full_repo_analysis(),
                 spec.is_full_repo_analysis,
@@ -526,12 +669,12 @@ mod tests {
                 );
                 if spec.is_seam_fact_cache_backed {
                     assert!(
-                        disclosure.contains("warm reruns reuse the seam-facts cache"),
-                        "cache-backed format must claim warm cache reruns: {disclosure}"
+                        disclosure.contains("no seam-facts cache present yet"),
+                        "cache-backed format without cache must not promise warm reruns: {disclosure}"
                     );
                     assert!(
-                        !disclosure.contains("every run pays the full walk"),
-                        "cache-backed format must not claim an uncached walk: {disclosure}"
+                        !disclosure.contains("warm reruns can reuse the seam-facts cache"),
+                        "cache-backed format without cache must not promise warm reruns: {disclosure}"
                     );
                 } else {
                     assert!(
@@ -556,6 +699,73 @@ mod tests {
                 );
             }
         }
+        let _ = std::fs::remove_dir_all(&workspace_root);
+        Ok(())
+    }
+
+    /// #12505: cache-presence-aware warm-rerun disclosure flips once a family
+    /// has stored entries.
+    #[test]
+    fn repo_audit_path_disclosure_is_cache_presence_aware() -> Result<(), String> {
+        let workspace_root =
+            std::env::temp_dir().join(format!("ripr-format-cache-presence-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&workspace_root);
+        std::fs::create_dir_all(&workspace_root).map_err(|err| err.to_string())?;
+        let format = OutputFormat::RepoExposureJson;
+        let cache = crate::analysis::seam_cache::RepoSeamFactCache::at(&workspace_root);
+        // `RIPR_CACHE_DIR` can point the cache at a shared directory; this
+        // test writes probe entries, so it only runs against a cache that is
+        // empty and scoped to its own workspace.
+        if cache.has_stored_entries() {
+            eprintln!("skipped: ambient cache directory already holds entries");
+            let _ = std::fs::remove_dir_all(&workspace_root);
+            return Ok(());
+        }
+        let cold = format
+            .repo_audit_path_disclosure(&workspace_root)
+            .ok_or("missing disclosure")?;
+        assert!(
+            cold.contains("no seam-facts cache present yet"),
+            "cold disclosure: {cold}"
+        );
+        // Leftovers of a skipped or failed store are not entries (#12505
+        // review): a publication lock and an empty key directory.
+        for (dir, sharded) in cache.entry_dirs() {
+            std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+            std::fs::write(dir.join("abc.lock"), b"x").map_err(|err| err.to_string())?;
+            if sharded {
+                std::fs::create_dir_all(dir.join("empty-key")).map_err(|err| err.to_string())?;
+            }
+        }
+        let leftovers = format
+            .repo_audit_path_disclosure(&workspace_root)
+            .ok_or("missing leftovers disclosure")?;
+        assert!(
+            leftovers.contains("no seam-facts cache present yet"),
+            "lock-only cache must not promise warm reruns: {leftovers}"
+        );
+        for (dir, sharded) in cache.entry_dirs() {
+            if sharded {
+                let key_dir = dir.join("published-key");
+                std::fs::create_dir_all(&key_dir).map_err(|err| err.to_string())?;
+                std::fs::write(key_dir.join("manifest.json"), b"{}")
+                    .map_err(|err| err.to_string())?;
+            } else {
+                std::fs::write(dir.join("presence-probe.json"), b"{}")
+                    .map_err(|err| err.to_string())?;
+            }
+        }
+        let warm = format
+            .repo_audit_path_disclosure(&workspace_root)
+            .ok_or("missing warm disclosure")?;
+        assert!(
+            warm.contains("warm reruns can reuse the seam-facts cache"),
+            "warm disclosure: {warm}"
+        );
+        for (dir, _) in cache.entry_dirs() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        let _ = std::fs::remove_dir_all(&workspace_root);
         Ok(())
     }
 
@@ -568,6 +778,7 @@ mod tests {
             "repo-exposure-summary-json",
             "repo-exposure-md",
             "repo-sarif",
+            "repo-sarif-compact",
             "agent-seam-packets-json",
             // #5261/#5263 review: the seam-native repo badge formats walk
             // the same full classified inventory as repo-exposure, so they
@@ -603,6 +814,7 @@ mod tests {
             "repo-exposure-summary-json",
             "repo-exposure-md",
             "repo-sarif",
+            "repo-sarif-compact",
             "agent-seam-packets-json",
             // #5261/#5263 review: the seam-native repo badge formats read
             // the same classified cache, so their disclosures may claim warm

@@ -43,7 +43,7 @@ Policy impact:
   `.ripr/traceability.toml`.
 - No schema version bump. The missing discriminator reuses the existing
   `MissingDiscriminatorFact` (`value`, `reason`) and the existing
-  `Missing discriminator value:` entry in `Finding.missing`.
+  `Missing check value:` entry in `Finding.missing`.
 
 ## Problem
 
@@ -469,17 +469,25 @@ implies but does not spell out:
   owner's file must declare exactly one enum of that name listing `NAME`
   and no struct, union, trait or type alias of that name, import nothing by
   that name, glob-import no module (a `use super::*` inside an inline
-  module, such as `mod tests`, brings in only that file's items) and call
+  module, such as `mod tests`, brings in only that file's items)   and call
   no macro at file or module item level, nor any macro in statement
   position inside a function named like the owner (its expansion may
   declare a local `Kind` scoped to the match), and no function named like
-  the owner may be nested in a block. Alternatively, the owner's file
+  the owner may be nested in a block. The owner function, and any item in
+  its body, may carry no attribute other than a compiler builtin (a derive
+  only of the standard derivable traits, and no `cfg_attr`); an import that
+  shadows a builtin attribute or derive makes that attribute unread (a glob of the enum's own variants
+  cannot, so it does not). An
+  unread proc-macro attribute or custom derive may declare a local `Kind`
+  whose associated constant a pattern compares by value (#7692).
+  Alternatively, the owner's file
   may bind that name through exactly one import, a top-level `use` without
   a rename, whose module path (`kinds::Kind` after `mod kinds;`,
   `crate::a::Kind`, `self::`, `super::`) follows recorded out-of-line `mod`
   declarations to exactly one workspace file, and that file must meet the
   same declaration rule. The owner's file must then declare no item of
-  that name and call no such macro, glob-import no module inside an
+  that name, call no such macro, and carry no such attribute on the owner
+  function or an item in its body, glob-import no module inside an
   inline module (except `super::*`), and its recorded module chain must
   start at the workspace's `src/lib.rs` or `src/main.rs` or a
   `crates/<name>/src/` one. That root must be its package manifest's
@@ -528,6 +536,26 @@ implies but does not spell out:
   call on the closing brace, or `let x = match ..;` followed by anything but
   the bare `x`) can remap the arm's result, so no assertion confirms that
   arm (#12143). A bare `let`-then-return and a tail `match` do not remap.
+- the read macros (`assert_eq!`, `println!`, `dbg!`, ...) are trusted by
+  name, so the unselected arm is not named when the workspace defines,
+  imports or may glob in another macro under a name that the owner, a
+  function it reaches, a related test or a helper that test reaches
+  invokes (#15022): a test-local `macro_rules! assert_eq` can run the owner
+  with an input the call it wraps never shows. A name nothing on those
+  paths invokes is not asked about. A glob of a workspace package does not
+  count as foreign; a glob of any other crate does. In the repo seam view
+  this refusal, unlike the others, does not keep the activation stage as it
+  was (#15233): the inputs it read sit inside a macro whose expansion is not
+  read, so the stage reads `unknown` (`activation_unknown`), never the
+  generic `yes` that observed values alone would give. It is asked as soon
+  as every visible input selects another arm, before the re-entry,
+  unread-helper and outside-mention refusals, which keep the stage: a
+  rebinding inside an inline test module also reads as a mention of the
+  owner outside the related tests' calls, and would otherwise keep that
+  `yes`. The summary names only the invoked read macros that are rebound.
+  The scan ignores
+  definition order, so a `macro_rules! assert_eq` defined after every
+  assertion also refuses; that costs the arm its name, never credit.
 
 ## Required Evidence
 
@@ -630,19 +658,44 @@ the diff changes `None => 1` to `None => 0`.
   declares `mod lib` through a macro (`mod $name;` or a passed `mod`
   token) or an included file, a module file compiled out by an inner
   `#![cfg]`, a sibling root whose unread macro, proc-macro attribute or
-  custom derive may declare the owner a module, and a statement macro in
+  custom derive may declare the owner a module, a statement macro in
   the owner, including one shadowing
-  `assert!`, that may declare a local `Kind`.
+  `assert!`, that may declare a local `Kind`, and a proc-macro attribute
+  on the owner or a custom derive on an item in its body (#7692).
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).
+- `crates/ripr/src/analysis/test_grip_evidence/tests/unselected_arm.rs`:
+  `a_rebound_read_macro_keeps_the_arm_unnamed` (#15022): a test-local
+  `assert_eq!` that runs the owner with `Size::Medium` leaves that arm
+  unnamed, while the same test with the standard macro names it;
+  `a_rebound_read_macro_refusal_reads_activation_unknown_not_yes` (#15233):
+  a rebinding defined after or before the assertions reads activation
+  `unknown` and `activation_unknown`, never `yes` or `strongly_gripped`,
+  while the standard macro reads `weak` with the arm named;
+  `the_rebound_refusal_names_only_the_rebound_read_macro`: the refusal
+  summary names a rebound `assert_eq!` and not a standard `println!`
+  invoked beside it;
+  `an_inline_test_module_rebinding_reads_activation_unknown`: the same
+  rebinding inside the owner file's inline `mod tests` reads `unknown`.
+  Honesty corpus case
+  `rust_repo_exposure_rebound_read_macro_unselected_arm_not_promoted`,
+  and the `Size::Medium` rows of
+  `rust_repo_exposure_rebound_assert_eq_match_arms_not_promoted` and
+  `rust_repo_exposure_late_assert_eq_definition_match_arms_keeps_credit`
+  (a late definition never runs, yet the arm reads `activation_unknown`:
+  the scan ignores order, and costs the arm its name, never credit).
 - `crates/ripr/tests/match_arm_helper_selection.rs` (decision 5): a
   helper-lent char literal that selects the changed arm credits it; a
   literal for another arm and a variable argument do not. Verdict corpus
   case `grid-match-helper`.
   A same-file `macro_rules!` that may define an item of the owner's name
   (#7985) makes the owner call ambiguous, so it credits nothing; a macro
-  defining an unrelated name does not. Unit tests: `macro_item_names.rs`
+  defining an unrelated name does not. A statement-position invocation of
+  a macro defined outside the file that spells an item declaration of the
+  owner's name (`emit!(fn suit_color(..) { .. });`) is ambiguous the same
+  way; a call or bare mention there, and a std macro that expands to a
+  literal (`stringify!`), are not (#8467). Unit tests: `macro_item_names.rs`
   `tests` and the `helper_transfer.rs` unit test
   `test_call_is_shadowed_by_a_macro_defined_same_named_fn`, plus the shared-gate
   test `macro_defined_same_name_is_a_foreign_rebind_for_every_gate_caller` in
@@ -696,7 +749,7 @@ the diff changes `None => 1` to `None => 0`.
 - `crates/ripr/src/analysis/probes/diff.rs`: a changed arm pairs with the
   removed arm of the same pattern; a return value the edit left untouched
   is dropped when another shape on the line holds the edit.
-- `crates/ripr/src/domain/probe.rs` (`input_boundary_fact`) and
+- `crates/ripr-contract/src/domain/probe.rs` (`input_boundary_fact`) and
   `crates/ripr/src/output/related_test_miss.rs`: an examined test of a named
   arm misses an input (`missing_input`, "no test input selects arm"), not an
   exact assertion (RIPR-SPEC-0224).

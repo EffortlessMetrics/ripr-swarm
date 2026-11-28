@@ -19,7 +19,9 @@ advisory, not runtime mutation results.
 Install `EffortlessMetrics.ripr` and open a Rust/Cargo workspace. The released
 extension uses a compatible `ripr` already on your `PATH` and otherwise
 downloads and caches its matching native server, so you do not need to build
-that server with `cargo install ripr`. Workspace analysis and
+that server with `cargo install ripr`. A `PATH` binary older than the
+extension's expected server version does not skip that download; if no
+download is possible, the extension still uses it and warns once. Workspace analysis and
 test execution still need their own tooling on the workspace host.
 
 ripr analyzes Rust out of the box. TypeScript/JavaScript and Python are preview
@@ -68,6 +70,14 @@ its [extension README](https://github.com/EffortlessMetrics/ripr/blob/v0.10.0/ed
 describes that release. A development extension needs a compatible local server
 until matching release assets are available. Do not assume an unreleased server
 can be downloaded.
+
+### Behind a proxy
+
+The managed server download uses VS Code's proxy support: set `http.proxy`
+(or `HTTPS_PROXY` in the environment VS Code starts from), list hosts that
+should go direct in `http.noProxy`, and leave `http.proxySupport` on. The
+download still verifies the archive checksum. If no proxy route works, set
+`ripr.server.path` to a `ripr` binary or install `ripr` on `PATH`.
 
 ## What ripr Does
 
@@ -127,7 +137,7 @@ with the defaults.
 ## Commands
 
 Start with `ripr: Show Status`, `ripr: Show Output`, and
-`ripr: Refresh Diagnostics`. Finding-specific code actions appear on diagnostics.
+`ripr: Refresh Full Analysis`. Finding-specific code actions appear on diagnostics.
 The development extension also exposes the following commands:
 
 <details>
@@ -137,6 +147,7 @@ The development extension also exposes the following commands:
 - `ripr: Select Workspace Root`
 - `ripr: Diagnose Setup`
 - `ripr: Start Current Repair`
+- `ripr: Start or Continue Repair`
 - `ripr: Copy Current Repair Packet`
 - `ripr: Copy Repo Gap Map`
 - `ripr: First PR - Open Packet`

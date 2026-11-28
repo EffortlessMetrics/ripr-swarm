@@ -41,6 +41,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach deposit_cap: a_small_deposit_is_accepted", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(PayError::Limit)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result (observation_unverified)", "local flow reaches error variant: Result::Err(PayError::Limit) (line 17)", "related test src/lib.rs:31 a_small_deposit_is_accepted uses strong exact value oracle: assert_eq!(deposit_cap(100), Ok(100));", "related test src/lib.rs:26 a_large_refund_hits_the_limit uses strong exact error variant oracle: assert!(matches!(refund(20_000), Err(PayError::Limit)));", "source assertion argument value 20_000 at line 27", "source enum variant value PayError::Limit at line 27", "source assertion argument value 100 at line 32", "source function argument value amount = 100 at line 32"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(PayError::Limit)","line":17}
@@ -168,6 +175,13 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result (observation_unverified)"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"yes","confidence":"medium"},
+        {"stage":"propagate","state":"yes","confidence":"high"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"medium"}
+      ],
       "evidence_path": ["reach yes: Related tests appear to reach deposit_cap: a_small_deposit_is_accepted", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: Result::Err(PayError::Limit)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result (observation_unverified)", "local flow reaches error variant: Result::Err(PayError::Limit) (line 17)", "related test src/lib.rs:31 a_small_deposit_is_accepted uses strong exact value oracle: assert_eq!(deposit_cap(100), Ok(100));", "related test src/lib.rs:26 a_large_refund_hits_the_limit uses strong exact error variant oracle: assert!(matches!(refund(20_000), Err(PayError::Limit)));", "source assertion argument value 20_000 at line 27", "source enum variant value PayError::Limit at line 27", "source assertion argument value 100 at line 32", "source function argument value amount = 100 at line 32"],
       "flow_sinks": [
         {"kind":"error_variant","text":"Result::Err(PayError::Limit)","line":17}

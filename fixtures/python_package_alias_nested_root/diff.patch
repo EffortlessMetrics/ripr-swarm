@@ -1,0 +1,9 @@
+diff --git a/src/tomli/_parser.py b/src/tomli/_parser.py
+--- a/src/tomli/_parser.py
++++ b/src/tomli/_parser.py
+@@ -1,4 +1,4 @@
+ def loads(text):
+-    if text == "":
++    if text == "x":
+         return {}
+     return {"key": text}

@@ -1,0 +1,10 @@
+[package]
+name = "lib_bolero_fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dev-dependencies]
+bolero = "=0.13.7"

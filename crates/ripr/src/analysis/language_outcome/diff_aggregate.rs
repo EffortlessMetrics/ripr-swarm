@@ -14,7 +14,7 @@ use super::{
     OutcomeMode,
 };
 use crate::domain::LanguageId;
-use crate::domain::language_capability::{
+use ripr_contract::domain::language_capability::{
     AnalysisMode, CAPABILITY_CELLS, CapabilityFamily, FRAMEWORK_ANY, state_establishes_capability,
 };
 use sha2::{Digest, Sha256};

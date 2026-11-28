@@ -40,6 +40,7 @@ impl<'a> WholeValueFieldPin<'a> {
             family: ProbeFamily::FieldConstruction,
             delta: DeltaKind::Unknown,
             before: None,
+            before_condition: None,
             after: Some(seam.expression().to_string()),
             expression: seam.expression().to_string(),
             expected_sinks: Vec::new(),

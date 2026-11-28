@@ -232,7 +232,7 @@ requirements in this spec remain unchanged.
    includes "the test `test_uses_outer` (tests/it.rs:NN) calls `outer`, an entry point that may
    lead here." Fixture: `fixtures/rust_transitive_reach_positive/` (re-blessed: message-only drift).
 
-2. **Test-helper public API chain (witness named)**: an integration test calls a helper,
+2. [abstain] **Test-helper public API chain (witness named)**: an integration test calls a helper,
    the helper calls a public API function, and that API flows through internal helpers to
    the changed owner within the bounded walk. Result: `no_static_path` +
    `static_limit_kind: rust_transitive_reach_unresolved`, and the evidence names the helper
@@ -269,7 +269,7 @@ requirements in this spec remain unchanged.
 - Deterministic witness ordering by `(uncorroborated, test_file, test_line, test_name,
   entry_symbol)`.
 - Concrete witness-pointer message builder (reuses "may" language; no coverage claim).
-- Wired in `analysis/language/rust/mod.rs` `analyze_diff` and `analyze_repo` (the existing
+- Wired in `analysis/language/rust/mod.rs` `analyze_diff` and `analysis/language/rust/repo.rs` `analyze_repo_with_rust_config` (the existing
   post-classify guards now consume the witness to build the evidence string).
 - Positive fixture re-blessed (message-only drift; class + static_limit_kind unchanged), recorded
   via `cargo xtask goldens bless rust_transitive_reach_positive --reason <reason>`.
@@ -355,10 +355,10 @@ requirements in this spec remain unchanged.
 | `TransitiveWitness` struct + `find_transitive_witness -> Option<TransitiveWitness>` | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Deterministic witness selection | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
 | Witness-pointer message builder (`transitive_reach_witness_pointer`) | `crates/ripr/src/analysis/classify/transitive_reach.rs` |
-| Shared witness prefix constant (`TRANSITIVE_REACH_WITNESS_PREFIX`) | `crates/ripr/src/domain/classification.rs` |
-| Module exports | `crates/ripr/src/analysis/classify/mod.rs`, `crates/ripr/src/domain/mod.rs` |
+| Shared witness prefix constant (`TRANSITIVE_REACH_WITNESS_PREFIX`) | `crates/ripr-contract/src/domain/classification.rs` |
+| Module exports | `crates/ripr/src/analysis/classify/mod.rs`, `crates/ripr-contract/src/domain/mod.rs` |
 | Wiring (diff mode) | `crates/ripr/src/analysis/language/rust/mod.rs::analyze_diff` |
-| Wiring (repo mode) | `crates/ripr/src/analysis/language/rust/mod.rs::analyze_repo` |
+| Wiring (repo mode) | `crates/ripr/src/analysis/language/rust/repo.rs::analyze_repo_with_rust_config` |
 | JSON renderer | emits `static_limit_kind`, evidence, and additive `static_limitation` detail when the limitation detail is complete |
 | Human renderer (`Where to look` section) | `crates/ripr/src/output/human/sections.rs` |
 | Positive fixture (re-blessed) | `fixtures/rust_transitive_reach_positive/` |

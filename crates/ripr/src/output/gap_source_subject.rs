@@ -98,17 +98,19 @@ pub(crate) fn gap_record_subject_paths(root: &Path, record: &Value) -> BTreeSet<
 /// `related_test`, `test`, `related_test_or_observer`), at any depth. Used by
 /// the repo-exposure producer so its stamp covers whatever a derived ledger
 /// record or actionable-gaps packet later names from the same evidence.
+const PATH_KEYS: [&str; 8] = [
+    "file",
+    "path",
+    "source_file",
+    "target_file",
+    "target_test",
+    "related_test",
+    "test",
+    "related_test_or_observer",
+];
+
+#[cfg(test)]
 pub(crate) fn named_files_in_value(root: &Path, value: &Value, files: &mut BTreeSet<String>) {
-    const PATH_KEYS: [&str; 8] = [
-        "file",
-        "path",
-        "source_file",
-        "target_file",
-        "target_test",
-        "related_test",
-        "test",
-        "related_test_or_observer",
-    ];
     match value {
         Value::Object(object) => {
             for (key, child) in object {
@@ -127,6 +129,45 @@ pub(crate) fn named_files_in_value(root: &Path, value: &Value, files: &mut BTree
     }
 }
 
+/// Raw spellings an analysis output value names under a path-bearing key,
+/// before [`subject_relative_path`] filtering. Producers that render a
+/// value to JSON can collect these during rendering instead of parsing the
+/// rendered string back; applying `subject_relative_path` to each yields
+/// exactly the set the parse-back walk collected from the parsed value.
+pub(crate) fn named_file_candidates_in_value(value: &Value, files: &mut BTreeSet<String>) {
+    match value {
+        Value::Object(object) => {
+            for (key, child) in object {
+                if PATH_KEYS.contains(&key.as_str()) {
+                    collect_candidate_strings(child, files);
+                }
+                named_file_candidates_in_value(child, files);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                named_file_candidates_in_value(child, files);
+            }
+        }
+        Value::String(_) | Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn collect_candidate_strings(value: &Value, files: &mut BTreeSet<String>) {
+    match value {
+        Value::String(raw) => {
+            files.insert(raw.clone());
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_candidate_strings(child, files);
+            }
+        }
+        Value::Object(_) | Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+#[cfg(test)]
 fn collect_path_strings(root: &Path, value: &Value, files: &mut BTreeSet<String>) {
     match value {
         Value::String(raw) => {

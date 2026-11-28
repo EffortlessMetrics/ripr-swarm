@@ -38,6 +38,16 @@ ripr check \
 The report ranks the repairable direct weak Python finding before lower-value
 Python preview noise, even though the noisy files sort earlier by path.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_c_discount.py:python_preview:91995184 -> weakly_exposed
+probe:src_b_observed.py:python_preview:3c7333c2 -> exposed
+probe:src_d_isolated.py:python_preview:557fe7cf -> no_static_path
+probe:src_a_dynamic.py:python_preview:01f806b7 -> static_unknown
+```
+
 ## Must Not
 
 - Treat static-limit or no-related-test findings as repair-ready work.

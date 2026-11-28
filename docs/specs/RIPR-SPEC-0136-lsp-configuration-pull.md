@@ -126,7 +126,12 @@ malformed pull discloses a typed
 state (`config_pull_failed` / `config_pull_invalid`, mirroring the
 `AnalysisFailure { kind, message }` pattern) with a recovery route, while
 the last-known-good pulled layer is retained as stale. Defaults never
-masquerade as accepted requested settings: the status payload carries the
+masquerade as accepted requested settings. A malformed pull also sends one
+`window/logMessage` warning (and, for clients without the `riprEditor`
+integration, the same `window/showMessage`) naming every rejected setting
+with its accepted values and saying the previous settings stay in effect
+(#15312); the status payload alone is not rendered by generic editors. The
+status payload carries the
 negotiated `configuration_mode`, a per-field source map
 (`pulled` | `initialization` | `repo` | `default`) for the governed keys
 (six per the #2303 amendment, seven per the #1972 amendment), and the last
@@ -152,6 +157,24 @@ Clients without `workspace.configuration` support keep today's behavior:
 initialization-only. Each transport can supply exactly the same governed
 keys (six per the #2303 amendment, seven per the #1972 amendment); no
 transport can set anything else.
+
+A pushed value the push path ignores is disclosed (#15312). The push path
+stays lenient: a governed key with a wrong type or unknown literal falls back
+to its repository or default value. Each `workspace/didChangeConfiguration`
+that carries such a value, a payload that cannot carry a `ripr` section at
+all (a bare string, an array), or a non-object `ripr` key, produces one
+`window/logMessage` warning naming every ignored key, its accepted values and
+the value received. A non-object `ripr` key is reported as an ignored
+section; the flat settings beside it still apply and are still checked.
+Clients without the `riprEditor` integration also get the warning as
+`window/showMessage`. The push path retains a rejected value in its session
+layer until a push repairs it or clears it with `null`, so an invalid value
+that layer already holds is not named again, whatever else arrives in
+between; a changed but still invalid value is a new mistake and is named. A
+malformed payload changes no setting; a malformed section changes no setting
+itself, while flat settings beside it still apply. Neither is retained, so a
+verbatim repeat is suppressed only while consecutive notifications carry the
+same malformed shape.
 
 ### Cooperative git invocation deadline (#2303 amendment)
 
@@ -299,6 +322,16 @@ the last-known-good pulled layer stays in effect,
 and analysis is not rescheduled by the pull.
 ```
 
+### Malformed pull is announced, naming every rejected setting
+
+```text
+Given a generic client (no riprEditor) with workspace.configuration support,
+when a pull returns {"diagnosticProfile": "loud", "seamDiagnostics": "yes", "baseRef": 5},
+then one window/logMessage and one window/showMessage warning arrive,
+each naming diagnosticProfile, seamDiagnostics and baseRef with their accepted values,
+and saying the previous settings stay in effect.
+```
+
 ### Fallback is unchanged without pull support
 
 ```text
@@ -419,7 +452,7 @@ then the recorded outcome stays superseded (first-cancel-wins).
 - `crates/ripr/src/app/check.rs::tests::cli_check_input_carries_no_git_deadline`
   — the CLI no-drift contract (no deadline, unbounded, byte-identical).
 - #1972 amendment:
-  `crates/ripr/src/analysis/cancellation.rs::tests::deadline_exceeded_is_reported_by_checkpoint`
+  `crates/ripr-contract/src/cancellation.rs::tests::deadline_exceeded_is_reported_by_checkpoint`
   and `deadline_cancel_loses_to_an_earlier_superseded` — the named abort
   kind and first-cancel-wins.
 - `crates/ripr/src/lsp/config.rs::tests::refresh_deadline_ms_applies_from_initialization_options`,
@@ -456,7 +489,7 @@ then the recorded outcome stays superseded (first-cancel-wins).
   limited-snapshot conversion; `crates/ripr/src/lsp/git_inputs.rs` — the
   fail-closed probe deadline; `crates/ripr/src/lsp/config.rs` — the
   `gitTimeoutMs` governed key.
-- #1972 amendment: `crates/ripr/src/analysis/cancellation.rs` — the
+- #1972 amendment: `crates/ripr-contract/src/cancellation.rs` — the
   `DeadlineExceeded` abort kind; `crates/ripr/src/lsp/config.rs` — the
   `refreshDeadlineMs` governed key (`DEFAULT_LSP_REFRESH_DEADLINE_MS`);
   `crates/ripr/src/lsp/backend.rs` — deadline arming in

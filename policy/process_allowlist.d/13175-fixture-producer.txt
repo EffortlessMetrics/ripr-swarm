@@ -1,0 +1,1 @@
+editors/vscode/test/suite/fixture_producer.test.ts|child_process|1|lsp/editor-test|#13175: one controlled Node fixture creates a pipe-holding descendant under the existing fixture producer process owner; tests retain PID liveness, deadline/cancellation assertions and teardown. Test module only; no production spawn authority.

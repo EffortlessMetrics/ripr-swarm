@@ -1,0 +1,1 @@
+crates/ripr/tests/kani_report_cli.rs|Command::new|1|kani-report-cli-tests|#12790: invokes the exact Cargo-provided ripr binary to replay authored bindings and retained Kani JSON through reports kani. No shell, verifier or external command; output() waits for the CLI exit, normal cleanup errors propagate and drop provides best-effort failure cleanup.

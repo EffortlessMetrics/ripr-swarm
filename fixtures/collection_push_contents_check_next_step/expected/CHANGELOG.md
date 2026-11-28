@@ -1,0 +1,70 @@
+# Golden Output Changes
+
+## Pending — collection_push_contents_check_next_step (1)
+
+Reason:
+new fixture: positive contents-check next step for the sole count-pinned push (#12456, RIPR-SPEC-0412)
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — collection_push_contents_check_next_step (2)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — collection_push_contents_check_next_step (3)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — collection_push_contents_check_next_step (4)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — collection_push_contents_check_next_step (5)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — collection_push_contents_check_next_step (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless collection_push_contents_check_next_step --reason "..."`
+
+Updated:
+- `expected/human.txt`

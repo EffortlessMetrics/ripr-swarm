@@ -246,6 +246,25 @@ fn unrelated_documentation_does_not_hide_known_table_inputs() -> Result<(), Stri
 }
 
 #[test]
+fn an_anyhow_module_does_not_hide_known_table_inputs() -> Result<(), String> {
+    // `anyhow` is a forwarding-only binding candidate (#10357): a module of
+    // that name adds no call to the owner. (Any `use` item already leaves
+    // the count unknown, so an import cannot be the control here.)
+    let source = format!("mod anyhow {{}}\n{}", candidate());
+    let subject = Subject::new(&source)?;
+    let finding = subject.finding()?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|f| f.value == "samples.len() == 0")
+    );
+    Ok(())
+}
+
+#[test]
 fn workspace_expansion_limits_withhold_partial_slice_evidence() -> Result<(), String> {
     for prefix in [
         "macro_rules! unrelated { () => {} } unrelated!();\n",

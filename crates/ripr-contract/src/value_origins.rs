@@ -1,0 +1,432 @@
+//! Producer-owned value locations, separate from the stable four-field DTO.
+use crate::domain::{self, Probe, ValueContext};
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+/// A [`domain::ValueFact`] plus the file it was read from. The file stays
+/// producer-side: it is not serialized and is dropped by
+/// [`LocatedValueFact::into_public`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocatedValueFact {
+    /// The file the value was read from, or `None` when unknown. Skipped by
+    /// serde: never serialized, and `None` after deserializing.
+    #[serde(skip)]
+    pub file: Option<PathBuf>,
+    /// The test source line the value was read from.
+    pub line: usize,
+    /// Retained source or value-transfer provenance for the value.
+    pub text: String,
+    /// The value itself, such as `amount = 50`.
+    pub value: String,
+    /// Where in test source the value was found.
+    pub context: ValueContext,
+}
+impl LocatedValueFact {
+    /// Returns the public four-field fact, dropping the file.
+    pub fn into_public(self) -> domain::ValueFact {
+        domain::ValueFact {
+            line: self.line,
+            text: self.text,
+            value: self.value,
+            context: self.context,
+        }
+    }
+}
+// A legacy public DTO has no origin; conversion must never invent one.
+impl From<domain::ValueFact> for LocatedValueFact {
+    fn from(fact: domain::ValueFact) -> Self {
+        let domain::ValueFact {
+            line,
+            text,
+            value,
+            context,
+        } = fact;
+        Self {
+            file: None,
+            line,
+            text,
+            value,
+            context,
+        }
+    }
+}
+/// [`domain::ActivationEvidence`] whose observed values keep their files.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LocatedActivationEvidence {
+    /// Source values related tests supply, with their files.
+    pub observed_values: Vec<LocatedValueFact>,
+    /// Discriminating values or checks no related test was seen to supply.
+    pub missing_discriminators: Vec<domain::MissingDiscriminatorFact>,
+}
+impl LocatedActivationEvidence {
+    /// Returns the public evidence, plus each observed value's file in the same
+    /// order.
+    pub fn into_public(self) -> (domain::ActivationEvidence, Vec<Option<PathBuf>>) {
+        let files = self
+            .observed_values
+            .iter()
+            .map(|v| v.file.clone())
+            .collect();
+        (
+            domain::ActivationEvidence {
+                observed_values: self
+                    .observed_values
+                    .into_iter()
+                    .map(LocatedValueFact::into_public)
+                    .collect(),
+                missing_discriminators: self.missing_discriminators,
+            },
+            files,
+        )
+    }
+}
+
+/// This run-local context records locations at projection time. A receipt binds
+/// the complete probe and the ordered four-field vector, never a short ID or a
+/// guessed line/token match. Mutable public reports invalidate changed receipts.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ValueOrigins(std::collections::BTreeMap<domain::SourceLocation, Vec<OriginReceipt>>);
+/// Files for one finding's observed values, bound to its complete probe and
+/// ordered value list. Built by [`ValueOrigins::prepare`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OriginReceipt {
+    probe: Probe,
+    values: Vec<domain::ValueFact>,
+    files: Vec<Option<PathBuf>>,
+}
+impl ValueOrigins {
+    /// Builds a receipt binding `finding`'s probe and observed values to
+    /// `files`, one entry per observed value (`None` for an unknown file).
+    /// Returns `None` when `files` is empty or its length differs from the
+    /// observed values. Call it before acquiring any shared collector lock.
+    pub fn prepare(
+        finding: &domain::Finding,
+        files: Vec<Option<PathBuf>>,
+    ) -> Option<OriginReceipt> {
+        if files.is_empty() || finding.activation.observed_values.len() != files.len() {
+            return None;
+        }
+        Some(OriginReceipt {
+            probe: finding.probe.clone(),
+            values: finding.activation.observed_values.clone(),
+            files,
+        })
+    }
+    /// Adds `receipt`, keeping any receipts already recorded for the same
+    /// location.
+    pub fn insert_receipt(&mut self, receipt: OriginReceipt) {
+        // Location is only a routing bucket. Full probe and ordered facts
+        // remain the authority, including when several probes share a line.
+        self.0
+            .entry(receipt.probe.location.clone())
+            .or_default()
+            .push(receipt);
+    }
+    /// Runs [`ValueOrigins::prepare`] and inserts the receipt; does nothing when
+    /// `files` is empty or does not hold exactly one entry per observed value.
+    pub fn record(&mut self, finding: &domain::Finding, files: Vec<Option<PathBuf>>) {
+        if let Some(receipt) = Self::prepare(finding, files) {
+            self.insert_receipt(receipt);
+        }
+    }
+    /// Appends every receipt from `other`. Receipts are never overwritten, so
+    /// conflicting ones stay ambiguous.
+    pub fn extend(&mut self, other: Self) {
+        for (location, mut receipts) in other.0 {
+            // Append, never overwrite: conflicting receipts remain ambiguous.
+            self.0.entry(location).or_default().append(&mut receipts);
+        }
+    }
+    /// Returns the files recorded for `finding`'s observed values, in order.
+    /// Returns `None` when no receipt matches its full probe and value list, or
+    /// when matching receipts disagree on the files.
+    pub fn files(&self, finding: &domain::Finding) -> Option<&[Option<PathBuf>]> {
+        self.files_for(&finding.probe, &finding.activation.observed_values)
+    }
+    fn files_for(&self, probe: &Probe, values: &[domain::ValueFact]) -> Option<&[Option<PathBuf>]> {
+        let mut matches =
+            self.0.get(&probe.location)?.iter().filter(|r| {
+                &r.probe == probe && r.values == values && r.files.len() == values.len()
+            });
+        let first = matches.next()?;
+        if matches.any(|other| other.files != first.files) {
+            return None;
+        }
+        Some(&first.files)
+    }
+    /// Used only by producer-local contexts while finalizing a known probe.
+    pub fn rebind_probe(&mut self, before: &Probe, after: &Probe) {
+        let receipts = std::mem::take(&mut self.0).into_values().flatten();
+        for mut receipt in receipts {
+            if &receipt.probe == before {
+                receipt.probe = after.clone();
+            }
+            self.insert_receipt(receipt);
+        }
+    }
+    /// Rewrites every probe location file and value file through `rebase`.
+    pub fn rebase(&mut self, rebase: impl Fn(&Path) -> PathBuf) {
+        let receipts = std::mem::take(&mut self.0).into_values().flatten();
+        for mut receipt in receipts {
+            receipt.probe.location.file = rebase(&receipt.probe.location.file);
+            for file in receipt.files.iter_mut().flatten() {
+                *file = rebase(file);
+            }
+            self.insert_receipt(receipt);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn context(receipts: Vec<OriginReceipt>) -> ValueOrigins {
+        let mut context = ValueOrigins::default();
+        for receipt in receipts {
+            context.insert_receipt(receipt);
+        }
+        context
+    }
+    fn probe() -> Probe {
+        Probe {
+            before_condition: None,
+            id: domain::ProbeId("p".into()),
+            location: domain::SourceLocation::new("src/lib.rs", 3, 1),
+            owner: None,
+            family: domain::ProbeFamily::Predicate,
+            delta: domain::DeltaKind::Control,
+            before: None,
+            after: None,
+            expression: "x > 5".into(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        }
+    }
+    fn values() -> Vec<domain::ValueFact> {
+        [10, 11]
+            .map(|n| domain::ValueFact {
+                line: 4,
+                text: format!("price({n})"),
+                value: n.to_string(),
+                context: ValueContext::FunctionArgument,
+            })
+            .to_vec()
+    }
+    fn receipt(file: &str) -> OriginReceipt {
+        OriginReceipt {
+            probe: probe(),
+            values: values(),
+            files: vec![Some(file.into()), None],
+        }
+    }
+    // Check receipt matching independently of a Finding fixture's narration.
+    fn lookup<'a>(
+        ctx: &'a ValueOrigins,
+        p: &Probe,
+        v: &[domain::ValueFact],
+    ) -> Option<&'a [Option<PathBuf>]> {
+        ctx.files_for(p, v)
+    }
+    #[test]
+    fn clones_keep_occurrences_and_unknown_origins() {
+        let ctx = context(vec![receipt("tests/a.py"), receipt("tests/a.py")]);
+        assert_eq!(
+            lookup(&ctx, &probe(), &values()),
+            Some([Some(PathBuf::from("tests/a.py")), None].as_slice())
+        );
+    }
+    #[test]
+    fn conflicts_are_sticky_under_every_order_and_repeated_receipts() {
+        for order in [["a", "b", "a"], ["a", "a", "b"], ["b", "a", "a"]] {
+            let mut ctx = ValueOrigins::default();
+            for file in order {
+                ctx.extend(context(vec![receipt(file)]));
+            }
+            assert!(lookup(&ctx, &probe(), &values()).is_none());
+        }
+    }
+    #[test]
+    fn changed_payload_order_or_full_probe_invalidates_receipt() {
+        let ctx = context(vec![receipt("tests/a.py")]);
+        let mut v = values();
+        v[0].text.push('!');
+        assert!(lookup(&ctx, &probe(), &v).is_none());
+        v = values();
+        v.reverse();
+        assert!(lookup(&ctx, &probe(), &v).is_none());
+        let mut p = probe();
+        p.expression.push('!');
+        assert!(lookup(&ctx, &p, &values()).is_none());
+    }
+    #[test]
+    fn malformed_occurrence_count_and_same_location_probe_collision_fail_closed() {
+        let mut malformed = receipt("tests/a.py");
+        malformed.files.pop();
+        let ctx = context(vec![malformed]);
+        assert!(lookup(&ctx, &probe(), &values()).is_none());
+        let mut other = receipt("tests/b.py");
+        other.probe.expression = "different expression under the same short ID".into();
+        let ctx = context(vec![receipt("tests/a.py"), other]);
+        assert_eq!(
+            lookup(&ctx, &probe(), &values()).map(|f| f[0].as_deref()),
+            Some(Some(Path::new("tests/a.py")))
+        );
+    }
+    #[test]
+    fn rebase_moves_probe_and_origin_together() {
+        let mut ctx = context(vec![receipt("tests/a.py")]);
+        ctx.rebase(|p| Path::new("repo").join(p));
+        let mut p = probe();
+        p.location.file = PathBuf::from("repo/src/lib.rs");
+        assert_eq!(
+            lookup(&ctx, &p, &values()).map(|files| files[0].as_deref()),
+            Some(Some(Path::new("repo/tests/a.py")))
+        );
+        assert!(lookup(&ctx, &probe(), &values()).is_none());
+    }
+    #[test]
+    fn rebind_probe_follows_a_renamed_probe_and_drops_the_old_one() {
+        let mut ctx = context(vec![receipt("tests/a.py")]);
+        let before = probe();
+        let mut after = probe();
+        after.id = domain::ProbeId("p.2".into());
+        ctx.rebind_probe(&before, &after);
+        assert_eq!(
+            lookup(&ctx, &after, &values()).map(|files| files[0].as_deref()),
+            Some(Some(Path::new("tests/a.py")))
+        );
+        assert!(lookup(&ctx, &before, &values()).is_none());
+    }
+
+    fn finding(values: Vec<domain::ValueFact>) -> domain::Finding {
+        let stage =
+            || domain::StageEvidence::new(domain::StageState::Yes, domain::Confidence::Medium, "s");
+        domain::Finding {
+            analysis_scope: domain::AnalysisScope::Diff,
+            confidence_basis: Vec::new(),
+            id: "finding:price".into(),
+            canonical_gap: None,
+            probe: probe(),
+            class: domain::ExposureClass::WeaklyExposed,
+            ripr: domain::RiprEvidence {
+                reach: stage(),
+                infect: stage(),
+                propagate: stage(),
+                reveal: domain::RevealEvidence {
+                    observe: stage(),
+                    discriminate: stage(),
+                },
+            },
+            confidence: 0.5,
+            evidence: Vec::new(),
+            missing: Vec::new(),
+            flow_sinks: Vec::new(),
+            activation: domain::ActivationEvidence {
+                observed_values: values,
+                missing_discriminators: Vec::new(),
+            },
+            stop_reasons: Vec::new(),
+            related_tests_matched_total: None,
+            related_tests: Vec::new(),
+            recommended_next_step: None,
+            language: None,
+            language_status: None,
+            owner_kind: None,
+            static_limit_kind: None,
+            changed_sink: None,
+            observed_sink: None,
+            oracle_alignment: None,
+            alignment_reason: None,
+            source_currentness: domain::SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    fn files(names: &[Option<&str>]) -> Vec<Option<PathBuf>> {
+        names.iter().map(|name| name.map(PathBuf::from)).collect()
+    }
+
+    #[test]
+    fn a_recorded_finding_reads_back_its_files_in_value_order() {
+        let subject = finding(values());
+        let mut ctx = ValueOrigins::default();
+        assert_eq!(ctx.files(&subject), None);
+        ctx.record(&subject, files(&[Some("tests/a.rs"), None]));
+        assert_eq!(
+            ctx.files(&subject),
+            Some(files(&[Some("tests/a.rs"), None]).as_slice())
+        );
+    }
+
+    #[test]
+    fn origins_are_recorded_only_when_there_is_one_per_observed_value() {
+        let subject = finding(values());
+        for wrong in [
+            files(&[]),
+            files(&[Some("tests/a.rs")]),
+            files(&[Some("tests/a.rs"), None, None]),
+        ] {
+            assert_eq!(ValueOrigins::prepare(&subject, wrong.clone()), None);
+            let mut ctx = ValueOrigins::default();
+            ctx.record(&subject, wrong);
+            assert_eq!(ctx, ValueOrigins::default());
+        }
+        // A finding with no observed values has nothing to locate.
+        let bare = finding(Vec::new());
+        assert_eq!(ValueOrigins::prepare(&bare, Vec::new()), None);
+        let prepared = ValueOrigins::prepare(&subject, files(&[None, Some("tests/b.rs")]));
+        assert_eq!(
+            prepared.map(|receipt| receipt.files),
+            Some(files(&[None, Some("tests/b.rs")]))
+        );
+    }
+
+    #[test]
+    fn extending_keeps_receipts_from_both_contexts() {
+        let here = finding(values());
+        let mut there = finding(values());
+        there.probe.location = domain::SourceLocation::new("src/other.rs", 9, 1);
+        let mut left = ValueOrigins::default();
+        left.record(&here, files(&[Some("tests/a.rs"), None]));
+        let mut right = ValueOrigins::default();
+        right.record(&there, files(&[None, Some("tests/b.rs")]));
+        left.extend(right);
+        assert_eq!(
+            left.files(&here),
+            Some(files(&[Some("tests/a.rs"), None]).as_slice())
+        );
+        assert_eq!(
+            left.files(&there),
+            Some(files(&[None, Some("tests/b.rs")]).as_slice())
+        );
+    }
+
+    #[test]
+    fn located_evidence_splits_into_public_facts_and_ordered_origins() {
+        let located = LocatedActivationEvidence {
+            observed_values: values()
+                .into_iter()
+                .zip([Some("tests/a.rs"), None])
+                .map(|(fact, file)| LocatedValueFact {
+                    file: file.map(PathBuf::from),
+                    ..LocatedValueFact::from(fact)
+                })
+                .collect(),
+            missing_discriminators: vec![domain::MissingDiscriminatorFact {
+                value: "x == 5".into(),
+                reason: "boundary".into(),
+                flow_sink: None,
+                drafted_boundary: None,
+                shape: domain::DiscriminatorShape::Boundary,
+            }],
+        };
+        let (public, origins) = located.clone().into_public();
+        assert_eq!(public.observed_values, values());
+        assert_eq!(
+            public.missing_discriminators,
+            located.missing_discriminators
+        );
+        assert_eq!(origins, files(&[Some("tests/a.rs"), None]));
+        // A public fact carries no origin, so converting it back invents none.
+        assert_eq!(LocatedValueFact::from(values()[0].clone()).file, None);
+    }
+}

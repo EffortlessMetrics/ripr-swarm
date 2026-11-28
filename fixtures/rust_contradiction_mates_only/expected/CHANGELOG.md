@@ -12,3 +12,144 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_contradiction_mates_only (2)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_contradiction_mates_only (3)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_contradiction_mates_only (4)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+Reach summary of a workspace-unreferenced owner now ends '(unreferenced in workspace)' (RIPR-SPEC-0219, #12766); class unchanged
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_contradiction_mates_only (5)
+
+Reason:
+RIPR-SPEC-0423: merge of origin/main union re-bless; additive evidence_stages rows combined with main-side bless entries and wording updates
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_contradiction_mates_only (6)
+
+Reason:
+RIPR-SPEC-0219/#14919: an unreferenced changed owner is a test gap on the human surface, matching the agent format
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_contradiction_mates_only (7)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_contradiction_mates_only (8)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_contradiction_mates_only (9)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — rust_contradiction_mates_only (10)
+
+Reason:
+RIPR-SPEC-0011: an unreferenced new function's no-path gap prints check's repair start (#15926)
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_contradiction_mates_only (11)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_contradiction_mates_only (12)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_contradiction_mates_only (13)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_contradiction_mates_only --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

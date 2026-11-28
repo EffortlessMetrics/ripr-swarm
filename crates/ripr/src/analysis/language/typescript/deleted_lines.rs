@@ -161,6 +161,41 @@ fn removed_runs<'a>(
     runs
 }
 
+/// New-side added lines that hold no code: blank, a lone bracket, or comment
+/// text, read with the block comment state the candidate file has where each
+/// added run starts, so the body rows of a block comment count whatever they
+/// start with. A statement after a closed comment (`/* note */ return
+/// value;`) is code, and so is every line of an unreadable candidate file
+/// (#15913).
+pub(super) fn added_lines_without_code(
+    changed: &ChangedFile,
+    new_source: Option<&str>,
+) -> BTreeSet<usize> {
+    let Some(comment_open) = new_source.map(comment_open_at_line_start) else {
+        return BTreeSet::new();
+    };
+    let mut by_line: Vec<&ChangedLine> = changed.added_lines.iter().collect();
+    by_line.sort_by_key(|line| line.line);
+    let mut without_code: BTreeSet<usize> = BTreeSet::new();
+    let mut previous: Option<usize> = None;
+    let mut in_comment = false;
+    for line in by_line {
+        if previous.and_then(|last| last.checked_add(1)) != Some(line.line) {
+            in_comment = line
+                .line
+                .checked_sub(1)
+                .and_then(|index| comment_open.get(index))
+                .copied()
+                .unwrap_or(false);
+        }
+        previous = Some(line.line);
+        if should_ignore_typescript_changed_line(&code_only_from(&line.text, &mut in_comment)) {
+            without_code.insert(line.line);
+        }
+    }
+    without_code
+}
+
 /// For each candidate line, whether a block comment is open where it starts.
 fn comment_open_at_line_start(source: &str) -> Vec<bool> {
     let mut in_comment = false;
@@ -419,8 +454,11 @@ fn deleted_line_owner<'a>(
         .min_by_key(|owner| owner.end_line - owner.start_line)
 }
 
-/// The line with comments and string literal contents removed, so
-/// brackets and arrows inside them are not read as code. Quotes stay.
+/// The line with comments, string-literal contents, and regex-literal
+/// contents removed, so brackets and arrows inside them are not read as
+/// code. Quotes stay. `/` is a regex opener after an expression-position
+/// token; otherwise it is division (`a / b`, `x) / 2`). Multi-line regex
+/// and template-literal interpolations stay on later slices (#7705 #6/#7).
 fn code_only(text: &str) -> String {
     code_only_from(text, &mut false)
 }
@@ -460,11 +498,64 @@ fn code_only_from(text: &str, in_comment: &mut bool) -> String {
                     chars.next();
                     *in_comment = true;
                 }
+                '/' if slash_starts_regex_literal(&code) => skip_regex_contents(&mut chars),
                 _ => code.push(ch),
             },
         }
     }
     code
+}
+
+/// Whether a `/` that is not `//` or `/*` opens a regex literal: the previous
+/// non-space code character is empty or an expression-position token, or the
+/// preceding word is `return` / `typeof` / `case` / `in` / `of`.
+fn slash_starts_regex_literal(code: &str) -> bool {
+    let trimmed = code.trim_end();
+    let Some(prev) = trimmed.chars().next_back() else {
+        return true;
+    };
+    // `)` is omitted on purpose: `x) / 2` is division, not a regex.
+    if "(,=:[!&|?{};+-*%<>~^".contains(prev) {
+        return true;
+    }
+    if !(prev.is_alphanumeric() || prev == '_' || prev == '$') {
+        return false;
+    }
+    matches!(
+        trailing_word(trimmed),
+        "return" | "typeof" | "case" | "in" | "of"
+    )
+}
+
+fn trailing_word(text: &str) -> &str {
+    let start = text
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_' || *ch == '$'))
+        .map(|(index, ch)| index + ch.len_utf8())
+        .unwrap_or(0);
+    &text[start..]
+}
+
+/// Skip from inside a regex literal to its unescaped closing `/` that is
+/// outside a `[...]` class. An unclosed pattern consumes the rest of the
+/// line: this reader is not a lexer.
+fn skip_regex_contents(chars: impl Iterator<Item = char>) {
+    let mut in_class = false;
+    let mut escaped = false;
+    for ch in chars {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '[' if !in_class => in_class = true,
+            ']' if in_class => in_class = false,
+            '/' if !in_class => break,
+            _ => {}
+        }
+    }
 }
 
 /// Opened minus closed parentheses in code.
@@ -773,4 +864,51 @@ fn strip_leading_modifiers(text: &str) -> &str {
         break;
     }
     rest
+}
+
+#[cfg(test)]
+mod code_only_regex_tests {
+    use super::{code_only, paren_delta};
+
+    #[test]
+    fn regex_literal_parens_do_not_count() {
+        assert_eq!(paren_delta(&code_only(r"const re = /\(/;")), 0);
+        assert_eq!(paren_delta(&code_only("const re = /[(]/;")), 0);
+        assert!(
+            !code_only(r"const re = /\(/;").contains('('),
+            "escaped paren inside /\\\\(/ must not remain in code: {:?}",
+            code_only(r"const re = /\(/;")
+        );
+        assert!(
+            !code_only("const re = /[(]/;").contains('('),
+            "class paren inside /[(]/ must not remain in code: {:?}",
+            code_only("const re = /[(]/;")
+        );
+    }
+
+    #[test]
+    fn division_parens_stay_in_code() {
+        let code = code_only("total = (a + b) / (c);");
+        assert_eq!(code, "total = (a + b) / (c);");
+        assert_eq!(paren_delta(&code), 0);
+        let after_paren = code_only("total = (a + b) / 2;");
+        assert_eq!(after_paren, "total = (a + b) / 2;");
+    }
+
+    #[test]
+    fn regex_inside_a_string_is_not_stripped_as_a_literal() {
+        let code = code_only(r#"const msg = "/(/";"#);
+        assert_eq!(code, r#"const msg = "";"#);
+        assert_eq!(paren_delta(&code), 0);
+        assert!(
+            code.ends_with(r#"";"#),
+            "string close and semicolon must survive: {code:?}"
+        );
+    }
+
+    #[test]
+    fn keyword_before_slash_opens_a_regex() {
+        assert_eq!(paren_delta(&code_only("return /(/;")), 0);
+        assert_eq!(paren_delta(&code_only("typeof /(/;")), 0);
+    }
 }

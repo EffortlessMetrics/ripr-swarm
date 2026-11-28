@@ -130,7 +130,22 @@ Test discovery:
   runner-source, shadowing, skip/todo-options and inactive-modifier fences
   (#10987). The namespace object's own name, a member read off it
   (`runner.test(...)`), and an aliased `.each` factory register nothing
-  through this path
+  through this path, except that a default binding of a runner whose default
+  export is its `test` function (`tape`, `ava`, `node:test`, `test`) is that
+  function under any local name: `const check = require('tape')`,
+  `import check = require('tape')` and `import check from 'ava'` register like
+  `test` (#16431). Only the whole module (`require()`, import-equals) or an ES
+  default import is that function: a CommonJS `{ default: check } =
+  require('tape')`, with or without a fallback, reads a property that may be
+  absent and stays unregistered, as do other runners' defaults (mocha,
+  node-tap's namespace) and a local module's default. Such a default bound
+  under a suite spelling (`const suite = require('tape')`,
+  `import describe from 'tape'`) still runs its calls as tests, so a bare or
+  active-modifier call through it (`suite(...)`, `suite.only(...)`, an awaited
+  `await suite(...)`) registers a test, is not opened as a suite body and is
+  not disclosed as a runner kind mismatch (#16436). A genuine named `suite` /
+  `describe` import still opens its body, and a renamed named member under a
+  suite spelling (`import { test as describe }`) stays unindexed and disclosed
 - AVA's macro form, a named macro between the title and the callback
   (`test(name, macro, async (t) => {})`, `test(name, ns.macro, fn)`): the
   function third argument is the callback (#10964) for a root bound to AVA's `test`, and only an inline function; a macro without a
@@ -197,6 +212,24 @@ Test discovery:
   `describe` names, the placeholder `<computed title, line N>`, and the line
   of the registration. A string literal or a substitution-free template keeps
   its text.
+- a Vitest `test.for(rows)(title, fn)` / `it.for(rows)(title, fn)`
+  registration whose root is a named `test` / `it` import from `vitest` and
+  whose table is an inline literal table is indexed with one concrete case
+  per row (#10760). Vitest passes each row whole as the callback's first
+  argument, so the row binding is read from that parameter only: plain
+  array destructuring whose element count equals every row's length, a
+  plain identifier over a table of literal scalars, a plain identifier read
+  only as `row[<digit index>]` over array rows, or no parameter. The second
+  parameter is the `TestContext`: exactly `{ expect }` supplies the runner
+  `expect` unless the body re-declares it, and a named context is accepted
+  only when the body never mentions it (so `ctx.skip()` withdraws the test).
+  Any other `.for` registration (a global `test`, a variable, object or
+  spread table, defaulted, rest or extra destructured parameters, an
+  `.each`-style `(a, b)` parameter list, a used named context) is not
+  indexed, and an active, non-empty, non-skipped one is disclosed as the
+  `test.for registration` shape of `typescript_test_extraction_partial`
+  instead of being silently lost; an empty table, a skip option and an
+  unrelated `.for` helper are not (#10757).
 - a registration the extractor drops makes the analysis partial
   (`typescript_test_extraction_partial`) only when a test in that file can be
   related to the diff. The test index is workspace-wide, so the disclosure is
@@ -443,7 +476,24 @@ any line of a `.d.ts`/`.d.mts`/`.d.cts` declaration file: these are type-only
 and erased at compile time. Declaration files still count as changed files.
 `declare` used as a runtime identifier, or at the start of a template-literal
 line, is still probed. An unrecognised line keeps the non-specific predicate
-fallback and is never classified `exposed`.
+fallback and is never classified `exposed`. The fallback is an analysis
+choice, not a claim that a condition changed: when the unrecognised line is a
+plain single-name `const`/`let`/`var` declaration (with at most a simple type
+annotation) whose statement ends on the line with `;`, with balanced brackets,
+and whose initializer, read outside quoted text, carries no `<` or `>`
+(comparisons, generics and casts alike), `=`, `!`, `?` other than optional
+chaining, `&&`, `||`, `;`, `in`, `instanceof`, `typeof`, `function`, `await`
+or `yield`, no comment and no template interpolation `${`, with any run of
+whitespace read as one space and brackets spaced out, so `typeof(value)` and
+`key in(obj)` are refused like their spaced forms
+(`const desc = Object.getOwnPropertyDescriptor(raw, key);`). A leading
+`export` is allowed. A line
+without the closing `;` may continue into a condition on the next line and
+keeps the fallback presentation. When the line qualifies, the finding presents
+family `return_value` and delta `value` instead (#14381). Every analysis
+decision still reads the fallback shape, so classification, credit, oracle
+admission and gates do not move, and the finding keeps its
+`probe_fact: ambiguous_fallback` evidence.
 
 A changed line whose in-place removed counterpart differs only in erased
 TypeScript type syntax also produces no probe (#4282). Both sides must parse
@@ -593,6 +643,13 @@ boundary without changing the guards (#4104 E):
   level, by a non-`declare` `const` with an integer literal initializer, whose
   every other occurrence in the module is a plain read. Anything else emits
   nothing.
+- **Positional comparison witnesses** (#15582): a field read such as `o.ms`
+  or `this.ms` cannot use a standalone literal argument as its value, even
+  when the signature binds a parameter named `ms`. Arithmetic operands have
+  no simple boundary label. A simple parameter, including a Unicode binding,
+  reads its own argument position. When both operands name parameters, only
+  equal arguments at those two positions witness the equality boundary. An
+  empty array passed to the receiver parameter witnesses a length of zero.
 - **Boundary parameters evidence** (#4759): when both sides of that
   discriminator are distinct plain positional parameters of the owner
   (`amount == threshold`), the adapter instead emits
@@ -698,6 +755,30 @@ values defined in RIPR-SPEC-0026:
   observed)
 - `unsupported_syntax` (e.g., TypeScript syntax the parser flags as
   unsupported for this preview)
+
+### Strong check that is not tied to the changed line
+
+When a related test carries a strong exact-value or snapshot check, the
+classifier reached the generic fallthrough, and no missing discriminator,
+static limit or named limitation applies, the finding's next step says the
+check is already strong but cannot be tied to the changed line and asks for an
+input that flips the changed branch (#12463). The text lives in one shared
+constant that the classifier writes and the preview card reads; the card
+wording applies only to a non-exposed finding carrying exactly that next step
+with a strong snapshot or exact-value oracle. It never asks for another
+exact-value assertion and never produces a repair packet.
+
+The decision is excluded, and keeps the generic "add a test that exercises the
+changed behavior" step, when no input can flip the change: an unwitnessed
+update of a field (`this.hits += 1`) whose new value reads none of the owner's
+parameters, as when the test overwrites the field before reading it, reads an
+accessor-backed field, or runs a table whose rows never call the method
+(`ts_field_update_overwrite_*`, `ts_field_update_table_zero_rows`,
+`ts_field_update_getter_backed`). A deleted call is also excluded, counted or
+not, because it has no branch for an input to flip; the
+`typescript_call_removal_*` fixtures keep their previous wording. The positive fixtures are
+`ts_strong_snapshot_untied` (literal inline snapshot) and
+`ts_coincident_state_update`.
 
 ## Required Evidence
 
@@ -845,6 +926,20 @@ and
 `xtask/src/main.rs::tests::bun_ub_calibration_command_writes_markdown_and_json`,
 which keep TS-discriminated, missing-discriminator, mention-only, and
 bridge-unknown cases advisory and non-repair-ready.
+
+`crates/ripr/src/analysis/language/typescript/tests/renamed_default_runner_tests.rs`
+pins #16431: a tape default bound as `check` by `require()`, import-equals or
+an ES default import, and renamed ava and `node:test` default imports read
+`exposed` like the `test` reference, while a written binding, mocha's and
+node-tap's defaults, a local module's default and a `.skip` call stay
+`no_static_path`.
+`a_default_runner_named_like_a_suite_registers_its_tests` pins #16436: a
+tape default bound as `suite` or `describe` and a `node:test` default bound as
+`suite` read `exposed`, as do `suite.only`, a call inside a `describe`, and a
+genuine Vitest `suite` import. Mocha's default, `suite.skip`, a suite-level
+local `suite` and `import { test as describe }` stay `no_static_path`.
+`awaited_default_runner_named_like_a_suite_is_indexed_without_a_gap`
+pins the awaited form: indexed, with no partial-extraction disclosure.
 
 ## Implementation Mapping
 

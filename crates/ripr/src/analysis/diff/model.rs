@@ -116,6 +116,7 @@ impl ChangedFile {
     /// removed line interrupts (`-a -b +x -c +y`) keeps the same-coordinate
     /// match, the first removed line recorded at each added line's own
     /// coordinate.
+    #[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
     pub(crate) fn aligned_counterparts(&self) -> BTreeMap<usize, &ChangedLine> {
         let mut pairs = BTreeMap::new();
         let added_at: BTreeMap<usize, &ChangedLine> = self
@@ -162,6 +163,34 @@ impl ChangedFile {
             }
         }
         pairs
+    }
+
+    /// New-side lines of every contiguous added run in which each line is
+    /// `quiet`. Such a run carries no behavior, so a removed line recorded
+    /// against it was deleted rather than replaced: the adapters drop these
+    /// lines from [`Self::aligned_counterparts`] so the removed line keeps
+    /// its own base-side record.
+    #[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
+    pub(crate) fn added_lines_in_quiet_runs(
+        &self,
+        quiet: impl Fn(&ChangedLine) -> bool,
+    ) -> BTreeSet<usize> {
+        let mut added: Vec<&ChangedLine> = self.added_lines.iter().collect();
+        added.sort_by_key(|line| line.line);
+        let mut lines = BTreeSet::new();
+        let mut start = 0;
+        while start < added.len() {
+            let mut end = start + 1;
+            while end < added.len() && added[end - 1].line.checked_add(1) == Some(added[end].line) {
+                end += 1;
+            }
+            let run = &added[start..end];
+            if run.iter().all(|line| quiet(line)) {
+                lines.extend(run.iter().map(|line| line.line));
+            }
+            start = end;
+        }
+        lines
     }
 
     /// Added lines whose trimmed text is byte-identical to one removed line of
@@ -296,6 +325,109 @@ impl ChangedFile {
         pairs
     }
 
+    /// Added `return R;` statements that replace a removed `None => return R,`
+    /// arm of a `match` rewritten as `let ... else` (clippy
+    /// `manual_let_else`), as `(added new-side line, removed old-side line)`.
+    ///
+    /// `let x = match e { Some(x) => x, None => return R, }` and
+    /// `let Some(x) = e else { return R; }` run the same diverging statement:
+    /// the text differs only by the `None =>` arm head and the trailing
+    /// `,`/`;`. The pairing holds only when the scrutinee is the same on both
+    /// sides, so a changed scrutinee keeps both probes. Fail-closed: the
+    /// added pattern must be the `Some(...)` success pattern (a `let None =
+    /// ... else` rewrite diverges on the opposite variant, so it never
+    /// pairs), the removed arm must be a single-line `None => return ...`
+    /// arm, the added line a bare `return ...;` statement, the added
+    /// statement must be the first added line after its `let ... else`
+    /// opener, the removed `match` opener must sit on the same replaced line
+    /// as the added opener (so a neighbouring function's arm never pairs),
+    /// and each text must occur exactly once in the window, so a repeated or
+    /// edited statement never pairs by guess.
+    pub(crate) fn let_else_diverging_pairs(&self) -> Vec<(usize, usize)> {
+        /// How far above an added `return` its `let ... else` opener and the
+        /// removed `match` opener may sit. A `manual_let_else` rewrite keeps
+        /// the opener and the diverging statement within a few lines; a
+        /// longer gap is not the same rewrite.
+        const WINDOW: usize = 8;
+        let mut pairs = Vec::new();
+        for added in &self.added_lines {
+            let Some(added_expr) = bare_return_statement(&added.text) else {
+                continue;
+            };
+            // The added statement must be the first added line after its
+            // opener: a second statement in the `else` block is not the
+            // one-statement rewrite this pairing describes.
+            let Some(opener) = self
+                .added_lines
+                .iter()
+                .filter(|line| line.new_side_line < added.new_side_line)
+                .max_by_key(|line| line.new_side_line)
+            else {
+                continue;
+            };
+            if added.new_side_line - opener.new_side_line > WINDOW {
+                continue;
+            }
+            let Some(scrutinee) = let_else_scrutinee(&opener.text) else {
+                continue;
+            };
+            // The refutable pattern must be the `Some(...)` success pattern:
+            // `let None = e else` diverges on `Some`, the opposite variant
+            // from the removed `None => return` arm, so pairing it would
+            // silence a real behaviour change.
+            let Some(pattern) = let_else_pattern(&opener.text) else {
+                continue;
+            };
+            if !(pattern.starts_with("Some(") && pattern.ends_with(')')) {
+                continue;
+            }
+            let Some(match_opener) = self
+                .removed_lines
+                .iter()
+                .filter(|line| {
+                    line.new_side_line == opener.new_side_line
+                        && added.new_side_line - line.new_side_line <= WINDOW
+                })
+                .filter(|line| match_scrutinee(&line.text).is_some_and(|s| s == scrutinee))
+                .max_by_key(|line| line.new_side_line)
+            else {
+                continue;
+            };
+            let mut matched = None;
+            let mut arm_count = 0;
+            for arm in self.removed_lines.iter().filter(|line| {
+                line.line > match_opener.line
+                    && line.new_side_line <= added.new_side_line
+                    && added.new_side_line - line.new_side_line <= WINDOW
+            }) {
+                if none_arm_return(&arm.text).is_some_and(|expr| expr == added_expr) {
+                    arm_count += 1;
+                    matched = Some(arm);
+                }
+            }
+            if arm_count != 1 {
+                continue;
+            }
+            let Some(arm) = matched else {
+                continue;
+            };
+            let added_count = self
+                .added_lines
+                .iter()
+                .filter(|line| {
+                    line.new_side_line <= added.new_side_line
+                        && added.new_side_line - line.new_side_line <= WINDOW
+                        && bare_return_statement(&line.text).is_some_and(|expr| expr == added_expr)
+                })
+                .count();
+            if added_count != 1 {
+                continue;
+            }
+            pairs.push((added.new_side_line, arm.line));
+        }
+        pairs
+    }
+
     /// The file's contiguous added runs that have removed lines recorded at
     /// their start. The diff parser gives every removed line of a block the
     /// new-side coordinate where the block's added run starts.
@@ -404,6 +536,68 @@ impl ChangedFile {
     }
 }
 
+/// The pattern of a `let <pattern> = <scrutinee> else {` opener.
+fn let_else_pattern(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let rest = text.strip_prefix("let ")?;
+    let body = rest.strip_suffix(" else {")?;
+    let (pattern, _) = body.split_once(" = ")?;
+    let pattern = pattern.trim();
+    (!pattern.is_empty()).then_some(pattern)
+}
+
+/// The scrutinee of a `let <pattern> = <scrutinee> else {` opener.
+fn let_else_scrutinee(text: &str) -> Option<String> {
+    let text = text.trim();
+    let rest = text.strip_prefix("let ")?;
+    let body = rest.strip_suffix(" else {")?;
+    // A Rust pattern never contains ` = `, so the first one separates the
+    // pattern from the scrutinee. Splitting on the last one would break a
+    // scrutinee that holds ` = ` inside a string literal.
+    let (_, scrutinee) = body.split_once(" = ")?;
+    let scrutinee = scrutinee.trim();
+    (!scrutinee.is_empty()).then(|| scrutinee.to_string())
+}
+
+/// The scrutinee of a `let <binding> = match <scrutinee> {` opener.
+fn match_scrutinee(text: &str) -> Option<String> {
+    let text = text.trim();
+    let rest = text.strip_prefix("let ")?;
+    let body = rest.strip_suffix(" {")?;
+    let (_, scrutinee) = body.split_once(" = match ")?;
+    let scrutinee = scrutinee.trim();
+    (!scrutinee.is_empty()).then(|| scrutinee.to_string())
+}
+
+/// The expression of a bare `return ...;` statement, without the `;`.
+fn bare_return_statement(text: &str) -> Option<String> {
+    let text = text.trim();
+    let statement = text.strip_suffix(';')?.trim();
+    let rest = statement.strip_prefix("return")?;
+    if !(rest.is_empty() || rest.starts_with(char::is_whitespace)) {
+        return None;
+    }
+    statement
+        .chars()
+        .any(char::is_alphanumeric)
+        .then(|| statement.to_string())
+}
+
+/// The expression of a single-line `None => return ... ,` match arm, without
+/// the trailing `,`.
+fn none_arm_return(text: &str) -> Option<String> {
+    let text = text.trim();
+    let rest = text.strip_prefix("None => ")?;
+    let arm = rest.strip_suffix(',').map(str::trim)?;
+    let after = arm.strip_prefix("return")?;
+    if !(after.is_empty() || after.starts_with(char::is_whitespace)) {
+        return None;
+    }
+    arm.chars()
+        .any(char::is_alphanumeric)
+        .then(|| arm.to_string())
+}
+
 /// `name: value,` struct-literal field line; the one kind of line that may
 /// move within its literal without changing meaning.
 fn is_field_line(text: &str) -> bool {
@@ -441,13 +635,16 @@ impl ReplacementRun<'_> {
 }
 
 /// Blocks with more line pairs than this pair nothing by content.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const MAX_ALIGNED_CELLS: usize = 65_536;
 
 /// Lines with more code tokens than this, such as a minified bundle line,
 /// never pair by content, which bounds the work per pair of lines.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const MAX_ALIGNED_TOKENS: usize = 256;
 
 /// Similarity, in thousandths, at or above which two lines may pair.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 const ALIKE_THRESHOLD: u32 = 500;
 
 /// Whether two lines are similar enough to read as one line edited: the
@@ -455,10 +652,12 @@ const ALIKE_THRESHOLD: u32 = 500;
 /// tokens (identifiers, keywords and numbers). String literals and line
 /// comments are left out, so a changed message or a reworded comment does
 /// not hide that the code around it is the same.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 pub(crate) fn lines_look_alike(old: &str, new: &str) -> bool {
     line_similarity(old, new) >= ALIKE_THRESHOLD
 }
 
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn line_similarity(old: &str, new: &str) -> u32 {
     key_similarity(
         &(old.trim(), code_tokens(old)),
@@ -467,6 +666,7 @@ fn line_similarity(old: &str, new: &str) -> u32 {
 }
 
 /// Similarity of two lines from their precomputed [`line_key`]s.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn key_similarity(old: &(&str, Option<Vec<&str>>), new: &(&str, Option<Vec<&str>>)) -> u32 {
     if old.0 == new.0 {
         return 1000;
@@ -478,6 +678,7 @@ fn key_similarity(old: &(&str, Option<Vec<&str>>), new: &(&str, Option<Vec<&str>
 }
 
 /// Dice coefficient, in thousandths, of two sorted token lists.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn token_similarity(old: &[&str], new: &[&str]) -> u32 {
     let total = old.len() + new.len();
     if old.is_empty() || new.is_empty() {
@@ -500,6 +701,7 @@ fn token_similarity(old: &[&str], new: &[&str]) -> u32 {
 
 /// The sorted word tokens of one line, outside string literals and before
 /// any `//` comment, or `None` past [`MAX_ALIGNED_TOKENS`].
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn code_tokens(line: &str) -> Option<Vec<&str>> {
     let mut tokens = Vec::new();
     let mut chars = line.char_indices().peekable();
@@ -543,7 +745,9 @@ fn code_tokens(line: &str) -> Option<Vec<&str>> {
 }
 
 /// A line's trimmed text and sorted code tokens, computed once per line.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn line_key(line: &ChangedLine) -> (&str, Option<Vec<&str>>) {
+    run_work!();
     (line.text.trim(), code_tokens(&line.text))
 }
 
@@ -552,6 +756,7 @@ fn line_key(line: &ChangedLine) -> (&str, Option<Vec<&str>>) {
 /// among the block's lines; a tie pairs nothing, since choosing would be a
 /// guess. Pairs that would cross (a later removed line paired with an
 /// earlier added line) are dropped, because a replacement keeps order.
+#[cfg(any(test, feature = "lang-python", feature = "lang-typescript"))]
 fn align_by_content(removed: &[&ChangedLine], added: &[&ChangedLine]) -> Vec<(usize, usize)> {
     let (rows, cols) = (removed.len(), added.len());
     if rows == 0 || cols == 0 || rows.saturating_mul(cols) > MAX_ALIGNED_CELLS {
@@ -608,6 +813,24 @@ fn align_by_content(removed: &[&ChangedLine], added: &[&ChangedLine]) -> Vec<(us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quiet_runs_are_whole_added_runs_of_quiet_lines() {
+        let changed = ChangedFile {
+            path: PathBuf::from("a.py"),
+            added_lines: vec![
+                line(5, 5, "code"),
+                line(2, 2, "# note"),
+                line(4, 4, "# note"),
+            ],
+            removed_lines: vec![line(2, 2, "old one"), line(4, 4, "old two")],
+        };
+        let quiet = changed.added_lines_in_quiet_runs(|line| line.text.starts_with('#'));
+        // Line 2 is a run of one comment; lines 4 and 5 are a run that holds
+        // code, so its comment is not in a quiet run.
+        assert_eq!(quiet.into_iter().collect::<Vec<_>>(), vec![2]);
+        assert!(changed.added_lines_in_quiet_runs(|_| false).is_empty());
+    }
 
     #[test]
     fn model_types_are_constructible() {
@@ -1060,12 +1283,34 @@ mod tests {
         );
     }
 
+    fn line_key_work(changed: &ChangedFile) -> usize {
+        RUN_WORK.set(Some(0));
+        let map = changed.aligned_counterparts();
+        assert_eq!(map.len(), 1);
+        RUN_WORK.replace(None).unwrap_or_default()
+    }
+
+    fn long_first_line_fixture(k: usize) -> ChangedFile {
+        let literal = format!("const s = \"{}\";", "x".repeat(1_000 * k));
+        let changed = ChangedFile {
+            path: PathBuf::from("src/big.ts"),
+            added_lines: (1..=140)
+                .map(|n| line(n, n, if n == 1 { &literal } else { "y();" }))
+                .collect(),
+            removed_lines: (1..=k)
+                .map(|n| line(n, 1, &format!("let v{n} = 0;")))
+                .collect(),
+        };
+        assert!(changed.added_lines.len() * changed.removed_lines.len() > MAX_ALIGNED_CELLS);
+        changed
+    }
+
     #[test]
     fn a_very_long_line_does_not_pair_by_content() {
         // A minified bundle line rebuilt with a source-map comment added: the
         // lines are over the token cap, so content pairs nothing and the
-        // first added line keeps its coordinate match in work that grows
-        // with the line, not with its square.
+        // first added line keeps its coordinate match. Tokenization stops at
+        // MAX_ALIGNED_TOKENS, so work stays bounded when the line grows.
         let build = |tokens: usize| {
             let bundle: String = (0..tokens).map(|n| format!("a{n}+")).collect();
             let rebuilt: String = (0..tokens).map(|n| format!("b{n}+")).collect();
@@ -1080,47 +1325,34 @@ mod tests {
         };
         let small_file = build(25_000);
         let large_file = build(50_000);
-        crate::testing::scale::assert_growth_within(
-            "long minified line",
-            25_000,
-            50_000,
-            3,
-            |tokens| {
-                let changed = if tokens == 25_000 {
-                    &small_file
-                } else {
-                    &large_file
-                };
-                let map = changed.aligned_counterparts();
-                assert_eq!(map.len(), 1);
-                let bundle = &changed.removed_lines[0].text;
-                let rebuilt = &changed.added_lines[0].text;
-                assert!(!lines_look_alike(bundle, rebuilt));
-            },
+        let bundle = &small_file.removed_lines[0].text;
+        let rebuilt = &small_file.added_lines[0].text;
+        assert!(!lines_look_alike(bundle, rebuilt));
+        let small_work = line_key_work(&small_file);
+        let large_work = line_key_work(&large_file);
+        eprintln!("long minified line: small={small_work}, large={large_work}");
+        assert!(
+            large_work <= small_work * 2 + 4,
+            "line_key work must stay linear in the long-line fallback, got {small_work} -> {large_work}"
         );
     }
 
     #[test]
     fn a_long_first_line_beside_many_removed_lines_stays_bounded() {
-        // One string-literal line (1 MB at the large size) against 1,000
-        // removed lines: the block exceeds the cell cap, and the first-line
-        // fallback tokenizes each line once. Both dimensions double between
-        // sizes, so linear work doubles and a per-pair tokenize quadruples.
-        crate::testing::scale::assert_growth_within("long first line", 500, 1_000, 3, |k| {
-            let literal = format!("const s = \"{}\";", "x".repeat(1_000 * k));
-            let changed = ChangedFile {
-                path: PathBuf::from("src/big.ts"),
-                added_lines: (1..=140)
-                    .map(|n| line(n, n, if n == 1 { &literal } else { "y();" }))
-                    .collect(),
-                removed_lines: (1..=k)
-                    .map(|n| line(n, 1, &format!("let v{n} = 0;")))
-                    .collect(),
-            };
-            assert!(changed.added_lines.len() * changed.removed_lines.len() > MAX_ALIGNED_CELLS);
-            let map = changed.aligned_counterparts();
-            assert_eq!(map.len(), 1);
-        });
+        // One string-literal line against many removed lines: the block exceeds
+        // the cell cap, and the first-line fallback compares each removed line
+        // to the first added line with one tokenization per line. Count
+        // line_key calls instead of wall time so hosted runners cannot flake
+        // on scheduling noise (#11689).
+        let small = long_first_line_fixture(500);
+        let large = long_first_line_fixture(1_000);
+        let small_work = line_key_work(&small);
+        let large_work = line_key_work(&large);
+        eprintln!("long first line: small={small_work}, large={large_work}");
+        assert!(
+            large_work <= small_work * 2 + 8,
+            "line_key work must stay linear in removed-line count, got {small_work} -> {large_work}"
+        );
     }
 
     #[test]

@@ -1,10 +1,10 @@
 //! A diff with no analyzable source file must not read the workspace's Rust
-//! sources in the interactive modes (#10338). Wall time on a hosted runner
-//! cannot gate that on every runner, so this test uses a sentinel instead:
-//! a Rust file outside the diff that ripr cannot read (not UTF-8) is named in
-//! a limitation whenever its sources are scanned. A docs-only diff must not
-//! mention it; the same sentinel must appear once the diff touches Rust, so
-//! the silence is not an insensitive probe.
+//! sources in instant, draft, fast (#10338), or ready (#10353). Wall time on a
+//! hosted runner cannot gate that on every runner, so this test uses a
+//! sentinel instead: a Rust file outside the diff that ripr cannot read (not
+//! UTF-8) is named in a limitation whenever its sources are scanned. A
+//! docs-only diff must not mention it; the same sentinel must appear once the
+//! diff touches Rust, so the silence is not an insensitive probe.
 //!
 //! Boundary: the probe observes workspace Rust that reaches the index. A read
 //! that never feeds the index (for example a bare open that is discarded)
@@ -128,6 +128,25 @@ fn docs_only_diff_does_not_scan_workspace_rust_in_interactive_modes() -> Result<
     Ok(())
 }
 
+/// #10353: ready used to index the whole workspace even when the diff had no
+/// analyzable source file, so a README-only run named an unrelated unreadable
+/// Rust file and came back `partial_with_limitations`.
+#[test]
+fn docs_only_diff_does_not_scan_workspace_rust_in_ready_mode() -> Result<(), String> {
+    let repo = Repo::new("ready")?;
+    let (outcome, _) = repo.check("ready", README_DIFF)?;
+    assert_eq!(outcome["analysis_complete"], true, "{outcome}");
+    assert_eq!(
+        outcome["outcome"]["kind"], "no_behavioral_candidates",
+        "{outcome}"
+    );
+    assert!(
+        !names_sentinel(&outcome),
+        "a docs-only diff in ready mode scanned the workspace's Rust sources: {outcome}"
+    );
+    Ok(())
+}
+
 /// Positive control for the sentinel: once the diff touches Rust, the
 /// interactive scan does reach the unreadable file outside the diff, so its
 /// absence above is evidence and not an insensitive probe.
@@ -138,6 +157,20 @@ fn rust_diff_does_reach_the_sentinel_in_draft_mode() -> Result<(), String> {
     assert!(
         names_sentinel(&outcome),
         "the sentinel is invisible to a Rust diff, so the docs-only test proves nothing: {outcome}"
+    );
+    Ok(())
+}
+
+/// Positive control for ready: a Rust diff still indexes the workspace, so
+/// the docs-only silence above is not an insensitive probe and ready did not
+/// stop scanning when there is analyzable source (#10353).
+#[test]
+fn rust_diff_does_reach_the_sentinel_in_ready_mode() -> Result<(), String> {
+    let repo = Repo::new("ready-control")?;
+    let (outcome, _) = repo.check("ready", RUST_DIFF)?;
+    assert!(
+        names_sentinel(&outcome),
+        "the sentinel is invisible to a ready-mode Rust diff, so the docs-only ready test proves nothing: {outcome}"
     );
     Ok(())
 }

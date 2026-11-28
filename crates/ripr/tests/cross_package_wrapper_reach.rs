@@ -2,7 +2,10 @@
 //! another package has no helper-transfer chain, so the name-token relation
 //! alone must not read as an actionable `reachable_unrevealed` gap (#10127).
 //! The finding names the transitive-reach limit and keeps its class. A
-//! wrapper in the owner's own package keeps the inspect-first gap.
+//! wrapper in the owner's own package that a test calls is a tested caller
+//! chain: the proximity-only tests beside the owner are no evidence the change
+//! goes unnoticed, so that finding reads `weakly_exposed`, not an actionable
+//! gap (#12900). It is never `exposed`.
 
 use ripr::{CheckInput, ExposureClass, Finding, Mode, OutputFormat, check_workspace};
 use std::path::PathBuf;
@@ -115,8 +118,8 @@ fn a_test_through_a_wrapper_in_another_package_names_the_reach_limit() -> Result
 }
 
 #[test]
-fn a_wrapper_in_the_owners_own_package_keeps_the_gap() -> Result<(), String> {
-    let found = findings(&[
+fn a_wrapper_in_the_owners_own_package_reads_weakly_exposed() -> Result<(), String> {
+    assert_tested_caller_chain(&findings(&[
         (
             "tally/src/lib.rs",
             "pub fn weight(count: u32) -> u32 {\n    3 * count\n}\npub fn heavy(count: u32) -> u32 {\n    weight(count)\n}\n",
@@ -126,17 +129,26 @@ fn a_wrapper_in_the_owners_own_package_keeps_the_gap() -> Result<(), String> {
             "#[test]\nfn heavy_triples_the_count() {\n    assert_eq!(tally::heavy(5), 15);\n}\n",
         ),
         ("ledger/src/lib.rs", "pub fn unrelated() {}\n"),
-    ])?;
+    ])?)
+}
+
+/// Asserts a same-package tested caller chain: the finding reads
+/// `weakly_exposed`, not the actionable `reachable_unrevealed` gap and never
+/// `exposed` (#12900). The test does reach the owner through its package's
+/// own wrapper, so the integration-test limit it names stays.
+fn assert_tested_caller_chain(found: &[Finding]) -> Result<(), String> {
     let summary: Vec<_> = found
         .iter()
         .map(|finding| (finding.class.as_str(), limit(finding)))
         .collect();
-    if found.iter().any(|finding| limit(finding).is_some())
-        || !found
+    if found.is_empty()
+        || found
             .iter()
-            .any(|finding| finding.class == ExposureClass::ReachableUnrevealed)
+            .any(|finding| finding.class != ExposureClass::WeaklyExposed)
     {
-        return Err(format!("expected the kept gap, got {summary:?}"));
+        return Err(format!(
+            "expected weakly_exposed behind a tested caller, got {summary:?}"
+        ));
     }
     Ok(())
 }
@@ -159,10 +171,10 @@ fn assert_gap_kept(found: &[Finding]) -> Result<(), String> {
 }
 
 #[test]
-fn a_custom_lib_owner_with_a_same_package_wrapper_keeps_the_gap() -> Result<(), String> {
+fn a_custom_lib_owner_with_a_same_package_wrapper_reads_weakly_exposed() -> Result<(), String> {
     // The owner file has no source-layout marker, so a path-shape package
     // comparison would read the package's own `tests/` file as foreign.
-    assert_gap_kept(&findings_with(
+    assert_tested_caller_chain(&findings_with(
         CUSTOM_LIB_MANIFEST,
         "tally/lib/core.rs",
         &[
@@ -201,11 +213,11 @@ fn a_dependent_that_defines_its_own_function_of_the_owners_name_keeps_the_gap() 
 }
 
 #[test]
-fn a_dependent_calling_a_wrapper_defined_in_the_owners_package_keeps_the_gap() -> Result<(), String>
-{
+fn a_dependent_calling_a_wrapper_defined_in_the_owners_package_reads_weakly_exposed()
+-> Result<(), String> {
     // `tally::heavy` and the changed `tally::weight` share a package; the
     // test merely sits in a dependent, so no cross-package wrapper exists.
-    assert_gap_kept(&findings_with(
+    assert_tested_caller_chain(&findings_with(
         CUSTOM_LIB_MANIFEST,
         "tally/lib/core.rs",
         &[
@@ -226,7 +238,7 @@ fn a_dependent_calling_a_wrapper_defined_in_the_owners_package_keeps_the_gap() -
 fn an_unused_namesake_wrapper_in_the_dependent_does_not_hide_an_owner_package_wrapper()
 -> Result<(), String> {
     // The test calls `tally::heavy`; ledger's own `heavy` is never used.
-    assert_gap_kept(&findings_with(
+    assert_tested_caller_chain(&findings_with(
         CUSTOM_LIB_MANIFEST,
         "tally/lib/core.rs",
         &[
@@ -363,8 +375,8 @@ fn a_deep_wrapper_chain_in_another_package_names_the_reach_limit() -> Result<(),
 }
 
 #[test]
-fn a_deep_wrapper_chain_in_the_owners_own_package_keeps_the_gap() -> Result<(), String> {
-    assert_gap_kept(&findings_with(
+fn a_deep_wrapper_chain_in_the_owners_own_package_reads_weakly_exposed() -> Result<(), String> {
+    assert_tested_caller_chain(&findings_with(
         CUSTOM_LIB_MANIFEST,
         "tally/lib/core.rs",
         &[
@@ -382,4 +394,86 @@ fn a_deep_wrapper_chain_in_the_owners_own_package_keeps_the_gap() -> Result<(), 
             ("ledger/src/lib.rs", "pub fn unrelated() {}\n"),
         ],
     )?)
+}
+
+/// #14970: the eligible dependent wrapper in `ledger` enters two hops from
+/// the owner (`heavy -> bridge -> weight`). An unrelated package `zeta` has a
+/// nearer one-hop namesake chain (`near -> weight`, its own `weight`) that
+/// the cross-package rule refuses. Ranking by depth must not let the refused
+/// nearer witness hide the eligible one, so the limit stays.
+#[test]
+fn a_nearer_unrelated_namesake_does_not_hide_the_dependent_wrapper() -> Result<(), String> {
+    let scratch = Scratch::create()?;
+    scratch.write(
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"tally\", \"ledger\", \"zeta\"]\nresolver = \"2\"\n",
+    )?;
+    scratch.write("tally/Cargo.toml", CUSTOM_LIB_MANIFEST)?;
+    scratch.write("tally/lib/core.rs", TALLY_LIB)?;
+    scratch.write("ledger/Cargo.toml", LEDGER_MANIFEST)?;
+    scratch.write(
+        "ledger/src/lib.rs",
+        "pub fn heavy(count: u32) -> u32 {\n    bridge(count)\n}\nfn bridge(count: u32) -> u32 {\n    tally::weight(count)\n}\n",
+    )?;
+    scratch.write(
+        "ledger/tests/ledger.rs",
+        "#[test]\nfn heavy_triples_the_count() {\n    assert_eq!(ledger::heavy(5), 15);\n}\n",
+    )?;
+    scratch.write(
+        "zeta/Cargo.toml",
+        "[package]\nname = \"zeta\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n",
+    )?;
+    scratch.write(
+        "zeta/src/lib.rs",
+        "pub fn weight(count: u32) -> u32 {\n    count\n}\npub fn near(count: u32) -> u32 {\n    weight(count)\n}\n",
+    )?;
+    scratch.write(
+        "zeta/tests/zeta.rs",
+        "#[test]\nfn near_keeps_the_count() {\n    assert_eq!(zeta::near(5), 5);\n}\n",
+    )?;
+    scratch.write(
+        "change.diff",
+        &DIFF.replace("tally/src/lib.rs", "tally/lib/core.rs"),
+    )?;
+    let output = check_workspace(CheckInput {
+        root: scratch.0.clone(),
+        diff_file: Some(scratch.0.join("change.diff")),
+        mode: Mode::Ready,
+        format: OutputFormat::Json,
+        include_unchanged_tests: true,
+        ..CheckInput::default()
+    })?;
+    let found: Vec<Finding> = output
+        .findings
+        .into_iter()
+        .filter(|finding| finding.probe.location.line == 2)
+        .collect();
+    let summary: Vec<_> = found
+        .iter()
+        .map(|finding| {
+            (
+                finding.class.as_str(),
+                limit(finding),
+                finding
+                    .evidence
+                    .iter()
+                    .find(|line| line.contains("may lead here"))
+                    .cloned(),
+            )
+        })
+        .collect();
+    let named = found.iter().any(|finding| {
+        finding.class == ExposureClass::ReachableUnrevealed
+            && limit(finding).is_some()
+            && finding
+                .evidence
+                .iter()
+                .any(|line| line.contains("heavy_triples_the_count"))
+    });
+    if !named {
+        return Err(format!(
+            "expected the limit named through the ledger wrapper, got {summary:?}"
+        ));
+    }
+    Ok(())
 }

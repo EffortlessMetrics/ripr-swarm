@@ -6,7 +6,7 @@ Owner: xtask / repo-infra
 
 Created: 2026-10-12
 
-Linked issues: #5073, #7826
+Linked issues: #5073, #7826, #13222
 
 Linked PRs: #7521
 
@@ -63,11 +63,25 @@ nonzero when any leaf returns an error or when aggregate report publication
 fails. If both happen, the returned error retains the leaf failures and adds
 the aggregate write error. Successful leaves cannot mask a reporting error.
 
+The allow-attribute leaf requires each unguarded source `allow` to carry its own
+reason, including inside conditional attributes. Detached fixture inputs are
+exempt from this rule. Guarded lint budgets retain their exact counts (#14679).
+
+The local-context leaf searches possible drive separators directly. It retains
+its existing ASCII drive-letter and token-boundary rules, consumes colons inside
+an accepted path as part of that path, and preserves Unicode path text and
+ordered findings. A colon without a complete drive root is not a match.
+
 The selected leaves inspect filesystem, policy, or Git-index inputs
 independently. They do not consume earlier leaf reports, invoke Cargo
 build/test/Clippy children, or run the compilation-bearing `check-file-policy`.
-Git queries remain permitted. `cargo xtask` can compile the driver before
-executing this command; the existing Windows bootstrap may reexecute it.
+Git queries remain permitted. The lint-policy leaf discovers workspace members
+with `cargo metadata --format-version 1 --no-deps --locked --offline` (#13222).
+This reads Cargo manifests without compiling targets or build scripts,
+downloading dependencies, or updating `Cargo.lock`. Discovery failures remain
+lint-policy failures alongside any ledger violations and other leaf failures.
+`cargo xtask` can compile the driver before executing this command; the existing
+Windows bootstrap may reexecute it.
 The catalog exposes the command as a local non-mutating check with
 `ci_enforced = false`.
 
@@ -85,8 +99,10 @@ The catalog exposes the command as a local non-mutating check with
 - Exercise early I/O errors despite stale reports and aggregate write errors
   with both failing and otherwise healthy leaves.
 - Inspect selected call trees and retain native process-trace evidence where
-  available for the absence of Cargo/compiler children. Linux execution does
-  not establish native Windows execution.
+  available for the absence of build/test/Clippy or compiler children. The
+  read-only Cargo metadata child is permitted. An uncompilable target and build
+  script must not block this scan; the lockfile must remain unchanged. Linux
+  execution does not establish native Windows execution.
 
 Focused proof route:
 
@@ -121,6 +137,15 @@ cargo xtask check-doc-artifacts
    returned failure retains the executable diagnostic and the write error.
 5. Given healthy leaves and an unwritable aggregate report path, the command
    returns failure despite all nine leaf successes.
+6. Given a Cargo-valid workspace with deliberately uncompilable targets and
+   build scripts, the command reads member metadata and returns success without
+   changing the lockfile.
+7. Given failed workspace discovery and lint-ledger drift, plus an independent
+   executable violation, the command reports every failing leaf (including the
+   covered-by enumeration, which shares the missing member) and publishes a new
+   lint-policy report containing both lint errors despite an old pass.
+8. Given a workspace member that omits, disables or replaces
+   `[lints] workspace = true`, `check-lint-policy` fails and names the manifest.
 
 ## Test Mapping
 
@@ -131,6 +156,9 @@ All cases invoke the real driver through `xtask/tests/policy_all.rs`:
 - Example 3: `policy_all_keeps_early_io_error_and_does_not_trust_stale_leaf_report`.
 - Example 4: `policy_all_report_write_error_preserves_leaf_failures`.
 - Example 5: `policy_all_healthy_leaves_still_fail_when_aggregate_report_cannot_be_written`.
+- Example 6: `policy_all_reads_metadata_without_compiling_members_or_changing_the_lockfile`.
+- Example 7: `policy_all_keeps_membership_discovery_failure_and_other_leaf_failures`.
+- Example 8: `lint_policy_rejects_missing_disabled_and_replaced_member_inheritance`.
 
 `.ripr/traceability.toml` registers the exact file/symbol references. A
 traceability-check pass validates registered paths; it does not itself show
@@ -151,7 +179,7 @@ that a test symbol exists or ran. See [Spec-test-code traceability](../SPEC_TEST
 
 ## Metrics
 
-- `unit_test_pass_rate` for the five named actual-driver cases, with the
+- `unit_test_pass_rate` for the named actual-driver cases, with the
   executed/failed/ignored counts retained in the test output.
 - Literal nine-check membership and first/sixth failure counts are contract
   assertions, not new telemetry counters or timing budgets.
@@ -169,3 +197,18 @@ CI publication also preserves both legacy `precommit.md` and structured local
 precommit reports. `ci_policy_publication_preserves_local_report_and_local_io_failures`
 checks existing-report preservation, unchanged local content and local write-error
 propagation through the shared publication owner.
+
+## Lint ledger TOML decoding (#13217)
+
+The lint-policy and Clippy-debt leaves read `policy/clippy-lints.toml` through
+one TOML decoder (`xtask/src/policy/lint_ledger.rs`), not a line scanner. A
+planned row keeps its overdue-MSRV and debt-collision obligations whether its
+header is commented or written as an inline array; wrong-typed known fields,
+malformed TOML and duplicate keys refuse; duplicate identities across families
+and states refuse; `clippy::x` and `x` stay separate Rust and Clippy identities;
+source order and per-entry line numbers are preserved; documentary extension
+fields and multiline non-MSRV blockers stay valid. When the ledger cannot be
+decoded, both leaves report the parse violations and stop instead of judging
+coverage from a partial ledger. The `lint_ledger.rs` unit tests, including
+`repository_ledger_has_valid_unique_rows` for the checked-in ledger, carry this
+evidence.

@@ -1,0 +1,29 @@
+# Workload identity pairing for scoreboard trends (#13177).
+[[behavior]]
+id = "RIPR-SPEC-0436"
+name = "DX scoreboard workload identity pairing"
+spec = "docs/specs/RIPR-SPEC-0436-dx-scoreboard-workload-identity-pairing.md"
+tests = [
+  "xtask/src/reports/dx_scoreboard/workload_tests.rs::measured_corpus_retains_the_effective_base_and_partial_contract",
+  "xtask/src/reports/dx_scoreboard/workload_tests.rs::matching_workloads_preserve_both_directions_across_analyzer_revisions",
+  "xtask/src/reports/dx_scoreboard/workload_tests.rs::changing_any_workload_field_cannot_manufacture_a_trend",
+  "xtask/src/reports/dx_scoreboard/workload_tests.rs::legacy_malformed_and_duplicate_identity_never_pair_by_display_id",
+  "xtask/src/reports/dx_scoreboard/workload_tests.rs::partial_overlap_uses_only_matching_workloads_and_retains_all_exclusions",
+  "xtask/src/reports/dx_scoreboard/workload_tests.rs::no_matching_workload_still_lists_new_and_missing_repositories",
+  "xtask/src/reports/dx_scoreboard/workload_tests.rs::missing_sample_identity_cannot_fall_back_to_an_aggregate_trend",
+  "xtask/src/reports/dx_scoreboard/workload_tests.rs::missing_or_changed_identity_cannot_hide_incomplete_measurements",
+  "xtask/src/reports/dx_scoreboard/workload_tests.rs::workload_exclusions_leave_absolute_ceilings_and_other_sources_in_force",
+]
+fixtures = []
+code = [
+  "xtask/src/reports/dx_scoreboard/workloads.rs",
+  "xtask/src/reports/dx_scoreboard.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0436-dx-scoreboard-workload-identity-pairing.md",
+  "docs/spec-index.d/RIPR-SPEC-0436.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0436.toml",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

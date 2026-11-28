@@ -1,0 +1,12 @@
+# Nearest-key suggestions and schema/parser/docs parity for ripr.toml (#13682).
+[[extend]]
+id = "RIPR-SPEC-0007"
+tests = [
+  "crates/ripr/src/config/schema_parity_tests.rs::typo_in_a_key_suggests_the_nearest_key_in_the_same_table",
+  "crates/ripr/src/config/schema_parity_tests.rs::unrelated_unknown_key_gets_no_suggestion",
+  "crates/ripr/src/config/schema_parity_tests.rs::suggestion_survives_the_source_free_summary_but_a_forged_one_does_not",
+  "crates/ripr/src/config/schema_parity_tests.rs::schema_properties_equal_parser_accepted_keys_for_every_table",
+  "crates/ripr/src/config/schema_parity_tests.rs::schema_value_constraints_match_what_the_parser_accepts",
+  "crates/ripr/src/config/schema_parity_tests.rs::schema_types_match_the_parser_for_every_leaf",
+  "crates/ripr/src/config/schema_parity_tests.rs::every_schema_leaf_key_is_documented_with_its_full_path",
+]

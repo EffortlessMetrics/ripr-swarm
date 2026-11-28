@@ -8,7 +8,7 @@ use std::path::Path;
 /// diagnostic (#9851): plain `not found` — never a raw OS errno — plus the
 /// producer command, in the sibling `reports gap-ledger` vocabulary.
 fn read_gap_ledger(path: &Path) -> Result<String, String> {
-    std::fs::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         let mut message = format!(
             "agent packet --gap-ledger {} is invalid: {}",
             output::outcome::display_path(path),
@@ -35,7 +35,7 @@ pub(crate) fn render_agent_packet_from_gap_ledger(
         output::gap_decision_ledger_live::parse_gap_record_source_with_provenance_json(&contents)
             .map_err(|err| {
             format!(
-                "agent packet --gap-ledger {} is invalid: {err}",
+                "agent packet --gap-ledger {} is invalid: {err}; regenerate it with `ripr reports gap-ledger` or pass the ledger that command wrote",
                 gap_ledger.display()
             )
         })?;

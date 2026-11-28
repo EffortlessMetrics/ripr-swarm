@@ -1,0 +1,11 @@
+# Registers the record-field reading of a predicate's owner value (#14562)
+# under RIPR-SPEC-0094.
+[[extend]]
+id = "RIPR-SPEC-0094"
+tests = [
+  "crates/ripr/src/analysis/classify/owner_value_sink.rs::tests::a_kept_field_is_read_only_whole_or_through_that_field",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::only_a_field_initializer_line_names_the_predicate_record_field",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::only_an_owner_returning_a_built_record_takes_the_field_rule",
+  "crates/ripr/tests/predicate_record_field_masked.rs::a_read_of_another_field_of_the_returned_record_is_not_exposed",
+  "crates/ripr/tests/predicate_record_field_masked.rs::a_read_of_the_changed_field_or_the_whole_record_stays_exposed",
+]

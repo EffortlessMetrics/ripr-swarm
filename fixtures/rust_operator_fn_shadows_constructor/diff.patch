@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,6 +6,6 @@
+ impl std::ops::Add for Money {
+     type Output = Money;
+     fn add(self, other: Money) -> Money {
+-        Money(self.0 - other.0)
++        Money(self.0 + other.0)
+     }
+ }

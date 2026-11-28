@@ -29,6 +29,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: No statically reachable test path was found, so activation/infection cannot be estimated", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test"],
       "flow_sinks": [
       ],
@@ -52,8 +59,8 @@
       "stop_reasons": ["transitive_reach_unresolved"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
-      "suggested_next_action": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
+      "recommended_next_step": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.",
+      "suggested_next_action": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.",
       "language": "rust",
       "static_limit_kind": "rust_integration_public_api_path_unresolved",
       "static_limitation": {
@@ -85,6 +92,13 @@
         "observe": {"state":"no","confidence":"medium","summary":"No reachable test oracle found"},
         "discriminate": {"state":"no","confidence":"medium","summary":"No assertion can discriminate the changed behavior without a reachable test"}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"no","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"no","confidence":"medium"},
+        {"stage":"discriminate","state":"no","confidence":"medium"}
+      ],
       "evidence_path": ["reach no: No static test path found for the changed owner", "infection unknown: No statically reachable test path was found, so activation/infection cannot be estimated", "propagation unknown: Propagation is not statically obvious from syntax-first analysis", "observation no: No reachable test oracle found", "discriminator no: No assertion can discriminate the changed behavior without a reachable test"],
       "flow_sinks": [
       ],
@@ -108,8 +122,8 @@
       "stop_reasons": ["transitive_reach_unresolved"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
-      "suggested_next_action": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test. Route analyzer work to `analysis/rust-public-api-transitive-reach`.",
+      "recommended_next_step": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.",
+      "suggested_next_action": "Tests cannot close this static-analysis limitation: ripr cannot trace entry `classify` -> owner `is_word_start` through a transitive Rust helper path. Inspect the named path and existing assertions through the public API; add a test only for an independently confirmed gap. This limitation does not establish a missing test.",
       "language": "rust",
       "static_limit_kind": "rust_integration_public_api_path_unresolved",
       "static_limitation": {

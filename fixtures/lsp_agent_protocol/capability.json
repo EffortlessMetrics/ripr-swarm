@@ -45,5 +45,5 @@
     "cancelled",
     "superseded"
   ],
-  "claim_boundary": "ripr/listActionableItems is implemented; all other riprAgent requests remain reserved."
+  "claim_boundary": "ripr/listActionableItems is implemented for the VS Code private adapter; all other riprAgent requests remain reserved; not generic third-party LSP client support."
 }

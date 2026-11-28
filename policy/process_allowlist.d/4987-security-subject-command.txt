@@ -1,0 +1,1 @@
+tools/repo-policy/tests/security_subject.rs|Command::new|1|security-subject-proof|#4987: five-second timeout bounds literal security workflow selectors and checkout guards with a fixed local Git stub; no network, dispatch or product execution.

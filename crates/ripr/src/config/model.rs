@@ -3,26 +3,56 @@
 use crate::analysis::seams::SeamGripClass;
 use crate::app::Mode;
 use crate::domain::{ExposureClass, LanguageId, OracleStrength};
+use crate::output::path::path_identity_key_on;
 use std::path::{Path, PathBuf};
 
+use super::overrides::{ConfigOverride, WorkspaceCrate};
 use super::{
     DEFAULT_CONTEXT_RELATED_TESTS, DEFAULT_LSP_SEAM_DIAGNOSTICS, DEFAULT_SUPPRESSIONS_PATH,
 };
 
+/// A parsed `ripr.toml`, or the built-in defaults when no file was loaded.
+///
+/// Each public field holds one top-level table of the file. The keys, valid
+/// values, and defaults are listed in `docs/CONFIGURATION.md`, and
+/// `ripr.toml.example` (written by `ripr init`) shows the defaults.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RiprConfig {
+    /// `[analysis]`: default mode, unchanged-test inclusion, and test
+    /// harness registrations.
     pub analysis: AnalysisConfig,
+    /// `[oracles]`: assumed strength of policy-sensitive assertion shapes.
     pub oracles: OraclePolicy,
+    /// `[severity.findings]` and `[severity.seams]`.
     pub severity: SeverityConfig,
+    /// `[lsp]`: editor diagnostic defaults.
     pub lsp: LspConfig,
+    /// `[reports]`: context packet limits.
     pub reports: ReportsConfig,
+    /// `[suppressions]`: where the suppression file lives.
     pub suppressions: SuppressionsConfig,
+    /// `[languages]`: which language adapters are enabled.
     pub languages: LanguagesConfig,
+    /// `[profiles]`: optional advisory profiles, currently `[profiles.bun_ub]`.
     pub profiles: ProfilesConfig,
+    /// `[typescript]`: TypeScript preview adapter settings.
     pub typescript: TypescriptConfig,
+    /// `[perl]`: Perl producer settings.
     pub perl: PerlConfig,
+    /// Optional `[[overrides]]` rows (#2671). Empty when omitted, so existing
+    /// configs keep repo-wide severity and oracle policy.
+    pub(crate) overrides: Vec<ConfigOverride>,
+    /// Cargo packages discovered for the selected root. Loader metadata, not
+    /// a `ripr.toml` field; used to resolve `crate = "..."` selectors.
+    pub(crate) workspace_crates: Vec<WorkspaceCrate>,
+    /// Path of the `ripr.toml` that was loaded; `None` when the defaults
+    /// apply because no file was found.
     pub source_path: Option<PathBuf>,
+    /// Text of the loaded `ripr.toml`; `None` when no file was loaded.
     pub source_text: Option<String>,
+    /// Passive VP29A compile output when configuration is loaded from disk (#6428).
+    pub(crate) verification_contract_decision:
+        Option<super::verification_contract::RepositoryVerificationContractDecisionV1>,
 }
 
 impl RiprConfig {
@@ -217,10 +247,15 @@ impl TestHarnessAdapter {
 /// process, network, edit, GitHub, or publication capability.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TestHarnessRegistration {
+    /// The `registration_id` that names this row.
     pub registration_id: String,
+    /// Repository-relative path of the target this registration covers.
     pub target: std::path::PathBuf,
+    /// Whether this is a custom harness target or a registered attribute.
     pub kind: TestHarnessKind,
+    /// The versioned adapter that reads the target. It must match `kind`.
     pub adapter: TestHarnessAdapter,
+    /// Exact identifier path (no wildcards) the adapter looks for.
     pub marker: String,
 }
 
@@ -241,11 +276,20 @@ impl TestHarnessRegistration {
     }
 }
 
+/// The `[oracles]` table: how strong `ripr` assumes assertion shapes are
+/// whose strength depends on repository practice.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OraclePolicy {
+    /// Assumed strength of snapshot assertions. Default `medium`.
     pub snapshot_strength: OracleStrength,
+    /// Assumed strength of mock expectations. Default `medium`.
     pub mock_expectation_strength: OracleStrength,
+    /// Assumed strength of broad error assertions such as `is_err()`.
+    /// Default `weak`.
     pub broad_error_strength: OracleStrength,
+    /// Compiled `[[overrides]]` rows that set oracle fields. Empty means the
+    /// repo-wide strengths apply everywhere.
+    pub(crate) overlays: Vec<ConfigOverride>,
 }
 
 impl Default for OraclePolicy {
@@ -254,6 +298,7 @@ impl Default for OraclePolicy {
             snapshot_strength: OracleStrength::Medium,
             mock_expectation_strength: OracleStrength::Medium,
             broad_error_strength: OracleStrength::Weak,
+            overlays: Vec::new(),
         }
     }
 }
@@ -288,16 +333,27 @@ impl OraclePolicy {
     }
 }
 
+/// The `[lsp]` table. Editor initialization options win over these values
+/// when the editor sets them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LspConfig {
+    /// Whether to publish saved-workspace seam diagnostics in addition to
+    /// diff findings. `None` means the file did not set it, and seam
+    /// diagnostics are on.
     pub seam_diagnostics: Option<bool>,
+    /// Which diagnostics the editor shows. `None` means the file did not set
+    /// it, and [`LspDiagnosticProfile::Actionable`] applies.
     pub diagnostic_profile: Option<LspDiagnosticProfile>,
 }
 
+/// The `lsp.diagnostic_profile` value.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum LspDiagnosticProfile {
+    /// `"actionable"`: only findings with a bounded repair route. The
+    /// default.
     #[default]
     Actionable,
+    /// `"full"`: every finding and seam, for audit and debugging.
     Full,
 }
 
@@ -314,7 +370,7 @@ impl LspDiagnosticProfile {
             "actionable" => Ok(Self::Actionable),
             "full" => Ok(Self::Full),
             other => Err(format!(
-                "invalid lsp.diagnostic_profile {other:?}; expected \"actionable\" or \"full\""
+                "invalid lsp.diagnostic_profile {other:?}; set it to \"actionable\" or \"full\""
             )),
         }
     }
@@ -396,6 +452,11 @@ impl SuppressionsConfig {
 
     pub(crate) fn display_path(&self) -> String {
         self.path.to_string_lossy().replace('\\', "/")
+    }
+
+    /// Whether the path is the built-in default (an absent file is normal).
+    pub(crate) fn is_default(&self) -> bool {
+        self.path == Path::new(DEFAULT_SUPPRESSIONS_PATH)
     }
 }
 
@@ -480,6 +541,9 @@ pub struct PythonLanguageConfig {
     /// Exact normalized repository-relative Python paths admitted past the
     /// built-in excluded-directory conventions (#7386).
     pub handwritten_files: Vec<String>,
+    /// Additional repository-relative globs omitted from Python preview indexing
+    /// (#5380).
+    pub excluded_file_patterns: Vec<String>,
 }
 
 /// `[languages.typescript]` repository configuration.
@@ -488,6 +552,9 @@ pub struct TypescriptLanguageConfig {
     /// Exact normalized repository-relative TypeScript/JavaScript paths
     /// admitted past the built-in excluded-directory conventions (#7386).
     pub handwritten_files: Vec<String>,
+    /// Additional repository-relative globs omitted from TypeScript preview
+    /// indexing (#5380).
+    pub excluded_file_patterns: Vec<String>,
 }
 
 fn canonical_sorted_strings(patterns: &[String]) -> String {
@@ -507,29 +574,13 @@ fn canonical_sorted_strings(patterns: &[String]) -> String {
 /// Canonical identity encoding for test-harness registrations (#3532).
 /// Length-prefixed, NUL-joined, sorted — injective, so distinct
 /// registration sets never hash to the same artifact identity.
-fn canonical_test_harnesses_identity(registrations: &[TestHarnessRegistration]) -> String {
+/// Canonical identity for the full harness registration set (#3532 / #6428).
+pub(crate) fn canonical_test_harnesses_identity(
+    registrations: &[TestHarnessRegistration],
+) -> String {
     let mut ordered = registrations
         .iter()
-        .map(|registration| {
-            let mut encoded = String::new();
-            for field in [
-                registration.registration_id.as_str(),
-                registration
-                    .target
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .as_str(),
-                registration.kind.as_str(),
-                registration.adapter.as_str(),
-                registration.marker.as_str(),
-            ] {
-                encoded.push_str(&field.len().to_string());
-                encoded.push(':');
-                encoded.push_str(field);
-                encoded.push('\u{0}');
-            }
-            encoded
-        })
+        .map(test_harness_registration_canonical_identity)
         .collect::<Vec<_>>();
     ordered.sort();
 
@@ -539,6 +590,30 @@ fn canonical_test_harnesses_identity(registrations: &[TestHarnessRegistration]) 
         identity.push_str(&encoded);
     }
     identity
+}
+
+/// Canonical identity for one harness registration (#3532 / #6428).
+pub(crate) fn test_harness_registration_canonical_identity(
+    registration: &TestHarnessRegistration,
+) -> String {
+    let mut encoded = String::new();
+    for field in [
+        registration.registration_id.as_str(),
+        registration
+            .target
+            .to_string_lossy()
+            .replace('\\', "/")
+            .as_str(),
+        registration.kind.as_str(),
+        registration.adapter.as_str(),
+        registration.marker.as_str(),
+    ] {
+        encoded.push_str(&field.len().to_string());
+        encoded.push(':');
+        encoded.push_str(field);
+        encoded.push('\u{0}');
+    }
+    encoded
 }
 
 /// `[perl]` repository configuration (Campaign 31 Phase D, #1407).
@@ -560,6 +635,7 @@ pub(crate) fn perl_executable_opt_in() -> bool {
     std::env::var_os(PERL_EXECUTABLE_OPT_IN_ENV).is_some_and(|value| value == "1")
 }
 
+/// The `[perl]` table: settings for the Perl facts producer.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PerlConfig {
     /// When `"perllsp"`, enables managed producer mode.
@@ -650,11 +726,16 @@ impl BunUbProfileConfig {
     }
 }
 
+/// A severity value from `[severity.findings]` or `[severity.seams]`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConfigSeverity {
+    /// `"off"`: not reported. Valid for seams only.
     Off,
+    /// `"info"`: reported as information; a GitHub `notice` annotation.
     Info,
+    /// `"warning"`: reported as a warning; a GitHub `warning` annotation.
     Warning,
+    /// `"note"`: reported as a note; a GitHub `notice` annotation.
     Note,
 }
 
@@ -677,10 +758,17 @@ impl ConfigSeverity {
     }
 }
 
+/// The `[severity]` tables: how each finding class and seam grip class is
+/// reported.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SeverityConfig {
+    /// `[severity.findings]`, keyed by exposure class.
     pub findings: FindingSeverityConfig,
+    /// `[severity.seams]`, keyed by seam grip class.
     pub seams: SeamSeverityConfig,
+    /// Compiled `[[overrides]]` rows that set severity fields. Empty means
+    /// the repo-wide map applies everywhere.
+    pub(crate) overlays: Vec<ConfigOverride>,
 }
 
 impl SeverityConfig {
@@ -783,6 +871,9 @@ impl SeamSeverityConfig {
     }
 }
 
+/// Which check settings the caller set explicitly, so `ripr.toml` defaults
+/// for `analysis.mode` and `analysis.include_unchanged_tests` do not replace
+/// them. The default marks nothing as explicit.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CheckInputExplicit {
     pub(crate) mode: bool,
@@ -796,7 +887,7 @@ pub struct CheckInputExplicit {
 /// same PR. The classification is closed: the field enumerator destructures
 /// every config struct without `..`, so an unclassified field fails to
 /// compile, and a unit test pins the resulting role of every field.
-pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 4;
+pub const CHECK_ARTIFACT_CONFIG_IDENTITY_VERSION: u32 = 5;
 
 /// How one `ripr.toml` field participates in the check-artifact identity gate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -847,8 +938,11 @@ impl RiprConfig {
             profiles,
             typescript,
             perl,
+            overrides,
+            workspace_crates: _,
             source_path: _,
             source_text: _,
+            verification_contract_decision: _,
         } = self;
         let AnalysisConfig {
             mode: _,
@@ -860,8 +954,13 @@ impl RiprConfig {
             snapshot_strength,
             mock_expectation_strength,
             broad_error_strength,
+            overlays: _,
         } = oracles;
-        let SeverityConfig { findings, seams } = severity;
+        let SeverityConfig {
+            findings,
+            seams,
+            overlays: _,
+        } = severity;
         let FindingSeverityConfig {
             exposed: _,
             weakly_exposed: _,
@@ -903,10 +1002,12 @@ impl RiprConfig {
             python:
                 PythonLanguageConfig {
                     handwritten_files: python_handwritten_files,
+                    excluded_file_patterns: python_excluded_file_patterns,
                 },
             typescript:
                 TypescriptLanguageConfig {
                     handwritten_files: typescript_handwritten_files,
+                    excluded_file_patterns: typescript_excluded_file_patterns,
                 },
         } = languages;
         let ProfilesConfig { bun_ub } = profiles;
@@ -934,11 +1035,22 @@ impl RiprConfig {
         } else {
             String::new()
         };
+        let python_excluded_file_patterns_identity = if enabled.contains(&LanguageId::Python) {
+            canonical_sorted_strings(python_excluded_file_patterns)
+        } else {
+            String::new()
+        };
         let typescript_handwritten_files_identity = if enabled.contains(&LanguageId::TypeScript) {
             canonical_sorted_strings(typescript_handwritten_files)
         } else {
             String::new()
         };
+        let typescript_excluded_file_patterns_identity =
+            if enabled.contains(&LanguageId::TypeScript) {
+                canonical_sorted_strings(typescript_excluded_file_patterns)
+            } else {
+                String::new()
+            };
         let mut fields = vec![
             ConfigIdentityField {
                 name: "analysis.mode",
@@ -994,6 +1106,12 @@ impl RiprConfig {
                 role: ConfigIdentityRole::FindingAffecting,
                 value: Some(broad_error_strength.as_str().to_string()),
                 note: "oracle strength policy changes classification evidence",
+            },
+            ConfigIdentityField {
+                name: "overrides.oracles",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(super::overrides::oracle_overlay_identity(overrides)),
+                note: "per-crate oracle overlays change classification evidence (#2671)",
             },
         ];
         for name in [
@@ -1073,10 +1191,22 @@ impl RiprConfig {
                 note: "explicit handwritten Python files change the analyzed source corpus (#7386)",
             },
             ConfigIdentityField {
+                name: "languages.python.excluded_file_patterns",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(python_excluded_file_patterns_identity),
+                note: "preview Python exclusion globs change which source files are indexed (#5380)",
+            },
+            ConfigIdentityField {
                 name: "languages.typescript.handwritten_files",
                 role: ConfigIdentityRole::FindingAffecting,
                 value: Some(typescript_handwritten_files_identity),
                 note: "explicit handwritten TypeScript files change the analyzed source corpus (#7386)",
+            },
+            ConfigIdentityField {
+                name: "languages.typescript.excluded_file_patterns",
+                role: ConfigIdentityRole::FindingAffecting,
+                value: Some(typescript_excluded_file_patterns_identity),
+                note: "preview TypeScript exclusion globs change which source files are indexed (#5380)",
             },
         ]);
         match bun_ub {
@@ -1126,7 +1256,7 @@ impl RiprConfig {
                 value: Some(
                     executable
                         .as_ref()
-                        .map(|path| path.to_string_lossy().replace('\\', "/"))
+                        .map(|path| path_identity_key_on(path, cfg!(windows), false))
                         .unwrap_or_else(|| "none".to_string()),
                 ),
                 note: "which producer binary generates the Perl fact packet",
@@ -1153,6 +1283,18 @@ impl RiprConfig {
                 note: "where the managed Perl fact packet is written and read",
             },
             ConfigIdentityField {
+                name: "overrides.severity",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "render-only per-crate severity display; honored fresh at render time (#2671)",
+            },
+            ConfigIdentityField {
+                name: "workspace_crates",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "loader container metadata, not a ripr.toml field",
+            },
+            ConfigIdentityField {
                 name: "source_path",
                 role: ConfigIdentityRole::Excluded,
                 value: None,
@@ -1163,6 +1305,12 @@ impl RiprConfig {
                 role: ConfigIdentityRole::Excluded,
                 value: None,
                 note: "loader container metadata, not a ripr.toml field",
+            },
+            ConfigIdentityField {
+                name: "verification_contract_decision",
+                role: ConfigIdentityRole::Excluded,
+                value: None,
+                note: "passive VP29A compile output derived at load time, not authored config",
             },
         ]);
         fields

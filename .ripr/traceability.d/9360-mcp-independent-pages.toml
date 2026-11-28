@@ -1,0 +1,15 @@
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/src/mcp/workspace.rs::tests::independent_continuations_cover_both_axes_without_replay",
+  "crates/ripr/src/mcp/workspace.rs::tests::independent_omission_route_uses_filtered_end_and_respects_envelope",
+  "crates/ripr/tests/mcp_stdio.rs::independent_gap_pages_walk_both_axes_over_stdio",
+  "crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio",
+]
+code = [
+  "crates/ripr/src/mcp/workspace.rs::WorkspaceSession::list_gaps",
+  "crates/ripr/src/mcp/workspace.rs::WorkspaceSession::gap_list_document",
+  "crates/ripr/src/mcp/server.rs::McpServer::list_gaps_tool",
+  "crates/ripr/src/mcp/protocol.rs::list_gaps_tool_descriptor",
+]
+outputs = ["docs/interop/mcp.md"]

@@ -1,8 +1,10 @@
 mod evidence;
 mod finding;
 mod owner;
+mod test_input_generator;
 
 pub(in crate::analysis) use evidence::OwnerCallerNames;
+pub(in crate::analysis) use evidence::assertion_text_with_local_initializers;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
 
 use self::evidence::ClassifiedProbeEvidence;
@@ -27,7 +29,8 @@ pub fn classify_probe(
     workspace_complete: bool,
     dependency_edges: Option<&DependencyEdgeContext<'_>>,
 ) -> Finding {
-    let candidate_index = RelatedTestCandidateIndex::new(index);
+    let candidate_index =
+        RelatedTestCandidateIndex::new(index).with_unchanged_module_declarations(index);
     let transitive_reach = TransitiveReachIndex::new(index);
     classify_probe_with_candidate_index_and_origins(
         probe,
@@ -87,6 +90,7 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins(
         transitive_reach,
         propagation_origin,
         value_origins,
+        None,
     )
     .0
 }
@@ -104,9 +108,23 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     transitive_reach: &TransitiveReachIndex<'_>,
     propagation_origin: Option<&crate::analysis::diff::ChangedLine>,
     value_origins: Option<&std::sync::Mutex<crate::value_origins::ValueOrigins>>,
+    changed_file: Option<&crate::analysis::diff::ChangedFile>,
 ) -> (Finding, Option<bool>) {
     let read_trace = super::probe_read_trace::Scope::begin(probe);
     let owner_fn = resolve_owner_function(probe, index);
+    if probe.after.is_some()
+        && owner_fn.is_some_and(|owner| {
+            owner.source_role == crate::analysis::facts::FunctionSourceRole::TestInputGenerator
+                && crate::analysis::facts::is_generator_subject(
+                    index,
+                    &owner.file,
+                    probe.location.line,
+                )
+        })
+    {
+        read_trace.finish();
+        return (test_input_generator::finding(probe), None);
+    }
     // #3296: one chain resolution per probe, shared by the relation
     // stage and the activation rows (single authority, single scan).
     // Empty-hop chains stay off the relation/activation path (fail closed)
@@ -253,12 +271,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         && let Some(facts) = find_file_facts(index, &owner.file)
     {
         let reader_tests: Vec<&TestSummary> = related_tests.iter().map(|(test, _)| *test).collect();
-        let import_owned: Vec<String> = std::iter::once(facts.source.to_string())
+        // Share the indexed source allocations: copying every related
+        // test file's text per probe held gigabytes across classify workers.
+        let import_owned: Vec<std::sync::Arc<str>> = std::iter::once(facts.source.clone())
             .chain(reader_tests.iter().filter_map(|test| {
-                find_file_facts(index, &test.file).map(|file| file.source.to_string())
+                find_file_facts(index, &test.file).map(|file| file.source.clone())
             }))
             .collect();
-        let import_sources: Vec<&str> = import_owned.iter().map(String::as_str).collect();
+        let import_sources: Vec<&str> = import_owned.iter().map(AsRef::as_ref).collect();
         binding_return_flow = evaluate_binding_return_flow(
             probe,
             owner,
@@ -294,8 +314,112 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     context.const_readers = const_readers;
     context.const_flow = const_flow;
     context.binding_return_flow = binding_return_flow;
+    // #14852: a returned constant replaced by a different constant, read
+    // from the owner's base-side body in the diff (never `probe.before`).
+    context.constant_tail_change = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
+        super::classify::constant_tail_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+            candidate_index.base_may_rebind_trusted_macros(),
+        )
+    });
+    // #14936: a deleted early return giving the value the remaining tail
+    // gives is not discriminated by a pin on the owner's return.
+    context.deleted_guard_agreement = changed_file.zip(owner_fn).and_then(|(changed, owner)| {
+        super::classify::deleted_guard_agreement(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+        )
+    });
+    // #15104: the legacy constant-tail edge reads only the new-side owner,
+    // so it asks the shared owner's gate decision whether a test may run a
+    // `cfg` twin instead, only for a probe that edge would read.
+    context.owner_may_be_swapped = owner_fn.is_some_and(|owner| {
+        super::classify::changes_constant_owner_tail(probe, owner)
+            && find_file_facts(index, &owner.file).is_none_or(|facts| {
+                crate::analysis::diff::owner_may_be_swapped(
+                    facts.source.as_ref(),
+                    &owner.file,
+                    candidate_index.module_declarations(),
+                    &owner.name,
+                    owner.start_line,
+                    owner.end_line,
+                )
+            })
+    });
+    context.compile_time_guarded = owner_fn.is_none()
+        && candidate_index
+            .probe_index_file(probe, index)
+            .and_then(|file| find_file_facts(index, &file))
+            .is_some_and(|facts| {
+                facts.source.contains("assert")
+                    && super::classify::constrained_by_compile_time_assertion(
+                        &crate::analysis::extract::mask_comments_and_strings(&facts.source),
+                        probe.location.line,
+                        probe.changed_const_name(),
+                    )
+            });
+    // #15933: an added line inside a split `compile_error!` (only its message
+    // changed) holds no macro name of its own; its line in the new file
+    // places it. A removed probe's line is where the deletion sits, so it is
+    // not read this way.
+    context.in_compile_error = owner_fn.is_none()
+        && probe.family == ProbeFamily::StaticUnknown
+        && probe.after.is_some()
+        && candidate_index
+            .probe_index_file(probe, index)
+            .and_then(|file| find_file_facts(index, &file))
+            .is_some_and(|facts| {
+                crate::analysis::probes::compile_error_lines(&facts.source)
+                    .contains(&probe.location.line)
+            });
     context.unmounted_build_script =
         candidate_index.probe_in_unmounted_build_script(probe, owner_fn, index);
+    // #14815: a prefix `-`/`!` added to or removed from the owner's whole
+    // one-line tail, read from the diff so the base-side owner is established.
+    context.unary_tail = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        super::classify::unary_tail_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.owner_pin_syntax(),
+            candidate_index.module_declarations(),
+        )
+    });
+    // #14816: an `if` condition forced to a literal `true`/`false`, read
+    // from the diff so the base-side owner is established.
+    context.literal_condition = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        super::classify::literal_condition_change(
+            probe,
+            owner,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+        )
+    });
+    // #15272: the base-side owner for any one-line predicate or return-value
+    // change, so agreeing asserted inputs do not read as a discriminator.
+    context.owner_baseline = owner_fn.zip(changed_file).and_then(|(owner, changed)| {
+        let tests = context.related_test_summaries();
+        super::classify::sole_line_owner_baseline(
+            probe,
+            owner,
+            &tests,
+            changed,
+            index,
+            candidate_index.module_declarations(),
+        )
+    });
+    context.owner_sole_change = changed_file
+        .zip(owner_fn)
+        .and_then(|(changed, owner)| owner_sole_change(changed, owner, probe.location.line));
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -306,6 +430,39 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     .unwrap_or(&probe.expression);
     let mut evidence =
         ClassifiedProbeEvidence::gather(&context, reveal_expression, transitive_reach);
+    #[cfg(feature = "lang-rust")]
+    {
+        context.tier_flow = changed_file
+            .and_then(|changed| {
+                let owner = owner_fn?;
+                let tests: Vec<&TestSummary> = context
+                    .related_tests
+                    .iter()
+                    .map(|(test, _)| *test)
+                    .collect();
+                super::classify::evaluate_tier_flow(
+                    probe,
+                    owner,
+                    changed,
+                    &tests,
+                    index,
+                    candidate_index.owner_pin_syntax(),
+                    workspace_complete,
+                )
+            })
+            .filter(|flow| {
+                let matching = |row: &RelatedTest| {
+                    row.name == flow.test && row.file == flow.file && row.line == flow.line
+                };
+                evidence.related_tests.iter().any(|row| {
+                    matching(row) && row.oracle.as_deref() == Some(flow.assertion.as_str())
+                }) || (evidence.related_tests_matched_total == evidence.related_tests.len()
+                    && evidence.related_tests.len() < super::classify::RELATED_TESTS_RENDER_CAP
+                    && evidence.related_tests.iter().any(matching))
+            });
+    }
+    #[cfg(not(feature = "lang-rust"))]
+    let _ = changed_file;
     // RIPR-SPEC-0048: a changed constant decided by evaluation takes its class
     // from the evaluation; every other probe is classified as before.
     let class = match (
@@ -316,6 +473,11 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
         (None, Some(flow)) => evidence.apply_binding_return_flow(flow),
         (None, None) => evidence.classify(context.probe),
     };
+    #[cfg(feature = "lang-rust")]
+    let class = context
+        .tier_flow
+        .as_ref()
+        .map_or(class, |flow| evidence.apply_tier_flow(flow));
     // #7532: `build_finding` rewrites a `no_static_path` finding's misses;
     // keep reveal's so a withheld finding can report them again.
     let reveal_misses: Vec<Option<RelatedTestMiss>> = evidence
@@ -327,6 +489,14 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index_and_origins_with_
     let complete_proximity_oracles_only = evidence.complete_proximity_oracles_only;
     let direct_rows = std::mem::take(&mut evidence.direct_rows);
     let mut finding = build_finding_with_origins(&context, class, evidence, value_origins);
+    #[cfg(feature = "lang-rust")]
+    if context.tier_flow.is_some() {
+        finding.probe.expected_sinks = vec!["return value".to_string()];
+        finding.probe.required_oracles = vec!["exact assertion on returned value".to_string()];
+    }
+    if context.compile_time_guarded {
+        withhold_compile_time_guard_as_unknown(&mut finding);
+    }
     if let Some(chain) = resolved_chain.as_ref() {
         withhold_helper_uniqueness_as_unknown(&mut finding, chain, index, &reveal_misses);
     }
@@ -545,9 +715,9 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
     finding.recommended_next_step = Some(
         "This is proc-macro code, which tests normally reach through `#[derive]` or an attribute in another crate; ripr does not expand macros, so it does not claim that no test reaches this change. Inspect the tests that apply the macro, and add one only if none already does.".to_string(),
     );
-    finding
-        .evidence
-        .retain(|line| !line.contains("No static test path"));
+    finding.evidence.retain(|line| {
+        !line.contains("No static test path") && !line.contains(evidence::UNREFERENCED_IN_WORKSPACE)
+    });
     finding.evidence.push(
         "proc_macro_expansion: changed code is in a proc-macro crate; tests reach it through derive or attribute expansion".to_string(),
     );
@@ -570,6 +740,76 @@ pub(in crate::analysis) fn withhold_proc_macro_no_path_as_unknown(
             .miss
             .filter(|miss| *miss != RelatedTestMiss::NoCallPath);
     }
+}
+
+/// #12040: a changed continuation line of a multi-line compile-time assertion
+/// is classified like any ownerless predicate (`no_static_path`), but a
+/// violating edit fails to build; "no test reaches it" is the wrong claim. The
+/// class abstains as `static_unknown` with the build-time reason, exactly as
+/// the assertion's head line does. Only `no_static_path` is rewritten; nothing
+/// is promoted or credited.
+fn withhold_compile_time_guard_as_unknown(finding: &mut Finding) {
+    let reach_ruled_out = match finding.class {
+        ExposureClass::NoStaticPath => true,
+        ExposureClass::StaticUnknown => finding.ripr.reach.state == StageState::No,
+        _ => false,
+    };
+    if !reach_ruled_out {
+        return;
+    }
+    finding.class = ExposureClass::StaticUnknown;
+    let unknown = StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        "Not established: a compile-time assertion constrains this line, and tests are not what checks it",
+    );
+    let mut stale: Vec<String> = Vec::new();
+    for stage in [
+        &mut finding.ripr.reach,
+        &mut finding.ripr.infect,
+        &mut finding.ripr.propagate,
+        &mut finding.ripr.reveal.observe,
+        &mut finding.ripr.reveal.discriminate,
+    ] {
+        if stage.state == StageState::No {
+            stale.push(stage.summary.clone());
+            *stage = unknown.clone();
+        }
+    }
+    finding
+        .evidence
+        .retain(|line| !stale.contains(line) && !line.contains("No static test path"));
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
+    finding.stop_reasons.retain(|reason| {
+        !matches!(
+            reason,
+            StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
+        )
+    });
+    finding.missing = vec![
+        "compile-time assertion constrains this line: the build, not a test, checks the new value against it; ripr has not evaluated it"
+            .to_string(),
+    ];
+    finding.activation.missing_discriminators.clear();
+    for test in &mut finding.related_tests {
+        test.miss = test
+            .miss
+            .filter(|miss| *miss != RelatedTestMiss::NoCallPath);
+    }
+    finding.recommended_next_step = super::classify::recommended_next_step(
+        &finding.probe,
+        &finding.class,
+        false,
+        &finding.stop_reasons,
+    );
 }
 
 /// #11544: an owner whose only candidate tests sit inside opaque property
@@ -605,9 +845,11 @@ pub(in crate::analysis) fn withhold_property_macro_no_path_as_unknown(finding: &
             *stage = unknown(summary);
         }
     }
-    finding
-        .evidence
-        .retain(|line| !stale.contains(line) && !line.contains("No static test path"));
+    finding.evidence.retain(|line| {
+        !stale.contains(line)
+            && !line.contains("No static test path")
+            && !line.contains(evidence::UNREFERENCED_IN_WORKSPACE)
+    });
     let ripr = &finding.ripr;
     finding.confidence = finding.confidence.min(confidence_score(
         &ripr.reach,
@@ -700,9 +942,9 @@ fn withhold_helper_uniqueness_as_unknown(
     finding.recommended_next_step = Some(format!(
         "ripr cannot tell which `{entry}` a test calls because that name is not unique in the workspace, so it does not claim that no test reaches this change. Disambiguate the function, or add a test that calls a unique owner, only if none already does."
     ));
-    finding
-        .evidence
-        .retain(|line| !line.contains("No static test path"));
+    finding.evidence.retain(|line| {
+        !line.contains("No static test path") && !line.contains(evidence::UNREFERENCED_IN_WORKSPACE)
+    });
     finding.evidence.push(format!(
         "helper_chain_uniqueness: `{entry}` is not a unique function in the workspace; tests call that name"
     ));
@@ -732,6 +974,34 @@ fn restore_reveal_misses(
     for (test, reveal_miss) in related_tests.iter_mut().zip(reveal_misses) {
         test.miss = reveal_miss.filter(|miss| *miss != RelatedTestMiss::NoCallPath);
     }
+}
+
+/// #14387: the old text of `line` when it is the one line of `owner` the diff
+/// replaces: exactly one added line inside the owner, at `line`, paired with
+/// exactly one removed line inside it.
+fn owner_sole_change(
+    changed: &crate::analysis::diff::ChangedFile,
+    owner: &crate::analysis::rust_index::FunctionSummary,
+    line: usize,
+) -> Option<String> {
+    let inside = |at: usize| (owner.start_line..=owner.end_line).contains(&at);
+    let mut added = changed
+        .added_lines
+        .iter()
+        .filter(|added| inside(added.new_side_line));
+    let mut removed = changed
+        .removed_lines
+        .iter()
+        .filter(|removed| inside(removed.new_side_line));
+    let (Some(added), None, Some(removed), None) =
+        (added.next(), added.next(), removed.next(), removed.next())
+    else {
+        return None;
+    };
+    let paired = changed.replaced_line_counterpart(line)?;
+    // The counterpart must be this very removed line, not one elsewhere in
+    // the file with the same text (#14786 review).
+    (added.new_side_line == line && std::ptr::eq(paired, removed)).then(|| removed.text.clone())
 }
 
 #[cfg(test)]
@@ -769,6 +1039,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:crate_a:score".to_string()),
             location: SourceLocation::new("crates/crate_a/src/lib.rs", 2, 1),
             owner: Some(SymbolId("crates/crate_a/src/lib.rs::score".to_string())),
@@ -801,7 +1072,7 @@ pub(super) mod tests {
                     line: 1,
                     name: "token_label".to_string(),
                     text: "token_label(\"discount_threshold\")".to_string().into(),
-                }],
+                }].into(),
                 assertions: vec![oracle_fact(
                     "assert_eq!(token_label(\"discount_threshold\"), \"token:discount_threshold\");",
                     OracleKind::ExactValue,
@@ -810,14 +1081,16 @@ pub(super) mod tests {
                 literals: vec![LiteralFact {
                     line: 1,
                     value: "\"discount_threshold\"".to_string(),
-                }],
-                attrs: vec![],
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                }].into(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+                generated: None,
             }],
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::discounted_total".to_string())),
@@ -861,12 +1134,14 @@ pub(super) mod tests {
                 line: 1,
                 name: callee.to_string(),
                 text: text.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: Vec::new(),
-            literals: Vec::new(),
-            attrs: vec![],
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 
@@ -952,6 +1227,7 @@ pub(super) mod tests {
 
     fn helper_probe(file: &str, owner: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId(format!("probe:{file}:{owner}")),
             location: SourceLocation::new(file, 2, 1),
             owner: Some(SymbolId(format!("{file}::{owner}"))),
@@ -1146,9 +1422,9 @@ pub(super) mod tests {
         );
     }
 
-    // #7532: withholding as `static_unknown` reports the misses `reveal`
-    // recorded, not the `no_call_path` the `no_static_path` annotation wrote,
-    // and not none.
+    // The two parse functions leave both callers' paths to op unresolved.
+    // Withholding clears the file-only no_call_path, including for the
+    // assertion-free caller (#7532, #14808).
     #[test]
     fn given_withheld_helper_uniqueness_finding_then_rows_keep_reveal_misses() {
         let unasserted = test_calling("src/op.rs", "accepts_wildcard", "parse", "parse(\">=1.0\")");
@@ -1179,11 +1455,7 @@ pub(super) mod tests {
             rows,
             vec![
                 ("accepts_caret", Some(RelationReason::SameTestFile), None),
-                (
-                    "accepts_wildcard",
-                    Some(RelationReason::SameTestFile),
-                    Some(RelatedTestMiss::NoAssertion)
-                ),
+                ("accepts_wildcard", Some(RelationReason::SameTestFile), None),
             ]
         );
     }
@@ -1286,7 +1558,7 @@ pub(super) mod tests {
             "parse",
             "parse(\">=1.0\")",
         );
-        local.nested_fn_names = vec!["parse".to_string()];
+        local.nested_fn_names = vec!["parse".to_string()].into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![
                 function("src/op.rs", "op"),
@@ -1716,7 +1988,8 @@ pub(super) mod tests {
                     line: 1,
                     name: "macro_tax_case".to_string(),
                     text: "macro_tax_case!(100)".to_string().into(),
-                }],
+                }]
+                .into(),
                 assertions: vec![oracle_fact(
                     "assert_eq!(macro_tax_case!(100), 120);",
                     OracleKind::ExactValue,
@@ -1725,14 +1998,17 @@ pub(super) mod tests {
                 literals: vec![LiteralFact {
                     line: 1,
                     value: "100".to_string(),
-                }],
-                attrs: vec![],
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                }]
+                .into(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+                generated: None,
             }],
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::tax_total".to_string())),
@@ -1772,6 +2048,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::price".to_string())),
@@ -1813,6 +2090,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -1849,6 +2127,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -1871,6 +2150,76 @@ pub(super) mod tests {
                 .iter()
                 .any(|reason| { reason.as_str() == StopReason::StaticProbeUnknown.as_str() })
         );
+    }
+
+    /// A changed `Display::fmt` body no test names runs through `format!`,
+    /// `to_string()` and generic helpers, so reach stays undecided; the same
+    /// body under a trait the workspace declares, and a plain function no
+    /// source names, keep `no_static_path`.
+    #[test]
+    fn given_foreign_trait_impl_with_no_related_test_when_classified_then_reach_is_undecided() {
+        let classify_owner = |trait_path: &str, id: &str, name: &str, declared: Option<&str>| {
+            let mut owner = function("src/lib.rs", name);
+            owner.id = SymbolId(id.to_string());
+            if !trait_path.is_empty() {
+                owner.item.container = crate::analysis::facts::FunctionContainer::TraitImpl {
+                    trait_path: trait_path.to_string(),
+                    self_ty: "Money".to_string(),
+                };
+            }
+            let mut functions = vec![owner.clone()];
+            if let Some(trait_name) = declared {
+                // A trait the workspace declares: its methods are called only
+                // by spelling their name, so they get no dispatch allowance.
+                let mut decl = function("src/lib.rs", name);
+                decl.id = SymbolId(format!("src/lib.rs::trait {trait_name}::{name}"));
+                decl.item.container = crate::analysis::facts::FunctionContainer::Trait {
+                    trait_name: trait_name.to_string(),
+                };
+                functions.push(decl);
+            }
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions,
+                ..Default::default()
+            });
+            let probe = Probe {
+                before_condition: None,
+                id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
+                location: SourceLocation::new("src/lib.rs", 2, 1),
+                owner: Some(owner.id.clone()),
+                family: ProbeFamily::ReturnValue,
+                delta: DeltaKind::Value,
+                before: None,
+                after: Some("self.0 + 1".to_string()),
+                expression: "self.0 + 1".to_string(),
+                expected_sinks: vec![],
+                required_oracles: vec![],
+            };
+            classify_probe(&probe, &index, true, None)
+        };
+
+        let display = classify_owner(
+            "Display",
+            "src/lib.rs::impl Display for Money::fmt",
+            "fmt",
+            None,
+        );
+        assert!(display.related_tests.is_empty());
+        assert_eq!(display.ripr.reach.state, StageState::Weak);
+        assert_eq!(display.class, ExposureClass::InfectionUnknown);
+
+        let workspace = classify_owner(
+            "Step",
+            "src/lib.rs::impl Step for Money::process",
+            "process",
+            Some("Step"),
+        );
+        assert_eq!(workspace.ripr.reach.state, StageState::No);
+        assert_eq!(workspace.class, ExposureClass::NoStaticPath);
+
+        let plain = classify_owner("", "src/lib.rs::fmt_money", "fmt_money", None);
+        assert_eq!(plain.ripr.reach.state, StageState::No);
+        assert_eq!(plain.class, ExposureClass::NoStaticPath);
     }
 
     /// #9871: a changed `const` with a same-file reader that a test calls.
@@ -1905,6 +2254,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:1:static_unknown".to_string()),
             location: SourceLocation::new("src/lib.rs", 1, 1),
             owner: None,
@@ -2040,6 +2390,7 @@ pub(super) mod tests {
     #[test]
     fn given_static_unknown_probe_in_unreached_owner_then_next_step_discloses_reach_limit() {
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2112,7 +2463,7 @@ pub(super) mod tests {
         assert_eq!(
             finding.recommended_next_step.as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
     }
@@ -2134,6 +2485,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:error_path".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2176,6 +2528,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:error_path".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2234,6 +2587,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2288,6 +2642,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:call_deletion".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2356,6 +2711,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2397,6 +2753,7 @@ pub(super) mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:error_path".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2437,6 +2794,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             parser_backed_index(&[("src/lib.rs", source), ("tests/errors.rs", &test_source)])
         };
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:5:error_path_alignment".to_string()),
             location: SourceLocation::new("src/lib.rs", 5, 1),
             owner: Some(SymbolId("src/lib.rs::compute".to_string())),
@@ -2492,6 +2850,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:side_effect".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2524,6 +2883,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:field_construction".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2560,6 +2920,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:field_construction".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2600,6 +2961,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:match_arm".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2641,6 +3003,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:1:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 1, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2699,6 +3062,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::authenticate".to_string())),
@@ -2751,6 +3115,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::quote".to_string())),
@@ -2797,6 +3162,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::message".to_string())),
@@ -2843,6 +3209,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2892,6 +3259,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:5:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 5, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2924,6 +3292,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:call".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -2960,6 +3329,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:match_arm".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::authenticate".to_string())),
@@ -2996,6 +3366,7 @@ pub fn compute(input: i32) -> Result<i32, CalcError> {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:return_value".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3042,6 +3413,7 @@ fn far_above_threshold_discounts() {
 "#;
         let index = parser_backed_index(&[("src/lib.rs", source), ("tests/score.rs", tests)]);
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3166,6 +3538,7 @@ fn far_above_threshold_discounts() {
         );
         let index = parser_backed_index(&[("src/lib.rs", source), ("tests/record.rs", &tests)]);
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:side_effect".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 5),
             owner: Some(SymbolId("src/lib.rs::record".to_string())),
@@ -3206,6 +3579,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3266,6 +3640,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:3:error_path".to_string()),
             location: SourceLocation::new("src/lib.rs", 3, 1),
             owner: Some(SymbolId("src/lib.rs::score".to_string())),
@@ -3351,14 +3726,14 @@ fn far_above_threshold_discounts() {
             )
             .as_deref(),
             Some(
-                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
         assert_eq!(
             recommended_next_step(&predicate_probe, &ExposureClass::StaticUnknown, false, &[])
                 .as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown."
             )
         );
     }
@@ -3381,6 +3756,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:tests_fragments_rs:2:predicate".to_string()),
             location: SourceLocation::new("tests/fragments.rs", 3, 1),
             owner: Some(SymbolId(
@@ -3436,7 +3812,7 @@ fn far_above_threshold_discounts() {
                 "{step}"
             );
             assert!(
-                step.contains("original and changed") && step.contains("may remain unknown"),
+                step.contains("old and new code") && step.contains("may remain unknown"),
                 "{step}"
             );
         } else {
@@ -3461,7 +3837,8 @@ fn far_above_threshold_discounts() {
             line: 2,
             name: "check_invariants".to_string(),
             text: "check_invariants(value);".to_string().into(),
-        }];
+        }]
+        .into();
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![owner, production_caller],
             tests: vec![test(
@@ -3473,6 +3850,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:predicate".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::check_invariants".to_string())),
@@ -3566,6 +3944,7 @@ fn far_above_threshold_discounts() {
 
     fn probe(family: ProbeFamily, delta: DeltaKind, expression: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:test".to_string()),
             location: SourceLocation::new("crates/ripr/src/lib.rs", 1, 1),
             owner: None,
@@ -3614,6 +3993,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:watchdog-reason".to_string()),
             location: SourceLocation::new(
                 PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
@@ -3678,6 +4058,7 @@ fn far_above_threshold_discounts() {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:watchdog-reason".to_string()),
             location: SourceLocation::new(
                 PathBuf::from("/repo/ub-review/src/gate_watchdog.rs"),
@@ -3753,6 +4134,7 @@ fn far_above_threshold_discounts() {
 
     fn fragile_fee_probe(family: ProbeFamily, owner: &str) -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:src_lib_rs:2:fragile_fee".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
             owner: Some(SymbolId(format!("src/lib.rs::{owner}"))),
@@ -4179,14 +4561,14 @@ fn far_above_threshold_discounts() {
             start_line: 1,
             end_line: 3,
             body: format!("pub fn {name}(input: i32) -> i32 {{ input }}").into(),
-            calls: vec![],
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: vec![],
-            literals: vec![],
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: vec![],
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -4221,6 +4603,7 @@ fn far_above_threshold_discounts() {
         tests.push_str("}\n");
         let index = parser_backed_index(&[("src/bytes.rs", &source), ("tests/trunc.rs", &tests)]);
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:src_bytes_rs:5:predicate".to_string()),
             location: SourceLocation::new("src/bytes.rs", 5, 1),
             owner: Some(SymbolId("src/bytes.rs::impl Bytes::truncate".to_string())),
@@ -4384,15 +4767,18 @@ fn far_above_threshold_discounts() {
                 line: 1,
                 name: "score".to_string(),
                 text: call.to_string().into(),
-            }],
+            }]
+            .into(),
             assertions: vec![oracle],
             literals: vec![LiteralFact {
                 line: 1,
                 value: "1".to_string(),
-            }],
-            attrs: vec![],
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            }]
+            .into(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            generated: None,
         }
     }
 

@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0263-ex07-unentered-error-return",
+  "subject_id": "authored-spec0263-7",
+  "diff": "cases/spec0263-ex07-unentered-error-return.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_return",
+  "test_shape": "guarded_error_return_unentered",
+  "hard_case": "Issue #11147: the changed `return Err(PriceError::TooLarge)` sits in `if price > 1_000_000`, and the tests call discount with 100 and -1 only, with an exact `Err(PriceError::Negative)` assertion on the -1 call. The finding must read weakly_exposed (missing input `if price > 1_000_000`), not exposed.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(PriceError::Negative)",
+        "mutated_line": "return Err(PriceError::Negative)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the changed value is not observed by any test that runs"
+      },
+      {
+        "replacement": "return Ok(0)",
+        "mutated_line": "return Ok(0)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the changed value is not observed by any test that runs"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test passes a price above 1_000_000, so the guarded return is never reached and any change to it passes. The exact Err(PriceError::Negative) assertion pins the other branch. Spec cells: RIPR-SPEC-0263 example 7.",
+  "labeling_observation": {
+    "ripr_commit": "99b377f5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0263#7"
+  ]
+}

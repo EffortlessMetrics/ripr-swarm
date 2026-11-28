@@ -230,6 +230,8 @@ struct Run {
     pull_ref: String,
     /// The group base B the queue event reports.
     group_base: String,
+    /// Labels the pulls API reports for the PR.
+    labels: Vec<&'static str>,
 }
 
 struct Outcome {
@@ -249,11 +251,19 @@ fn run_resolve(world: &World, shell: &str, run: &Run) -> Result<Outcome, String>
         "parents": parents.split_whitespace().map(|p| json!({"sha": p})).collect::<Vec<_>>(),
         "commit": {"message": format!("{subject}\n\nbody")},
     });
-    let pr = json!({"head": {"sha": run.api_head}, "labels": [{"name": "merge-ready"}]});
+    let labels = run
+        .labels
+        .iter()
+        .map(|name| json!({"name": name}))
+        .collect::<Vec<_>>();
+    let pr = json!({"head": {"sha": run.api_head}, "labels": labels, "changed_files": 1});
     let graphql = json!({"data": {"repository": {"pullRequest": {
         "headRefOid": run.api_head,
         "mergeQueueEntry": {"id": "entry-42"},
     }}}});
+    // The entry step classifies each constituent from its changed paths. A
+    // non-docs path keeps the constituent out of the docs-only branch.
+    let files = json!([{"filename": "src/lib.rs"}]);
 
     let bin = scratch.join("bin");
     fs::create_dir_all(&bin).map_err(|e| e.to_string())?;
@@ -261,9 +271,11 @@ fn run_resolve(world: &World, shell: &str, run: &Run) -> Result<Outcome, String>
     fs::write(
         &gh,
         r#"#!/bin/sh
+if [ "$2" = "--paginate" ]; then shift; fi
 case "$2" in
   graphql) printf '%s\n' "$MOCK_GRAPHQL" ;;
-  repos/*/pulls/42) printf '%s\n' "$MOCK_PR" ;;
+  repos/*/pulls/*/files*) printf '%s\n' "$MOCK_FILES" ;;
+  repos/*/pulls/*) printf '%s\n' "$MOCK_PR" ;;
   repos/*/commits/*) printf '%s\n' "$MOCK_COMMIT" ;;
   *) exit 97 ;;
 esac
@@ -310,6 +322,7 @@ esac
         .env("MOCK_PR", pr.to_string())
         .env("MOCK_COMMIT", commit.to_string())
         .env("MOCK_GRAPHQL", graphql.to_string())
+        .env("MOCK_FILES", files.to_string())
         .output()
         .map_err(|e| e.to_string())?;
     let outputs = fs::read_to_string(&github_output)
@@ -337,6 +350,7 @@ fn honest(world: &World, head: &str, ref_sha: &str) -> Result<Run, String> {
         ref_sha: ref_sha.to_string(),
         pull_ref: head.to_string(),
         group_base: world.base.clone(),
+        labels: vec!["merge-ready"],
     })
 }
 
@@ -398,7 +412,7 @@ fn queued_squash_of_a_different_head_is_refused_even_when_it_predates_the_queue_
     // Control: the same inputs are admitted when the one binding is removed,
     // so the refusal above is caused by the tree comparison alone.
     let weakened = shell.replace(
-        "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${GROUP_HEAD_SHA}^{tree}\")\" ]",
+        "[ \"${merged%%$'\\n'*}\" = \"$(git rev-parse \"${c_sha}^{tree}\")\" ]",
         "true",
     );
     assert_ne!(
@@ -439,6 +453,7 @@ fn queued_commit_with_extra_content_is_refused() -> Result<(), String> {
         ref_sha: world.head.clone(),
         pull_ref: world.head.clone(),
         group_base: world.base.clone(),
+        labels: vec!["merge-ready"],
     };
     assert_refused(&run_resolve(&world, &shell, &run)?, "is not PR #42 head");
     Ok(())
@@ -495,33 +510,40 @@ fn head_that_conflicts_with_the_base_cannot_bind_any_queued_tree() -> Result<(),
         ref_sha: world.base.clone(),
         pull_ref: world.conflicting_head.clone(),
         group_base: world.base.clone(),
+        labels: vec!["merge-ready"],
     };
     assert_refused(&run_resolve(&world, &shell, &run)?, "is not PR #42 head");
     Ok(())
 }
 
 #[test]
-fn batch_wrong_parent_and_wrong_subject_still_refuse_before_the_tree_is_read() -> Result<(), String>
-{
+fn batch_wrong_base_and_wrong_subject_still_refuse_before_the_tree_is_read() -> Result<(), String> {
     let world = World::new()?;
     let shell = resolve_shell(&workflow()?)?;
 
-    // Subject does not name the PR.
+    // Subject names a different PR (#43), so the entry step derives PR 43 and
+    // refuses when refs/pull/43/head is not the live head. The refusal still
+    // happens before the tree is read.
     let mut run = honest(&world, &world.head, &world.base)?;
     run.queued = world.squash(&world.head, "feature (#43)")?;
-    assert_refused(
-        &run_resolve(&world, &shell, &run)?,
-        "not a single squash commit",
-    );
+    assert_refused(&run_resolve(&world, &shell, &run)?, "is not the live head");
 
-    // Parent is not the group base (a batch built on an earlier entry).
+    // The group base is a commit the queued squash does not descend from (a
+    // batch built on an earlier entry), so the ancestry guard refuses before
+    // the single-parent shape check below it is reached.
     let mut run = honest(&world, &world.head, &world.base)?;
     run.group_base = world.head.clone();
     run.ref_sha = world.head.clone();
     assert_refused(
         &run_resolve(&world, &shell, &run)?,
-        "not a single squash commit",
+        "is not an ancestor of group head",
     );
+
+    // Subject names no PR at all, so the constituent is refused before any
+    // API read or tree comparison.
+    let mut run = honest(&world, &world.head, &world.base)?;
+    run.queued = world.squash(&world.head, "feature without a number")?;
+    assert_refused(&run_resolve(&world, &shell, &run)?, "does not name a PR");
 
     // The ref sha is neither the live head nor the base.
     let mut run = honest(&world, &world.head, &world.base)?;
@@ -530,5 +552,51 @@ fn batch_wrong_parent_and_wrong_subject_still_refuse_before_the_tree_is_read() -
         &run_resolve(&world, &shell, &run)?,
         "is neither the live head",
     );
+    Ok(())
+}
+
+/// #12437: history-sync never relaxes the queue. A queued true merge of the
+/// live head onto the group base, with the exact merged tree and a subject
+/// naming the PR, is still refused for a PR carrying `history-sync`; such PRs
+/// qualify only through the pull_request-mode route (docs/MERGE_FLOW.md).
+#[test]
+fn queued_two_parent_merge_is_refused_even_for_a_history_sync_pr() -> Result<(), String> {
+    let world = World::new()?;
+    let shell = resolve_shell(&workflow()?)?;
+    let tree = git(
+        &world.work,
+        &["merge-tree", "--write-tree", &world.base, &world.head],
+    )?;
+    let queued = git(
+        &world.work,
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            &world.base,
+            "-p",
+            &world.head,
+            "-m",
+            "Merge pull request (#42)",
+        ],
+    )?;
+    let run = Run {
+        queued,
+        api_head: world.head.clone(),
+        ref_sha: world.head.clone(),
+        pull_ref: world.head.clone(),
+        group_base: world.base.clone(),
+        labels: vec!["merge-ready", "history-sync"],
+    };
+    assert_refused(
+        &run_resolve(&world, &shell, &run)?,
+        "is not a single-parent commit directly on",
+    );
+    // Control: the same history-sync PR queued as its real squash is accepted,
+    // so the refusal above is caused by the two-parent shape alone.
+    let mut squash = honest(&world, &world.head, &world.head)?;
+    squash.labels = vec!["merge-ready", "history-sync"];
+    let outcome = run_resolve(&world, &shell, &squash)?;
+    assert!(outcome.accepted, "{}", outcome.log);
     Ok(())
 }

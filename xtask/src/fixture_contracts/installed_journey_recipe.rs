@@ -13,6 +13,10 @@ use super::*;
 use serde::de::{Deserializer, MapAccess, Visitor};
 use std::fmt;
 
+#[cfg(test)]
+#[path = "installed_journey_recipe_rust_tests.rs"]
+mod installed_journey_recipe_rust_tests;
+
 /// Snapshot names in the order the manifest lists them. `serde_json::Value`
 /// objects sort their keys, but the recipe numbers variant commits by listed
 /// order, so the order is read from the manifest text itself.
@@ -48,10 +52,78 @@ struct OrderedManifest {
     repository: OrderedRepository,
 }
 
-/// One recipe commit step: the pinned date and the commit message.
+/// Complete commit metadata. Explicit variants have no identity/date defaults.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RecipeCommit {
-    date: String,
+    author_name: String,
+    author_email: String,
+    author_date: String,
+    committer_name: String,
+    committer_email: String,
+    committer_date: String,
     message: String,
+}
+
+fn fixture_commit(date: &str, message: &str) -> RecipeCommit {
+    RecipeCommit {
+        author_name: "ripr fixture".to_string(),
+        author_email: "fixture@example.invalid".to_string(),
+        author_date: date.to_string(),
+        committer_name: "ripr fixture".to_string(),
+        committer_email: "fixture@example.invalid".to_string(),
+        committer_date: date.to_string(),
+        message: message.to_string(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExplicitVariantRecipe {
+    snapshot: String,
+    parent: String,
+    branch: String,
+    commit: RecipeCommit,
+}
+
+fn explicit_variant_recipes(
+    repository: Option<&Value>,
+    variants: &[&str],
+) -> Result<Option<Vec<ExplicitVariantRecipe>>, String> {
+    let Some(value) = repository.and_then(|value| value.get("variant_construction_recipe")) else {
+        return Ok(None);
+    };
+    let recipes: Vec<ExplicitVariantRecipe> = serde_json::from_value(value.clone())
+        .map_err(|error| format!("invalid explicit variant recipe: {error}"))?;
+    let mut named = BTreeSet::new();
+    for recipe in &recipes {
+        if !variants.contains(&recipe.snapshot.as_str())
+            || !named.insert(recipe.snapshot.as_str())
+            || recipe.parent != "base"
+            || recipe.branch.is_empty()
+            || [
+                &recipe.commit.author_name,
+                &recipe.commit.author_email,
+                &recipe.commit.author_date,
+                &recipe.commit.committer_name,
+                &recipe.commit.committer_email,
+                &recipe.commit.committer_date,
+                &recipe.commit.message,
+            ]
+            .iter()
+            .any(|value| value.trim().is_empty())
+        {
+            return Err(format!(
+                "explicit variant recipe for `{}` must uniquely name a variant snapshot, \
+                 parent `base`, a branch and complete nonempty commit metadata",
+                recipe.snapshot
+            ));
+        }
+    }
+    if named.len() != variants.len() {
+        return Err("explicit variant recipe must name every variant snapshot exactly once".into());
+    }
+    Ok(Some(recipes))
 }
 
 fn recipe_commits(recipe: &[&str]) -> Vec<RecipeCommit> {
@@ -64,18 +136,22 @@ fn recipe_commits(recipe: &[&str]) -> Vec<RecipeCommit> {
                 .split_whitespace()
                 .next()?;
             let message = step.split("git commit -m '").nth(1)?.split('\'').next()?;
-            Some(RecipeCommit {
-                date: date.to_string(),
-                message: message.to_string(),
-            })
+            let committer_date = step
+                .split("GIT_COMMITTER_DATE=")
+                .nth(1)?
+                .split_whitespace()
+                .next()?;
+            let mut commit = fixture_commit(date, message);
+            commit.committer_date = committer_date.to_string();
+            Some(commit)
         })
         .collect()
 }
 
 /// Hermetic git invocation: no user or system configuration, no signing, no
 /// hooks, so the object ids depend only on the recipe and the snapshot bytes.
-fn recipe_git(dir: &Path, args: &[&str], dates: Option<&str>) -> Result<String, String> {
-    recipe_git_inheriting(dir, args, dates, &[])
+fn recipe_git(dir: &Path, args: &[&str], commit: Option<&RecipeCommit>) -> Result<String, String> {
+    recipe_git_inheriting(dir, args, commit, &[])
 }
 
 /// `recipe_git` with extra variables the child would inherit from its parent;
@@ -83,7 +159,7 @@ fn recipe_git(dir: &Path, args: &[&str], dates: Option<&str>) -> Result<String, 
 fn recipe_git_inheriting(
     dir: &Path,
     args: &[&str],
-    dates: Option<&str>,
+    commit: Option<&RecipeCommit>,
     inherited: &[(&str, &str)],
 ) -> Result<String, String> {
     let mut full: Vec<String> = [
@@ -99,6 +175,8 @@ fn recipe_git_inheriting(
         "core.excludesFile=/dev/null",
         "-c",
         "core.fileMode=true",
+        "-c",
+        "commit.cleanup=verbatim",
     ]
     .iter()
     .map(|arg| arg.to_string())
@@ -116,9 +194,15 @@ fn recipe_git_inheriting(
         ("GIT_CONFIG_NOSYSTEM", "1"),
         ("GIT_TERMINAL_PROMPT", "0"),
     ];
-    if let Some(date) = dates {
-        envs.push(("GIT_AUTHOR_DATE", date));
-        envs.push(("GIT_COMMITTER_DATE", date));
+    if let Some(commit) = commit {
+        envs.extend([
+            ("GIT_AUTHOR_NAME", commit.author_name.as_str()),
+            ("GIT_AUTHOR_EMAIL", commit.author_email.as_str()),
+            ("GIT_AUTHOR_DATE", commit.author_date.as_str()),
+            ("GIT_COMMITTER_NAME", commit.committer_name.as_str()),
+            ("GIT_COMMITTER_EMAIL", commit.committer_email.as_str()),
+            ("GIT_COMMITTER_DATE", commit.committer_date.as_str()),
+        ]);
     }
     const INHERITED_GIT_ENV: [&str; 11] = [
         "GIT_DIR",
@@ -201,7 +285,7 @@ fn commit_snapshot(
     recipe_git(
         scratch,
         &["commit", "-q", "-m", &commit.message],
-        Some(&commit.date),
+        Some(commit),
     )?;
     Ok((
         recipe_git(scratch, &["rev-parse", "HEAD"], None)?,
@@ -241,6 +325,15 @@ pub(crate) fn installed_journey_rebuilt_ids(
             commits.len()
         ));
     };
+    if !recipe.first().is_some_and(|step| {
+        step.contains("git config user.name 'ripr fixture'")
+            && step.contains("git config user.email 'fixture@example.invalid'")
+    }) {
+        return Err(format!(
+            "blind journey installed {label} construction_recipe must pin the fixture \
+             author/committer name and email"
+        ));
+    }
     if repository
         .and_then(|repository| repository.get("snapshots"))
         .and_then(Value::as_object)
@@ -276,8 +369,13 @@ pub(crate) fn installed_journey_rebuilt_ids(
         .map(String::as_str)
         .filter(|name| *name != "base" && *name != "head")
         .collect();
-    let base_day = base_commit.date.split('T').next().unwrap_or_default();
-    if !variants.is_empty() {
+    let explicit_variants = explicit_variant_recipes(repository, &variants)?;
+    let base_day = base_commit
+        .author_date
+        .split('T')
+        .next()
+        .unwrap_or_default();
+    if !variants.is_empty() && explicit_variants.is_none() {
         // The variant commits are rebuilt by the derivation documented in the
         // recipe's prose step; refuse a recipe that no longer states it.
         let states_derivation = recipe.iter().any(|step| {
@@ -308,7 +406,19 @@ pub(crate) fn installed_journey_rebuilt_ids(
     let rebuilt = (|| -> Result<Vec<(String, String, String)>, String> {
         std::fs::create_dir_all(&scratch)
             .map_err(|error| format!("create scratch repository: {error}"))?;
-        recipe_git(&scratch, &["init", "-q", "-b", "main", "."], None)?;
+        recipe_git(
+            &scratch,
+            &[
+                "init",
+                "-q",
+                "--object-format=sha1",
+                "--template=",
+                "-b",
+                "main",
+                ".",
+            ],
+            None,
+        )?;
         recipe_git(&scratch, &["config", "user.name", "ripr fixture"], None)?;
         recipe_git(
             &scratch,
@@ -322,6 +432,19 @@ pub(crate) fn installed_journey_rebuilt_ids(
         rebuilt.push(("base".to_string(), commit, tree));
         let (commit, tree) = commit_snapshot(&scratch, &snapshot_dir("head"), head_commit)?;
         rebuilt.push(("head".to_string(), commit, tree));
+        if let Some(recipes) = explicit_variants {
+            for recipe in recipes {
+                recipe_git(
+                    &scratch,
+                    &["checkout", "-q", "-b", &recipe.branch, &base_id],
+                    None,
+                )?;
+                let (commit, tree) =
+                    commit_snapshot(&scratch, &snapshot_dir(&recipe.snapshot), &recipe.commit)?;
+                rebuilt.push((recipe.snapshot, commit, tree));
+            }
+            return Ok(rebuilt);
+        }
         for (index, name) in variants.iter().enumerate() {
             let suffix = name.strip_prefix("variant-").ok_or_else(|| {
                 format!("snapshot `{name}` is neither base, head nor a `variant-` snapshot")
@@ -337,10 +460,10 @@ pub(crate) fn installed_journey_rebuilt_ids(
                 ],
                 None,
             )?;
-            let variant = RecipeCommit {
-                date: format!("{base_day}T00:{:02}:00Z", index + 2),
-                message: format!("variant: {suffix}"),
-            };
+            let variant = fixture_commit(
+                &format!("{base_day}T00:{:02}:00Z", index + 2),
+                &format!("variant: {suffix}"),
+            );
             let (commit, tree) = commit_snapshot(&scratch, &snapshot_dir(name), &variant)?;
             rebuilt.push((name.to_string(), commit, tree));
         }
@@ -432,7 +555,11 @@ mod installed_journey_recipe_tests {
 
     #[test]
     fn committed_fixtures_reproduce_their_recorded_ids_from_the_recipe() -> Result<(), String> {
-        for contract in [&INSTALLED_PYTHON_CONTRACT, &INSTALLED_TYPESCRIPT_CONTRACT] {
+        for contract in [
+            &INSTALLED_RUST_CONTRACT,
+            &INSTALLED_PYTHON_CONTRACT,
+            &INSTALLED_TYPESCRIPT_CONTRACT,
+        ] {
             let manifest = committed_manifest(contract)?;
             let violations = installed_journey_recipe_rebuild_violations(
                 contract,

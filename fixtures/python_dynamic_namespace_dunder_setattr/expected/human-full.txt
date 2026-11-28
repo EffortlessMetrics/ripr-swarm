@@ -4,11 +4,12 @@ root: fixtures/python_dynamic_namespace_dunder_setattr/input
 config: <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input/ripr.toml
 
 Summary: 2 changed behavior(s) checked: 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 2 of 2 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Changed file(s) by language: python = 2
 
@@ -35,6 +36,7 @@ Language
 
 Static exposure
   weakly_exposed (warning, confidence 0.40)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; no observed call supplies the changed boundary input. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `discounted_total`
@@ -55,6 +57,7 @@ Repair placement
   pytest node: tests/test_pricing.py::test_discount
   verify (Bash): (cd -P -- <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input && python -m pytest tests/test_pricing.py::test_discount) (high)
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input --diff <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/diff.patch --mode fast probe:shop_pricing.py:python_preview:b9038d35
   ripr context --root <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input --diff <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/diff.patch --mode fast --at probe:shop_pricing.py:python_preview:b9038d35
 
@@ -77,6 +80,7 @@ Language
 
 Static exposure
   static_unknown (note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `checkout`
@@ -97,8 +101,8 @@ Static limitation
   mocked_module — A mocked module replaces the real implementation, so a passing test may not observe the actual changed behavior.
   Next: Add a test that runs the real implementation, with no mock replacing the changed module, and assert on its result.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input --diff <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/diff.patch --mode fast probe:shop_route.py:python_preview:6a58f374
   ripr context --root <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/input --diff <cwd>/fixtures/python_dynamic_namespace_dunder_setattr/diff.patch --mode fast --at probe:shop_route.py:python_preview:6a58f374
-
 
 Note: 2 Python files analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

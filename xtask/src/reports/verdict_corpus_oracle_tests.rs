@@ -337,7 +337,7 @@ fn oracle_scores_stay_out_of_the_verdict_rates() -> Result<(), String> {
             (case.case_id.clone(), json!({"findings": [f]}))
         })
         .collect();
-    let report = build_report(&corpus, &checks, &BTreeMap::new())?;
+    let report = build_report(&corpus, &checks, &BTreeMap::new(), &BTreeSet::new())?;
     let labeled: Vec<&ExpectedOracle> = corpus
         .cases
         .iter()

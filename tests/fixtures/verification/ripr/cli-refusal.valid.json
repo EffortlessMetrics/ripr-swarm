@@ -1,0 +1,14 @@
+{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "status": "refused",
+  "error": {
+    "code": "unknown_argument",
+    "message": "unknown check argument \"--bogus-flag\". Run `ripr check --help --all`.",
+    "token": "--bogus-flag",
+    "next": {
+      "purpose": "list_valid_arguments",
+      "command": "ripr check --help --all"
+    }
+  }
+}

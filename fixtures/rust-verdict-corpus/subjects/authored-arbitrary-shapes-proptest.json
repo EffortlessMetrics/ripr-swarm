@@ -1,0 +1,13 @@
+{
+  "subject_id": "authored-arbitrary-shapes-proptest",
+  "origin": "authored",
+  "version_label": "authored 2026-11-08; #11545 proptest Arbitrary generator stimulus; labeled against proptest 1.12.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {"path": "Cargo.lock", "sha256": "9a8f8fc6aa38087aa3addd9c2c0a5db30f11d20dd4106e3d2fde4ce46abaf5a4"},
+    {"path": "Cargo.toml", "sha256": "d5992528826bb6fe529e1fd0dd3ab28767e02e36d226f1026d7f7785a91598fd"},
+    {"path": "src/lib.rs", "sha256": "53ed88abdab33dd5e5068e5cd2b4b07745c8b0bf226e6d68a2a4b4a6751c8336"},
+    {"path": "tests/gap.rs", "sha256": "bb2eafdcd3c0adb7656c2b7dab205b687603072c0d648cc158ed6c0b60f9eb0a"}
+  ]
+}

@@ -1,0 +1,2 @@
+xtask/tests/guarded_merge_selftest.rs|Command::new|1|guarded-merge-selftest|#11781: the integration test runs the checked-in Python fake-API suite for the exact-head merge guard with `python3 -I`; no network, no gh, no production subprocess.
+xtask/tests/guarded_merge_selftest.rs|use std::process::Command|1|guarded-merge-selftest|#11781: imports Command only for the bounded self-test invocation described above.

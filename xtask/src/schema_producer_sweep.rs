@@ -84,6 +84,22 @@ pub(crate) struct Binding {
 
 pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
     Binding {
+        schema_path: "schemas/ripr/agent-brief.schema.json",
+        pointer: None,
+        corpus: Corpus::FileName("agent-brief.json"),
+        edge_fixtures: &[],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/muse-plugin-eval.schema.json",
+        pointer: None,
+        corpus: Corpus::Exempt(
+            "external canonical evaluation input; no repository agent-run producer emits structured observations (#13120). native_muse_fixture_routes_without_inventing_repair in xtask/src/reports/dx_scoreboard/muse_plugin/tests.rs exercises the native consumer, not empirical plugin qualification",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/muse-plugin-eval.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/badges/shields-endpoint.schema.json",
         pointer: None,
         corpus: Corpus::Paths(&["badges/ripr.json", "badges/ripr-plus.json"]),
@@ -96,8 +112,18 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         corpus: Corpus::FileName("check.json"),
         edge_fixtures: &[
             "tests/fixtures/verification/ripr/check-complete.valid.json",
+            "tests/fixtures/verification/ripr/check-empty-root-refusal.valid.json",
             "tests/fixtures/verification/ripr/check-incomplete.valid.json",
             "tests/fixtures/verification/ripr/check-limited.valid.json",
+            // A bounded partial-scope run (RIPR-PROP-0019): a completed run
+            // whose analysis_scope carries run_status limited_partial_scope,
+            // captured from `RIPR_PARTIAL_DIFF_FILE_BUDGET=1 ripr check
+            // --root fixtures/helper_chain_controls/input --diff
+            // fixtures/helper_chain_controls/diff.patch --format json` (#11584).
+            "tests/fixtures/verification/ripr/check-partial-scope.valid.json",
+            // A `--format check-findings-json` capture (#15376): the check
+            // document with its leading `artifact` envelope.
+            "tests/fixtures/verification/ripr/check-findings.valid.json",
             // Retained captures of past `ripr check` runs inside real-repo eval
             // fixtures. They validate against the schema, but they are not
             // bytes the candidate's build produced, so they stay edge fixtures.
@@ -122,12 +148,205 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         )],
     },
     Binding {
+        schema_path: "schemas/ripr/agent-status.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_status_json_conforms_at_every_stage_of_a_repair_loop in crates/ripr/tests/agent_status_json_schema.rs validates the real CLI bytes for a fresh workspace, an attempt awaiting its edit, a finished attempt with an issued receipt and a failed attempt, and published_agent_status_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-status.valid.json"],
+        // The VS Code extension's attempt-inventory stimulus is hand-written
+        // and trimmed to the fields `parseAttemptInventory` reads (no
+        // artifacts, no baseline or receipt fields), so it is not producer
+        // output and does not conform.
+        excluded: &[(
+            "editors/vscode/test-fixtures/attempt-status/inventory.json",
+            "hand-written VS Code extension stimulus for parseAttemptInventory, trimmed to the fields the extension reads; not ripr output",
+        )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/help.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: help_json_conforms_and_reaches_every_branch in crates/ripr/tests/help_json_schema.rs validates the real CLI bytes and asserts they reach every exit-contract kind, flag scope and workflow next-route kind, and published_help_schema_rejects_documents_it_forbids is the negative experiment; the document changes with every catalog edit, so the committed fixture is a capture trimmed to ten command rows and one workflow, kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/help.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/rerun.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: rerun_json_conforms_for_every_selector_and_option in crates/ripr/tests/rerun_json_schema.rs validates the real CLI bytes for eighteen runs (one over the TypeScript preview fixture) across both selectors, --before movement and --check-parity, and published_rerun_schema_rejects_documents_it_forbids is the negative experiment; the report carries host paths and input hashes, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/rerun.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/cache-export.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: cache_export_json_conforms_and_counts_what_it_copied in crates/ripr/tests/cache_export_json_schema.rs validates the real CLI bytes of an export and holds its counts to the directory it names, cache_export_without_a_cache_writes_no_json pins that a failed export writes no JSON, and published_cache_export_schema_rejects_documents_it_forbids is the negative experiment; the report names a host-absolute directory, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/cache-export.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/cache-status.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: cache_status_json_conforms_to_the_published_schema_in_every_portable_state and cache_status_json_through_a_symlink_conforms_and_reports_the_real_directory in crates/ripr/tests/cache_clear_safety.rs validate the real CLI bytes of the not_found, ok, unavailable and aliased states, and published_cache_status_schema_rejects_documents_it_forbids is the negative experiment; the document carries a host-specific cache path, so the committed fixture is hand-written",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/cache-status.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/capabilities.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: capabilities_json_conforms_to_the_published_schema in crates/ripr/tests/capabilities_command.rs validates the real CLI bytes of the whole table and of every --language projection, published_vocabularies_equal_the_emitted_ones holds the schema's closed vocabularies equal to the emitted ones, and published_capabilities_schema_rejects_documents_it_forbids is the negative experiment; `ripr capabilities --json` writes to stdout and adapter_compiled depends on build features, so the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/capabilities.valid.json"],
+        excluded: &[],
+    },
+    Binding {
         schema_path: "schemas/ripr/check-timeout-refusal.schema.json",
         pointer: None,
         corpus: Corpus::Authority(
             "narrower authority: timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3 in crates/ripr/src/output/limited_check.rs asserts the rendered document's generation, keys, and fact/recovery shapes at the renderer, and check_json_analysis_timeout_retains_requested_echo_and_bounded_recovery in crates/ripr/tests/cli_smoke.rs parses the real CLI bytes of a forced-deadline run; the committed fixture is hand-written (forced-deadline bytes only exist per run), so release replay still passes it with --artifact",
         ),
         edge_fixtures: &["tests/fixtures/verification/ripr/check-timeout-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/cli-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: check_json_argv_usage_errors_emit_cli_refusal and context_selector_miss_emits_cli_refusal_only_for_json_request in crates/ripr/tests/cli_smoke.rs parse the real CLI bytes of usage errors and selector misses, and the output::refusal unit tests pin the renderer; the committed fixture is hand-written",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/cli-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/diff.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: diff_json_conforms_to_the_published_schema_in_each_completion_state in crates/ripr/tests/diff_json_schema.rs validates the real CLI bytes of a complete diff with a finding, a complete empty diff and an incomplete diff with a preview-language advisory, definitions_shared_with_the_check_schema_are_identical holds the copied definitions equal to check.schema.json, and published_diff_schema_rejects_documents_it_forbids is the negative experiment; `ripr diff --json` writes to stdout from a live git range, so the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/diff.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/diff-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: diff_json_refusals_conform_to_the_published_schema in crates/ripr/tests/diff_json_schema.rs validates the real exit-2 CLI bytes for an unresolvable base and an unreadable config, definitions_shared_with_the_check_schema_are_identical holds the copied definitions equal to check.schema.json, and published_diff_refusal_schema_rejects_documents_it_forbids is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/diff-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/rerun-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: rerun_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unusable root and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/rerun-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-brief-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_brief_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unusable root with an echoed base and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-brief-refusal.valid.json"],
+        // `ripr check` refusals share the agent brief's `0.2` version and the
+        // envelope's required fields, so they match this schema's top-level
+        // shape. They carry `mode` and a `diff` scope, which this schema
+        // rejects, and check.schema.json owns them.
+        excluded: &[
+            (
+                "tests/fixtures/verification/ripr/check-limited.valid.json",
+                "a `ripr check` 0.2 refusal envelope (scope `diff`, carries `mode`), owned by check.schema.json",
+            ),
+            (
+                "tests/fixtures/verification/ripr/check-empty-root-refusal.valid.json",
+                "explicit empty root on `ripr check`; the diff scope and mode belong to the check 0.2 edge fixture and are outside the agent brief schema",
+            ),
+        ],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-packet.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_packet_json_conforms_for_every_fixture_seam in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for every seam of a fixture crate and asserts they reach both tasks, concrete, unresolved and absent assertion guidance, a proof obligation and the next-step block, and published_packet_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        // The boundary_gap editor-agent-loop golden is generated producer
+        // output for one seam, so it is held to the schema as well.
+        edge_fixtures: &[
+            "tests/fixtures/verification/ripr/agent-packet.valid.json",
+            "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json",
+        ],
+        excluded: &[(
+            "tests/fixtures/verification/ripr/agent-seam-packets.valid.json",
+            "a `ripr check --format agent-seam-packets-json` document, owned by agent-seam-packets.schema.json",
+        )],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-seam-packets.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_seam_packets_json_conforms_for_each_document_variant in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for a many-packet run, a one-packet run, a run with a diff selector, a refused run and a run with a canonical delta artifact, the_two_packet_schemas_share_their_definitions holds the packet definitions equal to agent-packet.schema.json apart from the canonical-delta fields, and published_seam_packets_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root in its redirects, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-seam-packets.valid.json"],
+        // Same version and envelope, other command: these are `--seam-id`
+        // documents, whose `next` block binds a selected root and adds
+        // `analysis_outcome_command`; agent-packet.schema.json owns them.
+        excluded: &[
+            (
+                "tests/fixtures/verification/ripr/agent-packet.valid.json",
+                "a `ripr agent packet --seam-id` document, owned by agent-packet.schema.json",
+            ),
+            (
+                "fixtures/boundary_gap/expected/editor-agent-loop/agent-packet.json",
+                "a `ripr agent packet --seam-id` document, owned by agent-packet.schema.json",
+            ),
+        ],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-gap-packet.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_gap_packet_json_conforms_for_each_document_variant in crates/ripr/tests/agent_packet_json_schema.rs validates the real CLI bytes for an advisory packet from a live-current repo-exposure ledger, the same with a canonical delta artifact, a records ledger blocked as not evaluated and a dirty checkout blocked as stale, the_gap_packet_schema_shares_the_seam_packet_definitions holds the copied definitions equal to agent-seam-packets.schema.json, and published_gap_packet_schema_rejects_documents_it_forbids is the negative experiment; the document names the host's root in its refresh commands, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-gap-packet.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/agent-packet-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: agent_packet_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates the real CLI bytes for an unknown seam (exit 3), an unusable root and an unreadable config, refusal_schemas_differ_from_the_diff_refusal_schema_only_where_stated holds the schema equal to diff-refusal.schema.json apart from its version, scope and omitted fields, and published_refusal_schemas_reject_documents_they_forbid is the negative experiment; the committed fixture is a capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/agent-packet-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/context-refusal.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: context_json_refusals_conform_to_the_published_schema in crates/ripr/tests/refusal_envelope_schemas.rs validates real pretty and compact CLI refusals, and published_refusal_schemas_reject_documents_they_forbid exercises invalid variants; the edge fixture captures an unusable root",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/context-refusal.valid.json"],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/ripr/context.schema.json",
+        pointer: None,
+        corpus: Corpus::Authority(
+            "narrower authority: context_json_conforms_for_every_finding_of_the_covering_fixtures in crates/ripr/tests/context_json_schema.rs validates the real CLI bytes of every finding's packet over eight committed fixtures and a git fixture (also checking --format json-compact and that each packet's top-level missing_discriminators equal its check finding's), and requires the corpus to reach every classification, both source-currentness states, a null and an exposed witness, preview confidence caps, owner_signature, before_condition, a null and an object top-level flow_sink and each discriminator shape; confidence_basis_is_the_check_finding_definition holds the shared field equal to check.schema.json, and published_context_schema_rejects_documents_it_forbids is the negative experiment; the packet names the host root in witness.explain_command, so the committed fixture is a portable capture kept as an edge fixture",
+        ),
+        edge_fixtures: &["tests/fixtures/verification/ripr/context.valid.json"],
         excluded: &[],
     },
     Binding {
@@ -234,6 +453,15 @@ pub(crate) const VERIFICATION_CORPUS_BINDINGS: &[Binding] = &[
         pointer: None,
         corpus: Corpus::Exempt(
             "narrower authority: capability_output_matches_the_published_schema in crates/ripr/src/lsp/agent_protocol.rs; the schema's cross-file `$ref` is outside this validator",
+        ),
+        edge_fixtures: &[],
+        excluded: &[],
+    },
+    Binding {
+        schema_path: "schemas/config/ripr-toml.schema.json",
+        pointer: None,
+        corpus: Corpus::Exempt(
+            "describes the ripr.toml input, not a producer output; crates/ripr/src/config/schema_parity_tests.rs holds its keys, enums and docs equal to the parser",
         ),
         edge_fixtures: &[],
         excluded: &[],
@@ -940,8 +1168,22 @@ fn collect_command_specs<'a>(
                     && let Some(specs) = child.as_object()
                 {
                     for (role, spec) in specs {
-                        if (role == "verify") == verify {
-                            subjects.push((format!("{child_location}/{role}"), spec));
+                        // A null role is a role not offered: the evidence
+                        // record writes `null` for a non-actionable item
+                        // (#14385). A GapRecord carries each role as a
+                        // non-empty list of specs (it omits an empty one), so
+                        // every listed spec is a subject. An empty list, like
+                        // any other non-object, is one subject and fails.
+                        if (role == "verify") != verify || spec.is_null() {
+                            continue;
+                        }
+                        match spec.as_array().filter(|listed| !listed.is_empty()) {
+                            Some(listed) => {
+                                subjects.extend(listed.iter().enumerate().map(|(index, item)| {
+                                    (format!("{child_location}/{role}/{index}"), item)
+                                }))
+                            }
+                            None => subjects.push((format!("{child_location}/{role}"), spec)),
                         }
                     }
                     continue;
@@ -989,8 +1231,16 @@ fn collect_command_specs_exact<'a>(
                     && let Some(specs) = child.as_object()
                 {
                     for (role, spec) in specs {
-                        if (role == "verify") == verify {
-                            subjects.push((format!("{child_location}/{role}"), spec));
+                        if (role == "verify") != verify || matches!(spec, ExactValue::Null) {
+                            continue;
+                        }
+                        match spec {
+                            ExactValue::Array(listed) if !listed.is_empty() => {
+                                subjects.extend(listed.iter().enumerate().map(|(index, item)| {
+                                    (format!("{child_location}/{role}/{index}"), item)
+                                }))
+                            }
+                            _ => subjects.push((format!("{child_location}/{role}"), spec)),
                         }
                     }
                     continue;
@@ -1587,12 +1837,82 @@ mod tests {
     }
 
     #[test]
+    fn null_command_spec_roles_are_roles_not_offered() -> Result<(), String> {
+        for (role, verify) in [("verify", true), ("receipt", false)] {
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":null}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            if row["producer_subjects_discovered"] != 0
+                || report
+                    .violations
+                    .iter()
+                    .any(|violation| violation.contains("packet.json/command_specs"))
+            {
+                return Err(format!(
+                    "null {role} role was validated as a spec: {row}; {:?}",
+                    report.violations
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// A GapRecord lists each role's specs (`{"verify": [spec, ...]}`): each
+    /// listed spec is a subject of its own, so a bad entry fails at its index.
+    /// An empty list is never written by a GapRecord and still fails.
+    #[test]
+    fn listed_command_spec_roles_are_validated_per_entry() -> Result<(), String> {
+        for (role, verify) in [("verify", true), ("receipt", false)] {
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":["x","y"]}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            let at_entry = |index: usize| {
+                report.violations.iter().any(|violation| {
+                    violation.contains(&format!("packet.json/command_specs/{role}/{index}"))
+                })
+            };
+            if row["producer_subjects_discovered"] != 2 || !at_entry(0) || !at_entry(1) {
+                return Err(format!(
+                    "listed {role} specs were not validated per entry: {row}; {:?}",
+                    report.violations
+                ));
+            }
+            let root = example_root();
+            write(
+                &root.join("fixtures/a/expected/packet.json"),
+                &format!(r#"{{"command_specs":{{"{role}":[]}}}}"#),
+            );
+            let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
+            let row = &report.packet["rows"][0];
+            if row["producer_subjects_discovered"] != 1
+                || !report.violations.iter().any(|violation| {
+                    violation.contains(&format!("packet.json/command_specs/{role}"))
+                })
+            {
+                return Err(format!(
+                    "an empty {role} list escaped the sweep: {row}; {:?}",
+                    report.violations
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn non_object_command_spec_roles_fail_in_both_binding_rows() -> Result<(), String> {
         for (role, verify) in [("verify", true), ("build", false)] {
             let root = example_root();
             write(
                 &root.join("fixtures/a/expected/packet.json"),
-                &format!(r#"{{"command_specs":{{"{role}":null}}}}"#),
+                &format!(r#"{{"command_specs":{{"{role}":"x"}}}}"#),
             );
             let report = run(&root, &[binding(Corpus::CommandSpecs { verify }, &[])], &[])?;
             let row = &report.packet["rows"][0];
@@ -2023,6 +2343,44 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn native_muse_schema_sweep_keeps_synthetic_input_as_edge_only() -> Result<(), String> {
+        let schema_path = "schemas/ripr/muse-plugin-eval.schema.json";
+        let fixture_path = "tests/fixtures/verification/ripr/muse-plugin-eval.valid.json";
+        let binding = VERIFICATION_CORPUS_BINDINGS
+            .iter()
+            .find(|binding| binding.schema_path == schema_path)
+            .ok_or("Muse input schema has no sweep binding")?;
+        assert!(matches!(binding.corpus, Corpus::Exempt(_)));
+        assert_eq!(binding.edge_fixtures, &[fixture_path]);
+        let tree = CandidateTree {
+            commit: "synthetic-contract-test".to_string(),
+            files: BTreeMap::from([
+                (
+                    schema_path.to_string(),
+                    include_bytes!("../../schemas/ripr/muse-plugin-eval.schema.json").to_vec(),
+                ),
+                (
+                    fixture_path.to_string(),
+                    include_bytes!(
+                        "../../tests/fixtures/verification/ripr/muse-plugin-eval.valid.json"
+                    )
+                    .to_vec(),
+                ),
+            ]),
+        };
+        let report = sweep(&tree, std::slice::from_ref(binding), &[])?;
+        assert!(report.violations.is_empty(), "{:?}", report.violations);
+        let row = &report.packet["rows"][0];
+        assert_eq!(row["producer_subjects_discovered"], 0);
+        assert_eq!(row["producer_subjects_valid"], 0);
+        assert_eq!(row["edge_fixtures_valid"], 1);
+        assert_eq!(row["disposition"]["state"], "exempt");
+        assert_eq!(row["subjects"][0]["role"], "edge_fixture");
+        assert!(!contract_subjects_owned_by_corpus_gate(schema_path, None));
+        Ok(())
+    }
+
     /// Exempt rows are only as good as the authority they name. Each named
     /// test or helper must still exist in its file and be cited by a binding's
     /// exemption reason, so deleting an authority fails here instead of
@@ -2031,7 +2389,12 @@ mod tests {
     fn exempt_rows_name_authorities_that_still_exist() -> Result<(), String> {
         // (name, is_test_fn, source). A helper must be defined and called; a
         // test fn must sit directly under `#[test]`.
-        let pins: [(&str, bool, &str); 5] = [
+        let pins: [(&str, bool, &str); 6] = [
+            (
+                "native_muse_fixture_routes_without_inventing_repair",
+                true,
+                include_str!("reports/dx_scoreboard/muse_plugin/tests.rs"),
+            ),
             (
                 "timeout_refusal_with_stashed_context_renders_input_context_at_generation_0_3",
                 true,

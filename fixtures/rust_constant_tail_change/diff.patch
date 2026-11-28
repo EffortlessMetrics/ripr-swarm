@@ -1,0 +1,68 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,45 +1,45 @@
+ //! #14852: a returned constant replaced by another constant.
+ 
+ pub fn ready() -> bool {
+-    true
++    false
+ }
+ 
+ pub fn idle() -> bool {
+-    true
++    false
+ }
+ 
+ pub fn items() -> Vec<i32> {
+-    vec![1, 2]
++    vec![]
+ }
+ 
+ pub fn bytes() -> Vec<u8> {
+-    vec![b'a', b'b']
++    vec![b'x', b'y']
+ }
+ 
+ pub fn enabled(flag: bool) -> bool {
+-    flag
++    false
+ }
+ 
+ pub fn gate(flag: bool) -> bool {
+-    if flag { return false; }
+-    true
++    // c
++    false
+ }
+ 
+ pub fn pick(x: i32) -> Vec<i32> {
+-    if x == 0 { return Vec::new(); }
+-    vec![9]
++    // c
++    vec![]
+ }
+ 
+ pub fn off() -> bool {
+-    false
++    !true
+ }
+ 
+ pub fn neg(delta: i32) -> i32 {
+-    delta
++    -delta
+ }
+ 
+ pub fn both(a: u8, b: u8) -> u8 {
+-    a | b
++    a & b
+ }
+ 
+ pub struct P {
+@@ -47,5 +47,5 @@ pub struct P {
+ }
+ 
+ pub fn px(p: P) -> i32 {
+-    0
++    p.x
+ }

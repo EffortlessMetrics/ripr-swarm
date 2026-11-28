@@ -1,0 +1,10 @@
+# VP29A (#6428): repository verification contract compiler for harness registrations.
+[[extend]]
+id = "RIPR-SPEC-0153"
+tests = [
+  "crates/ripr/src/config/verification_contract/compiler.rs::tests::compiles_harness_registration_with_identity_preserving_digest",
+  "crates/ripr/src/config/verification_contract/compiler.rs::tests::duplicate_registration_ids_surface_as_conflicts",
+  "crates/ripr/src/config/verification_contract/compiler.rs::tests::pipe_containing_registration_fields_have_distinct_digests",
+  "crates/ripr/src/config/verification_contract/inventory.rs::tests::inventory_lists_every_admitted_source_class_once",
+  "crates/ripr/src/config/tests.rs::verification_contract_compiles_parsed_harness_registrations",
+]

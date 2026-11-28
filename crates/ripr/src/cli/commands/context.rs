@@ -8,6 +8,7 @@ use crate::app::{self, CheckInput, OutputFormat};
 use crate::cli::help;
 use crate::cli::parse::{
     base_with_diff_conflict_error, disclose_attached_terminal_stdin_read, expect_value, parse_mode,
+    reconcile_root,
 };
 use crate::config::{CheckInputExplicit, apply_to_check_input, load_for_root};
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let mut max_tests = crate::config::DEFAULT_CONTEXT_RELATED_TESTS;
     let mut explicit_max_tests = false;
     let mut quiet = false;
+    let mut selected_format = None;
     // RIPR-SPEC-0140: `--from` loads a previously written check artifact
     // instead of re-running the pipeline. Scope flags passed alongside it
     // are assertions verified against the recording, not overrides.
@@ -34,12 +36,20 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     let mut worktree = false;
     let mut committed = false;
     let mut root_explicitly_provided = false;
+    // #9340: same `--path`/`--exclude` narrowing `ripr check` binds, so a
+    // pasted drill-in from a scoped oversized-diff run re-analyzes the same
+    // files instead of tripping `diff_scope_oversized`.
+    let mut scope_include: Vec<String> = Vec::new();
+    let mut scope_exclude: Vec<String> = Vec::new();
     let mut i = 0usize;
     while i < args.len() {
         match args[i].as_str() {
             "--root" => {
                 i += 1;
-                input.root = PathBuf::from(expect_value(args, i, "--root")?);
+                let value = expect_value(args, i, "--root")?;
+                let reconciled =
+                    reconcile_root(&input.root, root_explicitly_provided, value, "context")?;
+                input.root = reconciled;
                 root_explicitly_provided = true;
             }
             "--base" => {
@@ -78,6 +88,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             }
             "--worktree" => worktree = true,
             "--committed" => committed = true,
+            "--path" => {
+                i += 1;
+                scope_include.push(expect_value(args, i, "--path")?.to_string());
+            }
+            "--exclude" => {
+                i += 1;
+                scope_exclude.push(expect_value(args, i, "--exclude")?.to_string());
+            }
             "--at" => {
                 i += 1;
                 selector = Some(expect_value(args, i, "--at")?.to_string());
@@ -97,7 +115,16 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 )?;
                 explicit_max_tests = true;
             }
-            "--json" => input.format = OutputFormat::Json,
+            "--json" => select_context_format(&mut selected_format, OutputFormat::Json)?,
+            "--format" => {
+                i += 1;
+                let format = match expect_value(args, i, "--format")? {
+                    "json" => OutputFormat::Json,
+                    "json-compact" => OutputFormat::JsonCompact,
+                    _ => return Err("context --format accepts json or json-compact".to_string()),
+                };
+                select_context_format(&mut selected_format, format)?;
+            }
             // #8739: same meaning as `ripr check --quiet`: stderr progress only.
             "--quiet" => quiet = true,
             "--help" | "-h" => {
@@ -114,6 +141,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         }
         i += 1;
     }
+    let format = selected_format.unwrap_or(OutputFormat::Json);
+    super::bind_diff_scope_flags(&mut input, scope_include, scope_exclude)?;
     // #4319: same parse-time `--base`+`--diff` conflict as `explain`. Only
     // the fresh path conflicts: beside `--from`, both flags are assertions
     // verified against the recording (RIPR-SPEC-0140), so that verification
@@ -129,7 +158,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         from_artifact.is_some(),
     )?;
     if selector.is_none() && !worktree && !committed {
-        return Err(super::missing_selector_error(
+        return Err(missing_context_selector(
             "missing --at or --finding selector",
             "ripr check --json",
         ));
@@ -159,16 +188,37 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     ) {
         Ok(prefix) => prefix,
         Err(err) => {
-            return Err(crate::cli::commands_context::refuse_json_envelope(
+            return Err(
+                crate::cli::commands_context::refuse_json_envelope_with_format(
+                    crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+                    "diff",
+                    Some(input.mode.as_str()),
+                    &input.root,
+                    input.base.as_deref(),
+                    crate::core_error::CoreError::repository_root_unusable(err),
+                    format,
+                ),
+            );
+        }
+    };
+    // #3920: a missing or non-directory `--root` is the shared root refusal
+    // (`repository_root_unusable`), as for `check`, `diff`, `rerun` and the
+    // agent commands, not an `analysis_failed` from the later config load.
+    // The directory-only gate: it adds no output-containment refusal.
+    if let Err(err) = crate::cli::commands_context::ensure_command_root_dir(&input.root, "context")
+    {
+        return Err(
+            crate::cli::commands_context::refuse_json_envelope_with_format(
                 crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
                 "diff",
                 Some(input.mode.as_str()),
                 &input.root,
                 input.base.as_deref(),
                 crate::core_error::CoreError::repository_root_unusable(err),
-            ));
-        }
-    };
+                format,
+            ),
+        );
+    }
     let replay = from_artifact.is_some() || input.diff_file.is_some();
     // A binding failure (for example a shadowed member selector) is a
     // post-argv-parse failure like the root and config refusals, so it writes
@@ -179,13 +229,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         })
         .transpose()
         .map_err(|err| {
-            crate::cli::commands_context::refuse_json_envelope(
+            crate::cli::commands_context::refuse_json_envelope_with_format(
                 crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
                 "diff",
                 Some(input.mode.as_str()),
                 &input.root,
                 input.base.as_deref(),
                 err,
+                format,
             )
         })?;
     // #7331: `context` produces JSON only, so every post-argv-parse failure
@@ -196,13 +247,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // snapshot so `input` can move into the pipeline call afterwards.
     let parsed_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
     let config = load_for_root(&input.root).map_err(|err| {
-        crate::cli::commands_context::refuse_json_envelope(
+        crate::cli::commands_context::refuse_json_envelope_with_format(
             crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
             "diff",
             Some(parsed_context.2),
             &parsed_context.0,
             parsed_context.1.as_deref(),
             crate::cli::commands_context::config_load_refusal(&parsed_context.0, err),
+            format,
         )
     })?;
     apply_to_check_input(&mut input, &config, explicit);
@@ -214,25 +266,56 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // the mode analysis actually ran with, not the pre-merge default
     // (#7331 review).
     let envelope_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
-    let refuse = |error: crate::core_error::CoreError| -> String {
-        // A selector miss is usage-class, not an operational refusal: the
-        // CLI failure contract keeps it prose-only (empty stdout, exit 2,
-        // guidance and the retry listing on stderr), exactly like
-        // `explain`, so it bypasses the envelope (#7331 review).
+    // #15260: the listing commands a selector miss can name, composed from
+    // the typed run (root, base, both scopes; the artifact route's own
+    // spelling), never from the selector, so `error.next` can carry the one
+    // the owner's prose leads with. A dirty-default worktree miss leads with
+    // the committed listing (#9015), so the scope this run used is not
+    // assumed.
+    let miss_list_commands = if from_artifact.is_some() {
+        vec!["ripr check --json".to_string()]
+    } else {
+        vec![
+            app::finding_navigation_with_worktree(&input, None, explicit.mode, worktree)
+                .list_command(),
+            app::finding_navigation_with_worktree(&input, None, explicit.mode, !worktree)
+                .list_command(),
+        ]
+    };
+    let refuse = |error: crate::core_error::CoreError, selector: &str| -> String {
+        // A selector miss is usage-class, not an operational refusal: it
+        // bypasses the operational envelope (#7331 review) and keeps exit 2
+        // with guidance and the retry listing on stderr. Under an explicit
+        // `--json` the boundary also writes a standalone `cli_refusal`
+        // document naming the selector (#11584); the note is typed here.
         if error.is_selector_miss() {
-            return error.to_string();
+            let message = error.to_string();
+            // Only a miss whose own prose names the listing carries it as
+            // `next` (a seam-id miss points at `repair` instead).
+            let list_next = miss_list_commands
+                .iter()
+                .filter_map(|command| {
+                    message
+                        .find(&format!("`{command}`"))
+                        .map(|at| (at, command.as_str()))
+                })
+                .min_by_key(|(at, _)| *at)
+                .map(|(_, command)| command);
+            crate::cli::usage_refusal::note_selector_miss(selector, &message, list_next);
+            return message;
         }
-        crate::cli::commands_context::refuse_json_envelope(
+        crate::cli::commands_context::refuse_json_envelope_with_format(
             crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
             "diff",
             Some(envelope_context.2),
             &envelope_context.0,
             envelope_context.1.as_deref(),
             error,
+            format,
         )
     };
     let Some(selector) = selector else {
-        return Err(super::missing_selector_error(
+        return Err(missing_context_selector(
             "missing --at or --finding selector",
             &app::finding_navigation_with_worktree(&input, None, explicit.mode, worktree)
                 .list_command(),
@@ -274,7 +357,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             asserted_base.as_deref(),
             explicit.mode,
         )
-        .map_err(&refuse)?,
+        .map_err(|error| refuse(error, &selector))?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
             app::collect_context_with_config_worktree_and_progress(
@@ -296,7 +379,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 {
                     app::AnalysisProgressSink::user_fixable_failure(sink);
                 }
-                refuse(error)
+                refuse(error, &selector)
             })?
         }
     };
@@ -315,7 +398,22 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     {
         eprintln!("{note}");
     }
-    println!("{rendered}");
+    if format == OutputFormat::JsonCompact {
+        print!("{}", crate::output::compact_json::finish(rendered, &format));
+    } else {
+        println!("{rendered}");
+    }
+    Ok(())
+}
+
+fn select_context_format(
+    selection: &mut Option<OutputFormat>,
+    chosen: OutputFormat,
+) -> Result<(), String> {
+    if selection.is_some_and(|previous| previous != chosen) {
+        return Err("context output options select different formats; pass one".to_string());
+    }
+    *selection = Some(chosen);
     Ok(())
 }
 
@@ -330,9 +428,26 @@ pub(crate) fn terminal_stdout_note(stdout_is_terminal: bool, quiet: bool) -> Opt
 }
 
 fn positional_selector_hint(arg: &str) -> String {
-    format!(
+    let message = format!(
         "unknown context argument {arg:?}: `ripr context` takes the finding selector via `--at` (or `--finding`); try `ripr context --at {arg}`. Run `ripr context --help`."
-    )
+    );
+    // #11584: a stray positional is the `unknown_argument` class. `next` is
+    // the fixed help route, never the `--at {arg}` retry, which would lift
+    // caller-controlled text into a command.
+    crate::cli::usage_refusal::note_unknown_argument(
+        arg,
+        &message,
+        &crate::cli::suggest::help_pointer("context"),
+    );
+    message
+}
+
+/// #14877: `context` names its selector with `--at` (or `--finding`), so a
+/// missing selector is the required flag left out. `explain` shares the
+/// wording but takes a positional selector, so the typing lives here.
+fn missing_context_selector(what: &str, listing: &str) -> String {
+    let message = super::missing_selector_error(what, listing);
+    crate::cli::usage_refusal::missing_required("--at", &message)
 }
 
 #[cfg(test)]
@@ -351,6 +466,16 @@ mod tests {
         );
         assert_eq!(terminal_stdout_note(false, false), None);
         assert_eq!(terminal_stdout_note(true, true), None);
+    }
+
+    #[test]
+    fn context_format_selection_is_consistent() -> Result<(), String> {
+        let mut selected = None;
+        select_context_format(&mut selected, OutputFormat::JsonCompact)?;
+        select_context_format(&mut selected, OutputFormat::JsonCompact)?;
+        assert!(select_context_format(&mut selected, OutputFormat::Json).is_err());
+        assert_eq!(selected, Some(OutputFormat::JsonCompact));
+        Ok(())
     }
 
     #[test]
@@ -516,6 +641,57 @@ mod tests {
         assert_eq!(
             context(&args(&["--suppression-policy"])),
             Err("missing value for --suppression-policy; pass a value right after it".to_string())
+        );
+        assert_eq!(
+            context(&args(&["--path"])),
+            Err("missing value for --path; pass a value right after it".to_string())
+        );
+        assert_eq!(
+            context(&args(&["--exclude"])),
+            Err("missing value for --exclude; pass a value right after it".to_string())
+        );
+    }
+
+    /// #9340: the printed `ripr context --path/--exclude` line from a scoped
+    /// check must parse, and a pattern `check` would refuse must fail the
+    /// same way rather than as an unknown flag.
+    #[test]
+    fn context_accepts_path_and_exclude_and_rejects_a_dotdot_pattern() {
+        let missing_root = context(&args(&[
+            "--root",
+            "missing-ripr-root-for-context-scope",
+            "--path",
+            "src/lib.rs",
+            "--exclude",
+            "generated/**",
+            "--at",
+            "probe:src_lib.rs:error_path:abcd",
+        ]));
+        assert!(
+            matches!(
+                &missing_root,
+                Err(message)
+                    if !message.contains("unknown context argument \"--path\"")
+                        && !message.contains("unknown context argument \"--exclude\"")
+                        && message.contains("missing-ripr-root-for-context-scope")
+            ),
+            "`--path`/`--exclude` must parse and reach the root-dependent failure: {missing_root:?}"
+        );
+        let refusal = context(&args(&[
+            "--path",
+            "../escape",
+            "--at",
+            "probe:src_lib.rs:error_path:abcd",
+        ]));
+        assert!(refusal.is_err(), "dot-dot --path must fail: {refusal:?}");
+        let err = refusal.err().unwrap_or_default();
+        assert!(
+            err.contains("--path pattern \"../escape\"") && err.contains("`..` segment"),
+            "context must reuse check's pattern refusal, not an unknown-flag error: {err}"
+        );
+        assert!(
+            !err.contains("unknown context argument"),
+            "dot-dot --path must not look like an unknown flag: {err}"
         );
     }
 

@@ -2,7 +2,17 @@
 //! nodes) shared; each consumer creates its own thread-local red syntax view.
 //! Unknown parses and ambiguous declarations are cached as unknown, never sync.
 
-use super::{NameScopes, name_scope::name_scopes_in_tree, parse_clean_source_file, ra::LineIndex};
+use super::{
+    NameScopes,
+    name_scope::{
+        TreeScopeIndex, every_mention_bound_locally_in_fragment,
+        every_mention_bound_locally_in_tree, name_scopes_for_test_caller,
+        nested_block_renames_in_tree,
+    },
+    parse_clean_source_file,
+    ra::LineIndex,
+};
+use crate::analysis::facts::MacroGeneratedOrigin;
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use ra_ap_syntax::{
     AstNode, AstPtr, Parse, SourceFile, TextRange,
@@ -13,10 +23,77 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 type SnapshotSlot = (Arc<str>, Arc<OnceLock<Arc<SourceSnapshot>>>);
+
+/// Source bytes whose file snapshots (each holding a full parse tree, which
+/// is a few times its source size) the run-wide memo keeps resident. Without a
+/// bound the memo pinned a tree for nearly every workspace file a probe ever
+/// touched: about 310 MB of a 1.37 GB live heap on this repository's own
+/// `check`. Past the bound the least recently used snapshots leave the memo;
+/// a reader already holding one keeps it, and a later lookup rebuilds the
+/// same snapshot from the same source. Probes visit a file's snapshot in
+/// short bursts, so a small window keeps nearly all hits: on this
+/// repository's `check`, 8 MiB instead of 24 MiB cut peak RSS by about
+/// 130 MB (1.41 GB to 1.28 GB) with wall time and output unchanged; 2 MiB
+/// saved about 55 MB more but started to cost wall time.
+const FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES: usize = 8 * 1024 * 1024;
+
+/// The file-snapshot memo, least recently used first out once its resident
+/// source exceeds [`FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES`].
+#[derive(Default)]
+struct FileSnapshots {
+    entries: BTreeMap<PathBuf, (SnapshotSlot, u64)>,
+    clock: u64,
+    resident_bytes: usize,
+}
+
+impl FileSnapshots {
+    fn slot(&mut self, file: &Path, source: &Arc<str>) -> Arc<OnceLock<Arc<SourceSnapshot>>> {
+        self.clock += 1;
+        let clock = self.clock;
+        if let Some(((known, slot), used)) = self.entries.get_mut(file) {
+            // Retain the source Arc, so an allocation address cannot be reused
+            // under this entry. Replacement (including test-only file edits)
+            // receives a fresh slot even when path/coordinates are unchanged.
+            if Arc::ptr_eq(known, source) {
+                *used = clock;
+                return Arc::clone(slot);
+            }
+            self.resident_bytes = self.resident_bytes.saturating_sub(known.len());
+            self.entries.remove(file);
+        }
+        let slot: Arc<OnceLock<Arc<SourceSnapshot>>> = Arc::default();
+        self.resident_bytes += source.len();
+        self.entries.insert(
+            file.to_path_buf(),
+            ((Arc::clone(source), Arc::clone(&slot)), clock),
+        );
+        self.evict_past_budget(file);
+        slot
+    }
+
+    /// Drop least recently used entries (never `keep`) until the resident
+    /// source fits the budget.
+    fn evict_past_budget(&mut self, keep: &Path) {
+        while self.resident_bytes > FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES {
+            let Some(oldest) = self
+                .entries
+                .iter()
+                .filter(|(path, _)| path.as_path() != keep)
+                .min_by_key(|(_, (_, used))| *used)
+                .map(|(path, _)| path.clone())
+            else {
+                return;
+            };
+            if let Some(((source, _), _)) = self.entries.remove(&oldest) {
+                self.resident_bytes = self.resident_bytes.saturating_sub(source.len());
+            }
+        }
+    }
+}
 // The containing snapshot supplies exact file/source identity; retain symbol,
 // name and both coordinates so equal names/lines never alias query answers.
 type FunctionKey = (String, String, usize, usize);
-type CallerKey = (String, usize, usize);
+type CallerKey = (String, usize, usize, Option<MacroGeneratedOrigin>);
 // The snapshot fixes source/file identity; retain every remaining shadow input.
 type ShadowKey = (
     String,
@@ -70,7 +147,7 @@ const FRAGMENT_MEMO_MAX_ENTRIES: usize = 4096;
 
 #[derive(Default)]
 pub(crate) struct SourceSyntaxMemos {
-    files: Mutex<BTreeMap<PathBuf, SnapshotSlot>>,
+    files: Mutex<FileSnapshots>,
     // Syntax only: content-identical fragments may share immutable green nodes.
     // Call-site scope, offsets and owner-dependent answers are never cached here.
     fragments: Mutex<BTreeMap<String, Option<Parse<SourceFile>>>>,
@@ -120,18 +197,11 @@ impl SourceSyntaxMemos {
     pub(crate) fn get(&self, index: &RustIndex, file: &Path) -> Option<Arc<SourceSnapshot>> {
         let facts = index.files().get(file)?;
         let source = &facts.data().source;
-        let slot = self.files.lock().ok().map(|mut files| {
-            let entry = files
-                .entry(file.to_path_buf())
-                .or_insert_with(|| (Arc::clone(source), Arc::default()));
-            // Retain the source Arc, so an allocation address cannot be reused
-            // under this entry. Replacement (including test-only file edits)
-            // receives a fresh slot even when path/coordinates are unchanged.
-            if !Arc::ptr_eq(&entry.0, source) {
-                *entry = (Arc::clone(source), Arc::default());
-            }
-            Arc::clone(&entry.1)
-        });
+        let slot = self
+            .files
+            .lock()
+            .ok()
+            .map(|mut files| files.slot(file, source));
         Some(match slot {
             Some(slot) => Arc::clone(slot.get_or_init(|| Arc::new(SourceSnapshot::new(source)))),
             None => Arc::new(SourceSnapshot::new(source)),
@@ -144,6 +214,7 @@ pub(crate) struct SourceSnapshot {
     lines: LineIndex,
     declarations: Mutex<BTreeMap<FunctionKey, Option<bool>>>,
     scopes: Mutex<BTreeMap<CallerKey, Option<Arc<NameScopes>>>>,
+    scope_index: OnceLock<TreeScopeIndex>,
     nesting: Mutex<BTreeMap<(String, usize, bool), Option<ItemNesting>>>,
     lexical_items: OnceLock<Option<SourceScopes>>,
     shadows: Mutex<BTreeMap<ShadowKey, bool>>,
@@ -161,12 +232,18 @@ impl SourceSnapshot {
         self.parse.as_ref().map(Parse::tree)
     }
 
+    /// The 1-based line of `offset` in this snapshot's source.
+    pub(crate) fn line(&self, offset: ra_ap_syntax::TextSize) -> usize {
+        self.lines.line(offset)
+    }
+
     pub(crate) fn new(source: &str) -> Self {
         Self {
             parse: parse_clean_source_file(source),
             lines: LineIndex::new(source),
             declarations: Mutex::default(),
             scopes: Mutex::default(),
+            scope_index: OnceLock::new(),
             nesting: Mutex::default(),
             lexical_items: OnceLock::new(),
             shadows: Mutex::default(),
@@ -328,6 +405,62 @@ impl SourceSnapshot {
         }
     }
 
+    /// The paths nested blocks of the authored test `caller` rename to
+    /// `name` when every bare mention of `name` in its body sits in such a
+    /// block (#14069); see `nested_block_renames_in_tree`. `None` for a
+    /// macro-generated test, whose body the file does not spell.
+    /// `ancestors` are the enclosing module files, nearest first, up to the
+    /// crate root; `None` when that chain is not known.
+    pub(crate) fn nested_block_renames(
+        &self,
+        caller: &TestSummary,
+        ancestors: Option<&[SourceFile]>,
+        name: &str,
+    ) -> Option<Vec<Vec<String>>> {
+        if caller.generated.is_some() {
+            return None;
+        }
+        let tree = self.parse.as_ref()?.tree();
+        nested_block_renames_in_tree(
+            &tree,
+            ancestors,
+            &self.lines,
+            caller.start_line,
+            &caller.name,
+            name,
+        )
+    }
+
+    /// Whether every mention of `name` in the test `caller` is bound by a
+    /// local of its body (#14552); see `every_mention_bound_locally_in_tree`.
+    /// A macro-generated test, whose body the file does not spell, is read
+    /// from `generated_body`, its parsed expansion; without one it answers
+    /// `false`, as does an unparsed file.
+    pub(crate) fn every_mention_bound_locally(
+        &self,
+        caller: &TestSummary,
+        ancestors: Option<&[SourceFile]>,
+        generated_body: Option<&SourceFile>,
+        name: &str,
+    ) -> bool {
+        let Some(parse) = self.parse.as_ref() else {
+            return false;
+        };
+        if caller.generated.is_some() {
+            return generated_body.is_some_and(|fragment| {
+                every_mention_bound_locally_in_fragment(&parse.tree(), ancestors, fragment, name)
+            });
+        }
+        every_mention_bound_locally_in_tree(
+            &parse.tree(),
+            ancestors,
+            &self.lines,
+            caller.start_line,
+            &caller.name,
+            name,
+        )
+    }
+
     /// Recover the unique full-source declaration, including qualifiers,
     /// attributes and lexical ancestry omitted from indexed body slices.
     pub(crate) fn declaration(&self, function: &FunctionSummary) -> Option<ast::Fn> {
@@ -425,13 +558,26 @@ impl SourceSnapshot {
     }
 
     pub(crate) fn name_scopes(&self, caller: &TestSummary) -> Option<Arc<NameScopes>> {
-        let key = (caller.name.clone(), caller.start_line, caller.end_line);
+        let key = (
+            caller.name.clone(),
+            caller.start_line,
+            caller.end_line,
+            caller.generated,
+        );
         let compute = || {
-            name_scopes_in_tree(
-                &self.parse.as_ref()?.tree(),
+            let tree = self.parse.as_ref()?.tree();
+            // One index per file: every test of the file reads the file's
+            // functions and module scopes from it (#15185).
+            let index = self
+                .scope_index
+                .get_or_init(|| TreeScopeIndex::new(&tree, &self.lines));
+            name_scopes_for_test_caller(
+                &tree,
                 &self.lines,
+                Some(index),
                 caller.start_line,
                 &caller.name,
+                caller.generated,
             )
             .map(Arc::new)
         };
@@ -542,6 +688,84 @@ pub(crate) fn has_cfg_attr(node: &impl ast::HasAttrs) -> bool {
 mod tests {
     use super::*;
     use crate::analysis::rust_index::summarize_file;
+
+    #[test]
+    fn file_snapshot_memo_evicts_least_recently_used_past_its_source_budget() {
+        let mut files = FileSnapshots::default();
+        let one_mib: Arc<str> = Arc::from("x".repeat(1024 * 1024));
+        let budget_files = FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES / one_mib.len();
+        let path = |n: usize| PathBuf::from(format!("src/f{n}.rs"));
+        let first = files.slot(&path(0), &one_mib);
+        for n in 1..budget_files {
+            files.slot(&path(n), &one_mib);
+        }
+        assert_eq!(files.entries.len(), budget_files);
+        // A hit refreshes recency and returns the same slot.
+        assert!(Arc::ptr_eq(&first, &files.slot(&path(0), &one_mib)));
+        // One more file goes past the budget: the least recently used entry
+        // (f1, since f0 was just read) leaves; the newest and f0 stay.
+        files.slot(&path(budget_files), &one_mib);
+        assert!(files.resident_bytes <= FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES);
+        assert!(files.entries.contains_key(&path(0)));
+        assert!(!files.entries.contains_key(&path(1)));
+        assert!(files.entries.contains_key(&path(budget_files)));
+        // A source larger than the whole budget is still served and kept
+        // alone rather than evicting itself.
+        let huge: Arc<str> = Arc::from("y".repeat(FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES + 1));
+        files.slot(&path(999), &huge);
+        assert_eq!(files.entries.len(), 1);
+        assert!(files.entries.contains_key(&path(999)));
+        // A replaced source releases its old bytes from the account.
+        let small: Arc<str> = Arc::from("fn f() {}");
+        files.slot(&path(999), &small);
+        assert_eq!(files.resident_bytes, small.len());
+    }
+
+    #[test]
+    fn evicted_file_snapshot_is_rebuilt_while_held_readers_keep_their_tree() -> Result<(), String> {
+        use crate::analysis::rust_index::FileFacts;
+        let padding = format!("// {}\n", "x".repeat(1024 * 1024));
+        let budget_files = FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES / padding.len();
+        let path = |n: usize| PathBuf::from(format!("src/f{n}.rs"));
+        let mut index = RustIndex::default();
+        for n in 0..=budget_files {
+            let source = format!("{padding}fn f{n}() {{}}\n");
+            index.insert_file_only(
+                path(n),
+                FileFacts {
+                    path: path(n),
+                    source: source.into(),
+                    ..FileFacts::default()
+                },
+            );
+        }
+        let memos = SourceSyntaxMemos::default();
+        let held = memos.get(&index, &path(0)).ok_or("first snapshot")?;
+        let again = memos.get(&index, &path(0)).ok_or("memoized snapshot")?;
+        assert!(Arc::ptr_eq(&held, &again), "a resident snapshot is shared");
+        for n in 1..=budget_files {
+            memos.get(&index, &path(n)).ok_or("later snapshot")?;
+        }
+        let resident = memos.files.lock().map_err(|e| e.to_string())?;
+        assert!(!resident.entries.contains_key(&path(0)));
+        assert!(resident.resident_bytes <= FILE_SNAPSHOT_RESIDENT_SOURCE_BYTES);
+        drop(resident);
+        let rebuilt = memos.get(&index, &path(0)).ok_or("rebuilt snapshot")?;
+        assert!(
+            !Arc::ptr_eq(&held, &rebuilt),
+            "an evicted snapshot is rebuilt"
+        );
+        let held_text = held.tree().ok_or("held tree")?.syntax().text().to_string();
+        let rebuilt_text = rebuilt
+            .tree()
+            .ok_or("rebuilt tree")?
+            .syntax()
+            .text()
+            .to_string();
+        assert_eq!(held_text, rebuilt_text);
+        assert!(held_text.ends_with("fn f0() {}\n"));
+        Ok(())
+    }
 
     #[test]
     fn root_impl_lines_cover_only_direct_root_impls() {
@@ -750,6 +974,79 @@ mod tests {
             }
             Ok(())
         })?;
+        Ok(())
+    }
+
+    /// #15185 production path: two distinct authored tests of one module ask
+    /// the snapshot for their scopes, and both answers share the module and
+    /// file scopes the snapshot's one index built. The per-call path, used as
+    /// the negative control, builds fresh module and file scopes for each
+    /// caller, so a snapshot that rebuilt its index per caller would fail the
+    /// pointer checks even though every scope compares equal.
+    #[test]
+    fn distinct_tests_of_one_module_share_the_snapshot_index_scopes() -> Result<(), String> {
+        let index = index(
+            "mod helpers { pub fn f() {} }\nuse helpers::f;\nmod t {\n    use super::*;\n    #[test]\n    fn a() { f(); }\n    #[test]\n    fn b() { f(); }\n}\n",
+        );
+        let snapshot = snapshot(&index)?;
+        let test = |name: &str| {
+            index
+                .tests()
+                .iter()
+                .find(|test| test.name == name)
+                .ok_or(format!("test `{name}` indexed"))
+        };
+        let (a, b) = (test("a")?, test("b")?);
+        if a.start_line == b.start_line {
+            return Err("the two tests must be distinct callers".to_string());
+        }
+        let a_scopes = snapshot.name_scopes(a).ok_or("scopes of `a`")?;
+        let b_scopes = snapshot.name_scopes(b).ok_or("scopes of `b`")?;
+        if Arc::ptr_eq(&a_scopes, &b_scopes) {
+            return Err("distinct callers must keep distinct cached answers".to_string());
+        }
+        for scopes in [&a_scopes, &b_scopes] {
+            if scopes.scopes.len() != 3 {
+                return Err(format!(
+                    "expected body, module and file scopes, got {}",
+                    scopes.scopes.len()
+                ));
+            }
+            if scopes.scopes[1].globs != vec![Some(vec!["super".to_string()])] {
+                return Err("the module scope must hold `use super::*`".to_string());
+            }
+            if scopes.scopes[2].imports_of("f").next().is_none() {
+                return Err("the file scope must hold `use helpers::f`".to_string());
+            }
+        }
+        if !Arc::ptr_eq(&a_scopes.scopes[1], &b_scopes.scopes[1])
+            || !Arc::ptr_eq(&a_scopes.scopes[2], &b_scopes.scopes[2])
+        {
+            return Err("both tests must read the module and file scopes of one index".to_string());
+        }
+
+        // Negative control: the per-call path builds equal but fresh scopes.
+        let tree = snapshot.parse.as_ref().ok_or("parsed source")?.tree();
+        let direct = |test: &TestSummary| {
+            name_scopes_for_test_caller(
+                &tree,
+                &snapshot.lines,
+                None,
+                test.start_line,
+                &test.name,
+                test.generated,
+            )
+            .ok_or(format!("direct scopes of `{}`", test.name))
+        };
+        let (a_direct, b_direct) = (direct(a)?, direct(b)?);
+        if a_direct.scopes[1] != a_scopes.scopes[1] || a_direct.scopes[2] != a_scopes.scopes[2] {
+            return Err("the per-call scopes must equal the indexed scopes".to_string());
+        }
+        if Arc::ptr_eq(&a_direct.scopes[1], &b_direct.scopes[1])
+            || Arc::ptr_eq(&a_direct.scopes[2], &b_direct.scopes[2])
+        {
+            return Err("the control must build fresh scopes per caller".to_string());
+        }
         Ok(())
     }
 

@@ -178,7 +178,7 @@ pub(super) fn declares_trait(masked: &str, name: &str) -> bool {
 }
 
 /// Number of whole-word `kw name` declarations (`struct Key`, ...).
-fn count_items(masked: &str, keywords: &[&str], name: &str) -> usize {
+pub(super) fn count_items(masked: &str, keywords: &[&str], name: &str) -> usize {
     let bytes = masked.as_bytes();
     let mut count = 0;
     for keyword in keywords {
@@ -309,6 +309,13 @@ pub(super) fn test_asserts_equality_through_owner(
 
 /// Whether no scope between `test` and the owner's file declares or renames
 /// another `impl_type`, so the name means the owner's impl type there.
+///
+/// #15277 review: a value item of the same name (`fn Key(..) -> Other`,
+/// `const Unit: Other`, also local to a test body) shadows a tuple-struct
+/// constructor or a unit struct's value in its scope without touching the
+/// type namespace, so `Key(1)` there is an `Other`. A `let` binding does
+/// the same for a braced struct, which has no value of its own. Any `fn`,
+/// `const`, `static` or `let` of that name anywhere in the file refuses.
 pub(super) fn type_scope_is_clear(
     test: &TestSummary,
     owner: &FunctionSummary,
@@ -326,7 +333,116 @@ pub(super) fn type_scope_is_clear(
         index,
     ) || file_renames_to(source, impl_type)
         || file_renames_to(source, raw_impl_type.as_str())
-        || parent_chain_shadows_type(test, impl_type, owner_scope, index))
+        || parent_chain_shadows_type(test, impl_type, owner_scope, index)
+        || file_declares_value_named(test, source, impl_type, index))
+}
+
+/// [`declares_value_named`] over the test file's masked source. A file whose
+/// raw text has no candidate declaration is answered without masking, and
+/// the masked copy is the file snapshot's memoized one (the same copy
+/// `test_module_shadows_type` reads), so no reading re-masks a large test
+/// file on every check (#12947).
+fn file_declares_value_named(
+    test: &TestSummary,
+    source: &str,
+    name: &str,
+    index: &RustIndex,
+) -> bool {
+    if !may_declare_value_named(source, name) {
+        return false;
+    }
+    // A caller supplying different source bytes must never borrow the
+    // indexed snapshot.
+    let snapshot = index
+        .files()
+        .get(&test.file)
+        .filter(|facts| std::ptr::eq(facts.source.as_ref(), source))
+        .and_then(|_| index.source_syntax.get(index, &test.file));
+    match snapshot {
+        Some(snapshot) => declares_value_named(
+            snapshot.masked_source(|| mask_comments_and_strings(source)),
+            name,
+        ),
+        None => declares_value_named(&mask_comments_and_strings(source), name),
+    }
+}
+
+/// Keywords that bind `name` in the value namespace right before it: a `fn`,
+/// `const` or `static` item, or a `let` binding. A `let` binding named like a
+/// braced struct (which lives only in the type namespace) is legal Rust and
+/// makes `Name(..)` call that local value, not a constructor (#15277).
+const VALUE_BINDER_KEYWORDS: [&str; 4] = ["fn", "const", "static", "let"];
+
+/// A raw-text superset of [`declares_value_named`]: some whole-word `name`
+/// (or `r#name`) whose preceding code, past whitespace and an optional
+/// `mut`, ends with `fn`, `const`, `static` or `let`, or with a comment
+/// (`*/`, or a line holding `//`) that masking would turn into whitespace
+/// between the keyword and the name.
+fn may_declare_value_named(raw: &str, name: &str) -> bool {
+    if name.is_empty() || !raw.contains(name) {
+        return false;
+    }
+    raw.match_indices(name).any(|(at, _)| {
+        if !ident_boundary(raw, at, at + name.len()) {
+            return false;
+        }
+        let before = raw[..at].strip_suffix("r#").unwrap_or(&raw[..at]);
+        let before = before.trim_end();
+        let before = match before.strip_suffix("mut") {
+            Some(head) if !head.bytes().last().is_some_and(is_ident_byte) => head.trim_end(),
+            _ => before,
+        };
+        let line = before.rsplit('\n').next().unwrap_or(before);
+        before.ends_with("*/")
+            || line.contains("//")
+            || VALUE_BINDER_KEYWORDS.iter().any(|keyword| {
+                before.strip_suffix(keyword).is_some_and(|head| {
+                    !head
+                        .bytes()
+                        .last()
+                        .is_some_and(|byte| is_ident_byte(byte) || byte == b'#')
+                })
+            })
+    })
+}
+
+/// Whether the masked source binds a `fn`, `const`, `static` or `let` (also
+/// `static mut`, `const fn`, `let mut`) named `name` or `r#name`, at any
+/// depth.
+pub(super) fn declares_value_named(masked: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    masked.match_indices(name).any(|(at, _)| {
+        if !ident_boundary(masked, at, at + name.len()) {
+            return false;
+        }
+        let before = masked[..at].strip_suffix("r#").unwrap_or(&masked[..at]);
+        let before = before.trim_end();
+        let before = match before.strip_suffix("mut") {
+            Some(head) if !head.bytes().last().is_some_and(is_ident_byte) => head.trim_end(),
+            _ => before,
+        };
+        // `let Name(..)`, `let Name { .. }` and `let Name::Variant ..` (also
+        // under `if let` or `while let`) are destructuring patterns that bind
+        // nothing named `Name`.
+        let after = masked[at + name.len()..].trim_start();
+        let destructures =
+            after.starts_with('(') || after.starts_with('{') || after.starts_with("::");
+        VALUE_BINDER_KEYWORDS.iter().any(|keyword| {
+            if *keyword == "let" && destructures {
+                return false;
+            }
+            before.strip_suffix(keyword).is_some_and(|head| {
+                // A head ending in `'` is the lifetime `'static`, as in
+                // `&'static Name`, not a `static` item.
+                !head
+                    .bytes()
+                    .last()
+                    .is_some_and(|byte| is_ident_byte(byte) || byte == b'#' || byte == b'\'')
+            })
+        })
+    })
 }
 
 /// Whether the file may bring a different `T` into scope. The owner id
@@ -613,7 +729,7 @@ pub(super) fn operand_has_type(
     operand: &str,
     impl_type: &str,
     before: &str,
-    returns_self: &dyn Fn(&str) -> bool,
+    returns_self: &dyn Fn(&str) -> Option<bool>,
 ) -> bool {
     let mut operand = operand.trim();
     while let Some(rest) = operand
@@ -660,7 +776,11 @@ fn count_lets(before: &str, name: &str) -> usize {
     count
 }
 
-fn statement_has_type(stmt: &str, impl_type: &str, returns_self: &dyn Fn(&str) -> bool) -> bool {
+fn statement_has_type(
+    stmt: &str,
+    impl_type: &str,
+    returns_self: &dyn Fn(&str) -> Option<bool>,
+) -> bool {
     let Some(eq) = stmt.find('=') else {
         return false;
     };
@@ -672,7 +792,11 @@ fn statement_has_type(stmt: &str, impl_type: &str, returns_self: &dyn Fn(&str) -
     expression_has_type(&stmt[eq + 1..], impl_type, returns_self)
 }
 
-fn expression_has_type(expr: &str, impl_type: &str, returns_self: &dyn Fn(&str) -> bool) -> bool {
+fn expression_has_type(
+    expr: &str,
+    impl_type: &str,
+    returns_self: &dyn Fn(&str) -> Option<bool>,
+) -> bool {
     let expr = expr.trim();
     if !initializer_is_one_head_expr(expr) || expr.contains("::<") {
         return false;
@@ -682,17 +806,28 @@ fn expression_has_type(expr: &str, impl_type: &str, returns_self: &dyn Fn(&str) 
     };
     match (segments.as_slice(), next) {
         ([ty], Some(b'(' | b'{')) => *ty == impl_type,
-        ([ty, call], Some(b'(')) if *ty == impl_type => returns_self(call) || is_variant_name(call),
+        // A declared associated function decides by its return type, even
+        // when its name is variant-cased: `Celsius::Boiling()` returning
+        // `Kelvin` is no `Celsius` (#15277 review). Only a name no `impl`
+        // of the type declares may be a variant constructor.
+        ([ty, call], Some(b'(')) if *ty == impl_type => {
+            returns_self(call).unwrap_or_else(|| is_variant_name(call))
+        }
         ([ty, variant], Some(b'{')) if *ty == impl_type => is_variant_name(variant),
         _ => false,
     }
 }
 
 /// Whether every function `name` defined in an `impl` of `impl_type` declares
-/// `Self` or `impl_type` as its return type, and at least one exists. The
-/// signature is read from the function's own file, from its line up to the
-/// body or `;`.
-pub(super) fn associated_fn_returns_self(index: &RustIndex, impl_type: &str, name: &str) -> bool {
+/// `Self` or `impl_type` as its return type: `None` when no such function
+/// exists, `Some(false)` when any one returns another type (or is `async`,
+/// so calling it yields a future). The signature is read from the
+/// function's own file, from its line up to the body or `;`.
+pub(super) fn associated_fn_returns_self(
+    index: &RustIndex,
+    impl_type: &str,
+    name: &str,
+) -> Option<bool> {
     let mut found = false;
     for function in index.functions().iter() {
         let in_impl = matches!(
@@ -703,15 +838,15 @@ pub(super) fn associated_fn_returns_self(index: &RustIndex, impl_type: &str, nam
             continue;
         }
         let Some(facts) = index.files().get(&function.file) else {
-            return false;
+            return Some(false);
         };
         let masked = mask_comments_and_strings(facts.data().source.as_ref());
         if !signature_returns(&masked, function.start_line, impl_type) {
-            return false;
+            return Some(false);
         }
         found = true;
     }
-    found
+    found.then_some(true)
 }
 
 /// Whether the signature starting at 1-based `line` ends `-> Self` or
@@ -725,9 +860,16 @@ fn signature_returns(masked: &str, line: usize, ty: &str) -> bool {
         .join(" ");
     let end = text.find(['{', ';']).unwrap_or(text.len());
     let signature = &text[..end];
-    let Some((_, ret)) = signature.rsplit_once("->") else {
+    // An `async fn` returns a future of its declared type.
+    let Some((head, ret)) = signature.rsplit_once("->") else {
         return false;
     };
+    if head
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .any(|word| word == "async")
+    {
+        return false;
+    }
     let ret = ret.split(" where ").next().unwrap_or(ret).trim();
     ret == "Self" || ret == ty
 }
@@ -775,7 +917,7 @@ mod tests {
     #[test]
     fn operands_resolve_only_to_syntactically_established_types() {
         let before = "let a = Key::new(1);\nlet b: Key = make();\nlet c = make();\nlet d = Key::new(1).id();\nlet e = Key::other(1);\n";
-        let ctor = |name: &str| name == "new";
+        let ctor = |name: &str| (name == "new").then_some(true);
         for typed in [
             "a",
             "&a",
@@ -809,12 +951,36 @@ mod tests {
                 "{untyped}"
             );
         }
+        // A declared associated function decides by its return type even
+        // when its name is variant-cased; only an undeclared name may be a
+        // variant constructor.
+        let declared = |name: &str| (name == "Boiling").then_some(false);
+        assert!(!operand_has_type("Key::Boiling()", "Key", "", &declared));
+        assert!(operand_has_type("Key::Circle(1)", "Key", "", &declared));
+    }
+
+    #[test]
+    fn an_async_or_foreign_return_is_no_self_return() {
+        assert!(signature_returns("    fn new() -> Self {", 1, "Key"));
+        assert!(signature_returns(
+            "    pub fn new(v: u8) -> Key {",
+            1,
+            "Key"
+        ));
+        assert!(!signature_returns("    async fn new() -> Self {", 1, "Key"));
+        assert!(!signature_returns(
+            "    pub async fn new() -> Key {",
+            1,
+            "Key"
+        ));
+        assert!(!signature_returns("    fn new() -> Other {", 1, "Key"));
+        assert!(signature_returns("    fn asyncish() -> Self {", 1, "Key"));
     }
 
     #[test]
     fn a_later_shadowing_let_decides_the_binding_type() {
         let before = "let a = Key::new(1);\nlet a = make();\n";
-        assert!(!operand_has_type("a", "Key", before, &|_| true));
+        assert!(!operand_has_type("a", "Key", before, &|_| Some(true)));
     }
 
     #[test]
@@ -840,14 +1006,14 @@ mod tests {
             start_line: 1,
             end_line: 3,
             body: String::new().into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         }
@@ -942,7 +1108,7 @@ mod tests {
         ] {
             assert!(rebound_by_pattern(rebound, "a"), "{rebound}");
             assert!(
-                !operand_has_type("a", "Key", rebound, &|_| true),
+                !operand_has_type("a", "Key", rebound, &|_| Some(true)),
                 "{rebound}"
             );
         }
@@ -968,5 +1134,62 @@ mod tests {
             2
         );
         assert_eq!(count_lets("let a = 1;", "a"), 1);
+    }
+
+    #[test]
+    fn a_value_item_of_the_type_name_shadows_its_constructor() {
+        assert!(declares_value_named(
+            "fn Key(v: i32) -> Other { Other(v) }",
+            "Key"
+        ));
+        assert!(declares_value_named(
+            "    const Key: Other = Other(1);",
+            "Key"
+        ));
+        assert!(declares_value_named("static mut Key: u8 = 0;", "Key"));
+        assert!(declares_value_named(
+            "pub const fn Key() -> u8 { 0 }",
+            "Key"
+        ));
+        assert!(declares_value_named("fn r#Key() {}", "Key"));
+        // A `let` binding of the name shadows a braced struct's call
+        // spelling: `Key(1)` then calls the local closure.
+        assert!(declares_value_named("let Key = |x: i32| Other(x);", "Key"));
+        assert!(declares_value_named("let mut Key = make;", "Key"));
+        assert!(may_declare_value_named("let Key = make;", "Key"));
+        assert!(!declares_value_named("letKey = 1;", "Key"));
+        // A destructuring pattern binds nothing named `Key`, and `'static`
+        // is a lifetime, not a `static` item.
+        assert!(!declares_value_named("let Key(v) = k;", "Key"));
+        assert!(!declares_value_named("if let Key(v) = k {}", "Key"));
+        assert!(!declares_value_named("let Key { v } = k;", "Key"));
+        assert!(!declares_value_named("if let Key::Circle(r) = k {}", "Key"));
+        assert!(!declares_value_named(
+            "let Key::A = k else { return };",
+            "Key"
+        ));
+        assert!(!declares_value_named("while let Key :: A = k {}", "Key"));
+        assert!(!declares_value_named("let r: &'static Key = &K;", "Key"));
+        assert!(declares_value_named(
+            "let Key: fn(i32) -> Other = mk;",
+            "Key"
+        ));
+        // A type item, a call, a longer name or another keyword is no value
+        // item of that name.
+        assert!(!declares_value_named("pub struct Key(pub i32);", "Key"));
+        assert!(!declares_value_named("let k = Key(1);", "Key"));
+        assert!(!declares_value_named("fn KeyMaker() {}", "Key"));
+        assert!(!declares_value_named("fn make() -> Key { Key(1) }", "Key"));
+        assert!(!declares_value_named("let myfn Key = 1;", "Key"));
+        // The raw prefilter keeps every masked hit, a comment between the
+        // keyword and the name included, and drops a file with no candidate.
+        assert!(may_declare_value_named("fn /* c */ Key() {}", "Key"));
+        assert!(may_declare_value_named("fn // c\n    Key() {}", "Key"));
+        assert!(may_declare_value_named("static mut Key: u8 = 0;", "Key"));
+        assert!(!may_declare_value_named(
+            "let k = Key(1);\nstruct Key;",
+            "Key"
+        ));
+        assert!(!may_declare_value_named("fn make() {}", "Key"));
     }
 }

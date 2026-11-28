@@ -1,0 +1,729 @@
+//! Per-finding RIPR evidence: stage states, oracle shape and strength,
+//! confidence, and how a related test was linked to the changed owner.
+
+/// The shape of a related test's assertion. Whether that assertion observes
+/// the changed behavior is decided separately, and its strength is reported in
+/// [`OracleStrength`].
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum OracleKind {
+    /// The test compares the result with an exact expected value.
+    ExactValue,
+    /// The test pins a specific error variant.
+    ExactErrorVariant,
+    /// The test compares a whole value or object for equality.
+    WholeObjectEquality,
+    /// The test compares output with a stored snapshot.
+    Snapshot,
+    /// The test checks a relation, such as an ordering or a predicate, rather
+    /// than an exact value.
+    RelationalCheck,
+    /// The test accepts any error without pinning which one.
+    BroadError,
+    /// The test only shows the code runs, with no assertion that discriminates
+    /// the result.
+    SmokeOnly,
+    /// The test checks a mock's call expectations.
+    MockExpectation,
+    /// A guarded Result match over a direct callee result:
+    /// `match <callee>(..) { Ok(..) => .., Err(e) => <guard> }` (#3709).
+    /// The scrutinee observes the callee's returned `Result` directly, so
+    /// the Err-arm guard is the result's discriminator and the oracle is
+    /// bound to that callee rather than to changed-line tokens. Strength
+    /// carries the guard's precision: strong for an exact error-variant
+    /// pin, medium for a concrete downcast type pin. Shapes without a
+    /// recognized guard emit no oracle at all.
+    GuardedResultMatch,
+    /// No oracle kind was recognized.
+    Unknown,
+}
+
+impl OracleKind {
+    /// The stable snake_case label used in output.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OracleKind::ExactValue => "exact_value",
+            OracleKind::ExactErrorVariant => "exact_error_variant",
+            OracleKind::WholeObjectEquality => "whole_object_equality",
+            OracleKind::Snapshot => "snapshot",
+            OracleKind::RelationalCheck => "relational_check",
+            OracleKind::BroadError => "broad_error",
+            OracleKind::SmokeOnly => "smoke_only",
+            OracleKind::MockExpectation => "mock_expectation",
+            OracleKind::GuardedResultMatch => "guarded_result_match",
+            OracleKind::Unknown => "unknown",
+        }
+    }
+}
+
+/// #7752: indefinite article for a user-interpolated label, decided from the
+/// first alphanumeric character ("an `exact_value` oracle", "a `snapshot`
+/// oracle"). Narrative templates must route interpolated `OracleKind` values
+/// through this helper instead of hardcoding "a".
+pub fn indefinite_article(word: &str) -> &'static str {
+    match word.chars().find(|ch| ch.is_alphanumeric()) {
+        Some('a' | 'e' | 'i' | 'o' | 'u' | 'A' | 'E' | 'I' | 'O' | 'U') => "an",
+        _ => "a",
+    }
+}
+
+#[cfg(test)]
+mod article_tests {
+    use super::{OracleKind, indefinite_article};
+
+    #[test]
+    fn vowel_initial_oracle_kinds_take_an() {
+        // Closed set: every vowel-sound-initial member must keep taking "an"
+        // so the narrative templates below stay grammatical. "unknown" starts
+        // with a vowel letter; "whole_object_equality" is spelled with a vowel
+        // letter but pronounced with a consonant 'w' and takes "a".
+        for kind in [
+            OracleKind::ExactValue,
+            OracleKind::ExactErrorVariant,
+            OracleKind::Unknown,
+        ] {
+            assert_eq!(indefinite_article(kind.as_str()), "an", "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn consonant_initial_oracle_kinds_take_a() {
+        for kind in [
+            OracleKind::WholeObjectEquality,
+            OracleKind::Snapshot,
+            OracleKind::RelationalCheck,
+            OracleKind::BroadError,
+            OracleKind::SmokeOnly,
+            OracleKind::MockExpectation,
+            OracleKind::GuardedResultMatch,
+        ] {
+            assert_eq!(indefinite_article(kind.as_str()), "a", "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn article_skips_leading_non_alphanumerics() {
+        assert_eq!(indefinite_article("`exact_value`"), "an");
+        assert_eq!(indefinite_article("`snapshot`"), "a");
+        assert_eq!(indefinite_article(""), "a");
+    }
+}
+
+/// How strongly an oracle discriminates a wrong result, from `Strong` down to
+/// `None`. Static evidence only; it does not predict a mutation outcome.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum OracleStrength {
+    /// The highest rating: the assertion is expected to notice a wrong result.
+    /// Exact checks usually rate strong; configuration can also rate other
+    /// kinds, such as mock expectations, as strong.
+    Strong,
+    /// A middle rating: the assertion constrains the result, but some wrong
+    /// values could still pass.
+    Medium,
+    /// A low rating, typical for a relational check or a broad error.
+    Weak,
+    /// Only shows the code runs.
+    Smoke,
+    /// No oracle observes the result.
+    None,
+    /// Strength could not be determined.
+    Unknown,
+}
+
+impl OracleStrength {
+    /// The stable snake_case label used in output.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OracleStrength::Strong => "strong",
+            OracleStrength::Medium => "medium",
+            OracleStrength::Weak => "weak",
+            OracleStrength::Smoke => "smoke",
+            OracleStrength::None => "none",
+            OracleStrength::Unknown => "unknown",
+        }
+    }
+
+    /// Ordering rank: higher is stronger, from 5 for `Strong` down to 0 for
+    /// `None`. `Unknown` ranks 1, above `None`.
+    pub fn rank(&self) -> u8 {
+        match self {
+            OracleStrength::Strong => 5,
+            OracleStrength::Medium => 4,
+            OracleStrength::Weak => 3,
+            OracleStrength::Smoke => 2,
+            OracleStrength::Unknown => 1,
+            OracleStrength::None => 0,
+        }
+    }
+}
+
+/// Static state of one RIPR stage (reach, infect, propagate, observe or
+/// discriminate).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum StageState {
+    /// The stage was found.
+    Yes,
+    /// The stage was found but only weakly.
+    Weak,
+    /// The stage was not found.
+    No,
+    /// Static analysis could not decide the stage.
+    Unknown,
+    /// The code is hidden from static analysis, for example behind dynamic
+    /// dispatch or an unresolved helper.
+    Opaque,
+    /// The stage does not apply to this change.
+    NotApplicable,
+}
+
+impl StageState {
+    /// The stable snake_case label used in output.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            StageState::Yes => "yes",
+            StageState::Weak => "weak",
+            StageState::No => "no",
+            StageState::Unknown => "unknown",
+            StageState::Opaque => "opaque",
+            StageState::NotApplicable => "not_applicable",
+        }
+    }
+}
+
+/// Confidence level of a static reading.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Confidence {
+    /// High confidence.
+    High,
+    /// Medium confidence.
+    Medium,
+    /// Low confidence.
+    Low,
+    /// Confidence could not be determined.
+    Unknown,
+}
+
+impl Confidence {
+    /// The stable snake_case label used in output.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Confidence::High => "high",
+            Confidence::Medium => "medium",
+            Confidence::Low => "low",
+            Confidence::Unknown => "unknown",
+        }
+    }
+}
+
+/// Static evidence for one RIPR stage.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct StageEvidence {
+    /// Producer-owned category. Older persisted stages carry only the summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub static_limit_kind: Option<super::StaticLimitKind>,
+    /// What the analysis found for this stage.
+    pub state: StageState,
+    /// How confident the analysis is in [`Self::state`].
+    pub confidence: Confidence,
+    /// A short human-readable explanation of the reading.
+    pub summary: String,
+}
+
+impl StageEvidence {
+    /// Stage evidence with no static-limit category.
+    pub fn new(state: StageState, confidence: Confidence, summary: impl Into<String>) -> Self {
+        Self {
+            state,
+            confidence,
+            summary: summary.into(),
+            static_limit_kind: None,
+        }
+    }
+}
+
+/// The infection summary the predicate classifier emits when a related test
+/// input sits at the changed boundary (#10622 reads it to word guidance).
+pub const BOUNDARY_INPUT_OBSERVED_SUMMARY: &str =
+    "Detected related test input at the changed boundary";
+
+/// Evidence for the reveal stage, split into its two parts.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RevealEvidence {
+    /// Whether a test observes the changed behavior.
+    pub observe: StageEvidence,
+    /// Whether that observation would tell a right result from a wrong one.
+    pub discriminate: StageEvidence,
+}
+
+/// Static evidence for each RIPR stage of one finding: reach, infect, propagate
+/// and reveal.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RiprEvidence {
+    /// Whether a test runs the changed code.
+    pub reach: StageEvidence,
+    /// Whether a test input can make the changed code behave differently.
+    pub infect: StageEvidence,
+    /// Whether that different behavior can reach an observable result.
+    pub propagate: StageEvidence,
+    /// Whether a test observes and discriminates that result.
+    pub reveal: RevealEvidence,
+}
+
+/// Why a test is related to a seam or probe. Single highest-priority reason
+/// per test. The diff-check path (`analysis/classify/related_tests.rs`) tags
+/// each related test with the reason it matched so consumers can filter weak
+/// matches. The repo-exposure path (`analysis/test_grip_evidence.rs`) uses the
+/// same enum for richer grip-evidence ranking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationReason {
+    /// The test calls the changed owner directly.
+    DirectOwnerCall,
+    /// The test calls the owner through a helper.
+    HelperOwnerCall,
+    /// The test asserts on a token the seam's expression also names.
+    AssertionTargetAffinity,
+    /// The test is in the owner's file or in a companion test file for it,
+    /// such as `tests/config.rs` or `tests/config_test.rs` for `src/config.rs`.
+    SameTestFile,
+    /// The test is in the same module as the owner.
+    SameModule,
+    /// The test's name contains the owner's name.
+    OwnerNamedTest,
+    /// The test references the owner's import path.
+    ImportPathAffinity,
+    /// The test calls a fixture-shaped helper tied to the owner.
+    FixtureOwnerAffinity,
+    /// Matched via probe-token substring in file path or test name.
+    /// This signal is deliberately broad — a short token can match many
+    /// unrelated tests. Consumers should treat `relation_confidence: low`
+    /// as advisory only.
+    WeakTokenSubstring,
+    /// Matched through a single-hop explicit re-export chain resolved
+    /// entirely from in-source `export { N } from './A'` statements.
+    /// The test imports the name from an intermediate re-exporting file;
+    /// one hop was followed to verify the chain leads to the changed owner.
+    /// Two-hop and deeper chains are NOT followed (fail-closed).
+    ReExportChainFollowed,
+    /// Matched because the test's captured calls include the converted
+    /// callee of a wrapper error seam (`callee(..).map_err(..)` — #3714).
+    /// A direct captured call fact, but the attribution to THIS seam is
+    /// weaker than calling the changed owner: every test of the callee
+    /// relates. Ranked below `HelperOwnerCall`, above
+    /// `WeakTokenSubstring`.
+    SeamCalleeCall,
+}
+
+impl RelationReason {
+    /// The stable snake_case label used in output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DirectOwnerCall => "direct_owner_call",
+            Self::HelperOwnerCall => "helper_owner_call",
+            Self::AssertionTargetAffinity => "assertion_target_affinity",
+            Self::SameTestFile => "same_test_file",
+            Self::SameModule => "same_module",
+            Self::OwnerNamedTest => "owner_named_test",
+            Self::ImportPathAffinity => "import_path_affinity",
+            Self::FixtureOwnerAffinity => "fixture_owner_affinity",
+            Self::WeakTokenSubstring => "weak_token_substring",
+            Self::ReExportChainFollowed => "re_export_chain_followed",
+            Self::SeamCalleeCall => "seam_callee_call",
+        }
+    }
+
+    /// Proximity alone: file or name nearness, with no captured call, helper
+    /// chain, or assertion affinity tying the test to the owner.
+    pub fn is_proximity_only(self) -> bool {
+        matches!(
+            self,
+            Self::SameTestFile | Self::SameModule | Self::WeakTokenSubstring
+        )
+    }
+
+    /// Whether this relation by itself is evidence that the test runs the
+    /// owner. Reach (diff and repo mode), the `no_static_path` miss reason,
+    /// and the verdict corpus contradiction check all read this one rule
+    /// (#5335, #7531); the match is exhaustive so a new variant must be
+    /// classified here.
+    ///
+    /// Only relations that capture a path to running the owner count: a
+    /// direct call, a call through a helper chain, or (diff mode,
+    /// TypeScript) an import through a verified re-export chain, which
+    /// reveal-reach already credits. Everything else is a candidate-location
+    /// suggestion that never has to run the owner:
+    ///
+    /// - proximity relations ([`Self::is_proximity_only`]) share a file,
+    ///   module, or a token substring;
+    /// - `OwnerNamedTest` matches the owner's name in the test's name, an
+    ///   `ImportPathAffinity` matches a path reference, and
+    ///   `FixtureOwnerAffinity` matches a call to a fixture-shaped helper —
+    ///   none of them invokes the owner (#5335 review: an uncalled `as_kb`
+    ///   inherited a sibling's exact-value oracle through its name);
+    /// - `AssertionTargetAffinity` means a test asserts on a token the seam's
+    ///   expression also names; for a module-level owner (a struct or field
+    ///   with no owning function) that assertion is how the owner is
+    ///   observed, but for a function-bodied owner the token can belong to
+    ///   any code, so it is not a path to the function. Diff mode emits that
+    ///   relation only for owners without a function;
+    /// - `SeamCalleeCall` runs the seam's converted callee, never the owner.
+    pub fn establishes_reach(self, owner_is_function: bool) -> bool {
+        match self {
+            Self::DirectOwnerCall | Self::HelperOwnerCall | Self::ReExportChainFollowed => true,
+            Self::AssertionTargetAffinity => !owner_is_function,
+            Self::SameTestFile
+            | Self::SameModule
+            | Self::OwnerNamedTest
+            | Self::ImportPathAffinity
+            | Self::FixtureOwnerAffinity
+            | Self::WeakTokenSubstring
+            | Self::SeamCalleeCall => false,
+        }
+    }
+
+    /// Sort order: lower value sorts first (highest-priority reason first).
+    pub fn priority(self) -> u8 {
+        match self {
+            Self::DirectOwnerCall => 0,
+            Self::HelperOwnerCall => 1,
+            Self::AssertionTargetAffinity => 2,
+            Self::SameTestFile => 3,
+            Self::SameModule => 4,
+            Self::OwnerNamedTest => 5,
+            Self::ImportPathAffinity => 6,
+            // Re-export chain follows: same priority as import-path affinity —
+            // the inference is explicit in-source but involves one hop of indirection.
+            Self::ReExportChainFollowed => 6,
+            Self::FixtureOwnerAffinity => 7,
+            // #3714: a captured callee call outranks token-substring
+            // affinity but stays below every owner-anchored signal.
+            Self::SeamCalleeCall => 8,
+            Self::WeakTokenSubstring => 9,
+        }
+    }
+
+    /// Derive the matching confidence for this reason.
+    pub fn confidence(self) -> RelationConfidence {
+        match self {
+            Self::DirectOwnerCall | Self::HelperOwnerCall => RelationConfidence::High,
+            Self::AssertionTargetAffinity
+            | Self::SameTestFile
+            | Self::SameModule
+            | Self::OwnerNamedTest
+            | Self::ImportPathAffinity
+            // Re-export tracing is medium confidence: it is explicit in-source but
+            // one hop of indirection means ripr cannot see deeper aliasing.
+            | Self::ReExportChainFollowed => RelationConfidence::Medium,
+            Self::FixtureOwnerAffinity | Self::WeakTokenSubstring => RelationConfidence::Low,
+            // A captured direct call of the seam's callee is a solid fact;
+            // the uncertainty is in attributing it to this seam.
+            Self::SeamCalleeCall => RelationConfidence::Medium,
+        }
+    }
+}
+
+/// Confidence that a related test grips the seam. Independent of
+/// oracle strength: a `Low` relation can still carry a strong oracle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationConfidence {
+    /// The test calls the owner, directly or through a helper.
+    High,
+    /// The relation is plausible but indirect.
+    Medium,
+    /// The relation is a weak match, such as a fixture helper or a token
+    /// substring.
+    Low,
+    /// The relation could not be resolved statically.
+    Opaque,
+}
+
+impl RelationConfidence {
+    /// The stable snake_case label used in output.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::High => "high",
+            Self::Medium => "medium",
+            Self::Low => "low",
+            Self::Opaque => "opaque",
+        }
+    }
+
+    /// Sort rank: lower value sorts first (highest confidence first).
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::High => 0,
+            Self::Medium => 1,
+            Self::Low => 2,
+            Self::Opaque => 3,
+        }
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs;
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, StageEvidence,
+        StageState,
+    };
+
+    #[test]
+    fn oracle_kind_labels_are_stable_contract_terms() {
+        let cases = [
+            (OracleKind::ExactValue, "exact_value"),
+            (OracleKind::ExactErrorVariant, "exact_error_variant"),
+            (OracleKind::WholeObjectEquality, "whole_object_equality"),
+            (OracleKind::Snapshot, "snapshot"),
+            (OracleKind::RelationalCheck, "relational_check"),
+            (OracleKind::BroadError, "broad_error"),
+            (OracleKind::SmokeOnly, "smoke_only"),
+            (OracleKind::MockExpectation, "mock_expectation"),
+            (OracleKind::GuardedResultMatch, "guarded_result_match"),
+            (OracleKind::Unknown, "unknown"),
+        ];
+
+        for (kind, label) in cases {
+            assert_eq!(kind.as_str(), label);
+        }
+    }
+
+    #[test]
+    fn oracle_strength_labels_and_ranks_are_stable_contract_terms() {
+        let cases = [
+            (OracleStrength::Strong, "strong", 5),
+            (OracleStrength::Medium, "medium", 4),
+            (OracleStrength::Weak, "weak", 3),
+            (OracleStrength::Smoke, "smoke", 2),
+            (OracleStrength::Unknown, "unknown", 1),
+            (OracleStrength::None, "none", 0),
+        ];
+
+        for (strength, label, rank) in cases {
+            assert_eq!(strength.as_str(), label);
+            assert_eq!(strength.rank(), rank);
+        }
+    }
+
+    #[test]
+    fn stage_state_and_confidence_labels_are_stable_contract_terms() {
+        let stage_states = [
+            (StageState::Yes, "yes"),
+            (StageState::Weak, "weak"),
+            (StageState::No, "no"),
+            (StageState::Unknown, "unknown"),
+            (StageState::Opaque, "opaque"),
+            (StageState::NotApplicable, "not_applicable"),
+        ];
+        for (state, label) in stage_states {
+            assert_eq!(state.as_str(), label);
+        }
+
+        let confidences = [
+            (Confidence::High, "high"),
+            (Confidence::Medium, "medium"),
+            (Confidence::Low, "low"),
+            (Confidence::Unknown, "unknown"),
+        ];
+        for (confidence, label) in confidences {
+            assert_eq!(confidence.as_str(), label);
+        }
+    }
+
+    #[test]
+    fn stage_evidence_new_sets_all_fields() {
+        let evidence = StageEvidence::new(StageState::Weak, Confidence::Medium, "summary");
+        assert_eq!(evidence.state, StageState::Weak);
+        assert_eq!(evidence.confidence, Confidence::Medium);
+        assert_eq!(evidence.summary, "summary");
+    }
+
+    #[test]
+    fn relation_reason_labels_are_stable_contract_terms() {
+        let cases = [
+            (RelationReason::DirectOwnerCall, "direct_owner_call"),
+            (RelationReason::HelperOwnerCall, "helper_owner_call"),
+            (
+                RelationReason::AssertionTargetAffinity,
+                "assertion_target_affinity",
+            ),
+            (RelationReason::SameTestFile, "same_test_file"),
+            (RelationReason::SameModule, "same_module"),
+            (RelationReason::OwnerNamedTest, "owner_named_test"),
+            (RelationReason::ImportPathAffinity, "import_path_affinity"),
+            (
+                RelationReason::FixtureOwnerAffinity,
+                "fixture_owner_affinity",
+            ),
+            (RelationReason::WeakTokenSubstring, "weak_token_substring"),
+            (
+                RelationReason::ReExportChainFollowed,
+                "re_export_chain_followed",
+            ),
+            (RelationReason::SeamCalleeCall, "seam_callee_call"),
+        ];
+        for (reason, label) in cases {
+            assert_eq!(reason.as_str(), label);
+        }
+    }
+
+    #[test]
+    fn relation_confidence_labels_are_stable_contract_terms() {
+        let cases = [
+            (RelationConfidence::High, "high"),
+            (RelationConfidence::Medium, "medium"),
+            (RelationConfidence::Low, "low"),
+            (RelationConfidence::Opaque, "opaque"),
+        ];
+        for (confidence, label) in cases {
+            assert_eq!(confidence.as_str(), label);
+        }
+    }
+
+    #[test]
+    fn only_owner_calls_establish_reach_and_assertion_affinity_only_without_a_function() {
+        for reason in [
+            RelationReason::DirectOwnerCall,
+            RelationReason::HelperOwnerCall,
+            RelationReason::ReExportChainFollowed,
+        ] {
+            assert!(reason.establishes_reach(true), "{reason:?}");
+            assert!(reason.establishes_reach(false), "{reason:?}");
+        }
+        assert!(!RelationReason::AssertionTargetAffinity.establishes_reach(true));
+        assert!(RelationReason::AssertionTargetAffinity.establishes_reach(false));
+        for reason in [
+            RelationReason::SameTestFile,
+            RelationReason::SameModule,
+            RelationReason::OwnerNamedTest,
+            RelationReason::ImportPathAffinity,
+            RelationReason::FixtureOwnerAffinity,
+            RelationReason::WeakTokenSubstring,
+            RelationReason::SeamCalleeCall,
+        ] {
+            assert!(!reason.establishes_reach(true), "{reason:?}");
+            assert!(!reason.establishes_reach(false), "{reason:?}");
+        }
+    }
+
+    const ALL_REASONS: [RelationReason; 11] = [
+        RelationReason::DirectOwnerCall,
+        RelationReason::HelperOwnerCall,
+        RelationReason::AssertionTargetAffinity,
+        RelationReason::SameTestFile,
+        RelationReason::SameModule,
+        RelationReason::OwnerNamedTest,
+        RelationReason::ImportPathAffinity,
+        RelationReason::FixtureOwnerAffinity,
+        RelationReason::WeakTokenSubstring,
+        RelationReason::ReExportChainFollowed,
+        RelationReason::SeamCalleeCall,
+    ];
+
+    /// Only a captured path to running the owner is reach; an assertion
+    /// affinity counts only for an owner with no function body.
+    #[test]
+    fn only_call_paths_establish_reach_for_a_function_owner() {
+        let reach_for = |owner_is_function: bool| -> Vec<&str> {
+            ALL_REASONS
+                .iter()
+                .filter(|reason| reason.establishes_reach(owner_is_function))
+                .map(|reason| reason.as_str())
+                .collect()
+        };
+        assert_eq!(
+            reach_for(true),
+            [
+                "direct_owner_call",
+                "helper_owner_call",
+                "re_export_chain_followed"
+            ]
+        );
+        assert_eq!(
+            reach_for(false),
+            [
+                "direct_owner_call",
+                "helper_owner_call",
+                "assertion_target_affinity",
+                "re_export_chain_followed"
+            ]
+        );
+    }
+
+    #[test]
+    fn proximity_only_reasons_are_file_module_or_token_nearness() {
+        let proximity: Vec<&str> = ALL_REASONS
+            .iter()
+            .filter(|reason| reason.is_proximity_only())
+            .map(|reason| reason.as_str())
+            .collect();
+        assert_eq!(
+            proximity,
+            ["same_test_file", "same_module", "weak_token_substring"]
+        );
+        for reason in ALL_REASONS {
+            assert!(
+                !(reason.is_proximity_only() && reason.establishes_reach(false)),
+                "{} cannot be both proximity and reach",
+                reason.as_str()
+            );
+        }
+    }
+
+    /// Sorting by priority puts owner-anchored signals first, a seam callee
+    /// call below every owner-anchored signal, and token substrings last;
+    /// import affinity and a followed re-export chain tie.
+    #[test]
+    fn relation_reasons_sort_strongest_first() {
+        let mut reasons = ALL_REASONS;
+        reasons.sort_by_key(|reason| (reason.priority(), reason.as_str()));
+        let order: Vec<&str> = reasons.iter().map(|reason| reason.as_str()).collect();
+        assert_eq!(
+            order,
+            [
+                "direct_owner_call",
+                "helper_owner_call",
+                "assertion_target_affinity",
+                "same_test_file",
+                "same_module",
+                "owner_named_test",
+                "import_path_affinity",
+                "re_export_chain_followed",
+                "fixture_owner_affinity",
+                "seam_callee_call",
+                "weak_token_substring",
+            ]
+        );
+        assert_eq!(
+            RelationReason::ImportPathAffinity.priority(),
+            RelationReason::ReExportChainFollowed.priority()
+        );
+        let mut priorities: Vec<u8> = ALL_REASONS.iter().map(|reason| reason.priority()).collect();
+        priorities.sort_unstable();
+        priorities.dedup();
+        assert_eq!(priorities.len(), ALL_REASONS.len() - 1, "exactly one tie");
+    }
+
+    #[test]
+    fn relation_confidence_ranks_sort_highest_first() {
+        let mut ranked = [
+            RelationConfidence::Opaque,
+            RelationConfidence::Low,
+            RelationConfidence::High,
+            RelationConfidence::Medium,
+        ];
+        ranked.sort_by_key(|confidence| confidence.rank());
+        assert_eq!(
+            ranked,
+            [
+                RelationConfidence::High,
+                RelationConfidence::Medium,
+                RelationConfidence::Low,
+                RelationConfidence::Opaque,
+            ]
+        );
+        assert_eq!(RelationConfidence::High.rank(), 0);
+        assert_eq!(RelationConfidence::Opaque.rank(), 3);
+    }
+}

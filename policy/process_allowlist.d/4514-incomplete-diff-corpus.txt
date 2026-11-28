@@ -1,0 +1,1 @@
+crates/ripr/tests/incomplete_diff_corpus.rs|Command::new|1|4514-incomplete-diff-corpus|#4514: runs the built ripr binary on retained corpus diffs through file and stdin `check --diff` routes against `fixtures/boundary_gap/input`; no shell, network, or user-repository mutation.

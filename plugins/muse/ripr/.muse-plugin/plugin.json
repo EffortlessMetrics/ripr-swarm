@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "name": "ripr",
+  "displayName": "RIPR",
+  "version": "0.1.0",
+  "description": "Static mutation-exposure evidence and guided test repair for Muse.",
+  "compat": {
+    "source": "native",
+    "manifestDir": ".muse-plugin"
+  },
+  "capabilities": {
+    "skills": [
+      {
+        "id": "ripr-setup",
+        "path": "skills/ripr-setup/SKILL.md",
+        "enabledDefault": true
+      },
+      {
+        "id": "ripr-repair",
+        "path": "skills/ripr-repair/SKILL.md",
+        "enabledDefault": true
+      }
+    ],
+    "commands": [],
+    "hooks": [],
+    "mcpServers": [
+      {
+        "id": "core",
+        "transport": "stdio",
+        "command": ["ripr", "mcp", "--stdio"]
+      }
+    ],
+    "reminders": []
+  }
+}

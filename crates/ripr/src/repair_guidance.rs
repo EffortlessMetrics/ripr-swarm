@@ -8,7 +8,7 @@
 //!
 //! The module lives at the crate root rather than under `domain/` because
 //! [`RepairGuidance::semantic_digest`] serializes through `serde_json`, and
-//! `policy/architecture.txt` forbids `serde_json` inside `crates/ripr/src/domain/**`.
+//! `policy/architecture.txt` forbids `serde_json` inside the domain compartment (`crates/ripr-contract/src/domain/**`, `crates/ripr/src/domain/**`).
 //! This matches the sibling `#2827` contract in [`crate::analysis_outcome`].
 //!
 //! This module is internal until #2657 and #2658 connect the packet
@@ -122,6 +122,13 @@ pub(crate) enum AssertionBasis {
     ObservedValueFact,
     /// Derived from a resolved flow-sink fact.
     ResolvedFlowSink,
+    /// Drafted from the analyzer's static model of the current behavior at
+    /// the pinned boundary input: paste-ready call arguments from the
+    /// related tests' own rows, plus a bounded-integer folded expected
+    /// value when that model is strong. Static draft only; ripr has not
+    /// run or verified anything, and the developer confirms the expected
+    /// value before relying on the test.
+    DraftedStaticFold,
 }
 
 impl AssertionBasis {
@@ -130,6 +137,7 @@ impl AssertionBasis {
             Self::SeamRequiredDiscriminator => "seam_required_discriminator",
             Self::ObservedValueFact => "observed_value_fact",
             Self::ResolvedFlowSink => "resolved_flow_sink",
+            Self::DraftedStaticFold => "drafted_static_fold",
         }
     }
 }
@@ -1082,6 +1090,7 @@ fn bounded_guidance_text(field: &str, value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::DiscriminatorShape;
     use std::fmt::{Debug, Display};
 
     fn expect_error<T: Debug, E: Display>(
@@ -1385,6 +1394,8 @@ mod tests {
             value: "boundary value 0".to_string(),
             reason: "no test observes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         };
         let stale = DiscriminatorAvailability::from_missing_discriminator_fact(Some(&fact), true)?;
         assert_eq!(
@@ -1464,6 +1475,8 @@ mod tests {
             value: "boundary value 0".to_string(),
             reason: "no test observes the boundary".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         };
         let from_seam =
             DiscriminatorAvailability::from_missing_discriminator_fact(Some(&fact), false)?;

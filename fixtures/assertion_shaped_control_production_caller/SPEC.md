@@ -39,6 +39,13 @@ Control: the finding evidence contains no `owner_shape:` line and the guidance
 is the standard text for the emitted class. A non-test caller — even a
 bare-name match — must block the oracle reframe (fail-closed).
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.rs:predicate:a39d316d -> infection_unknown
+```
+
 ## Must Not
 
 - Treat an assert-heavy function with production callers as assertion-shaped.

@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0397"
+scope = "out"
+reason = "BEAM Elixir/Erlang actor-test contract is spec-only on this slice; no Rust verdict corpus case yet (#5885)"

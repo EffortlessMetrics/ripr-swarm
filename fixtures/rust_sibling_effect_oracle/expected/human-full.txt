@@ -3,11 +3,12 @@ mode: fast
 root: fixtures/rust_sibling_effect_oracle/input
 
 Summary: 2 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 2 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed (1 base-side evidence, not candidate edit targets)
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 changed behavior(s) checked, 2 finding(s)
@@ -21,7 +22,7 @@ Changed
   source:  base_deleted — base-side evidence, not a candidate edit target
 
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/sensors/ripr_limits.rs::module_limit_evidence
@@ -37,11 +38,11 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches call effect: .or_insert_with(BTreeSet::new) (line 137)
-  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
   - related tests (showing 5 of 7; more in --format json)
   - source assertion argument value 1024 at line 209
   - source assertion argument value 8192 at line 211
@@ -52,6 +53,7 @@ Evidence
   - source table row value "disclosed" at line 220
   - source table row value 0 at line 220
   - source values (showing 8 of 131 read from related tests; --format json keeps a ranked 32)
+  - assertion not credited: `assert_eq!` in module_evidence_retains_single_pass_duplicates_benign_and_unavailable at src/sensors/ripr_limits.rs:374: `json!` at src/sensors/ripr_limits.rs:101 mentions `format` in its arguments, so its expansion may define it
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
@@ -60,6 +62,7 @@ Weakness
 Next step
   Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_sibling_effect_oracle/input --diff <cwd>/fixtures/rust_sibling_effect_oracle/diff.patch --mode fast probe:src_sensors_ripr_limits.rs:call_deletion:11a3eb55
   ripr context --root <cwd>/fixtures/rust_sibling_effect_oracle/input --diff <cwd>/fixtures/rust_sibling_effect_oracle/diff.patch --mode fast --at probe:src_sensors_ripr_limits.rs:call_deletion:11a3eb55
 
@@ -87,11 +90,11 @@ Evidence
   - observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)
   - local flow reaches call effect: .or_default() (line 137)
-  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
-  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle; misses: assertion not credited: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:337 module_evidence_retains_single_pass_duplicates_benign_and_unavailable uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:194 module_note_line_byte_boundary_excludes_line_terminators uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:268 module_note_context_limit_counts_utf8_bytes uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:283 module_note_contract_rejects_malformed_counts_reasons_and_paths uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
+  - related test src/sensors/ripr_limits.rs:238 module_note_orientation_sentence_accepts_optional_next_step uses no oracle; misses: assertion admission unproven: ripr could not establish that this assertion counts here
   - related tests (showing 5 of 7; more in --format json)
   - source assertion argument value 1024 at line 209
   - source assertion argument value 8192 at line 211
@@ -102,6 +105,7 @@ Evidence
   - source table row value "disclosed" at line 220
   - source table row value 0 at line 220
   - source values (showing 8 of 131 read from related tests; --format json keeps a ranked 32)
+  - assertion not credited: `assert_eq!` in module_evidence_retains_single_pass_duplicates_benign_and_unavailable at src/sensors/ripr_limits.rs:374: `json!` at src/sensors/ripr_limits.rs:101 mentions `format` in its arguments, so its expansion may define it
 
 Weakness
   - No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
@@ -110,5 +114,6 @@ Weakness
 Next step
   ripr did not credit the `assert_eq!` in module_evidence_retains_single_pass_duplicates_benign_and_unavailable at src/sensors/ripr_limits.rs:374; the "not credited" note says why. If that assertion does run as the standard macro, this is a static limit, not a missing test: confirm with a real mutation run. Otherwise move the check onto a path that always runs
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/rust_sibling_effect_oracle/input --diff <cwd>/fixtures/rust_sibling_effect_oracle/diff.patch --mode fast probe:src_sensors_ripr_limits.rs:side_effect:fd0a4cd3
   ripr context --root <cwd>/fixtures/rust_sibling_effect_oracle/input --diff <cwd>/fixtures/rust_sibling_effect_oracle/diff.patch --mode fast --at probe:src_sensors_ripr_limits.rs:side_effect:fd0a4cd3

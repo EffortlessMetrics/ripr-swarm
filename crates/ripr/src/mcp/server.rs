@@ -16,6 +16,12 @@ use tokio::sync::Mutex;
 /// Upper bound for the `ripr_refresh` `base` revision text; no real ref name
 /// or commit id approaches it, and it keeps a hostile argument out of Git.
 const MAX_BASE_REVISION_BYTES: usize = 256;
+tokio::task_local! {
+    /// Whether the tool call being dispatched carries the transport's
+    /// [`super::transport::BesideRunningRefresh`] mark. Unset outside
+    /// `call_tool` (direct handler calls in tests), which reads as `false`.
+    static BESIDE_RUNNING_REFRESH: bool;
+}
 
 /// Application adapter only. The SDK owns RPC dispatch and lifecycle, except
 /// initialize-session `ping`: method name wins over `params._meta` so a
@@ -31,6 +37,19 @@ pub(super) struct McpServer {
     analysis_root: Option<PathBuf>,
     root_identity: Option<String>,
     session: Arc<Mutex<workspace::WorkspaceSession>>,
+    /// Set from the moment a refresh claims the session until its handler
+    /// returns. The transport reads it when it admits a repeated refresh
+    /// (#15983); the session's own `in_flight` sits behind an async lock.
+    attempt_running: Arc<AtomicBool>,
+}
+
+/// Clears the transport-visible attempt flag on every exit of `refresh_tool`,
+/// unwind and dropped handler included.
+struct AttemptRunning(Arc<AtomicBool>);
+impl Drop for AttemptRunning {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 impl McpServer {
@@ -59,6 +78,7 @@ impl McpServer {
             analysis_root,
             status,
             session: Arc::new(Mutex::new(session)),
+            attempt_running: Arc::new(AtomicBool::new(false)),
         };
         // Domain JSON carries status/catalog data, not version-dependent SDK
         // result metadata. SDK constructors supply current result fields and
@@ -138,22 +158,47 @@ impl McpServer {
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
         };
+        // #13096: an omitted `source` takes `ripr check`'s default through the
+        // one shared selection owner, so an agent that just edited a tracked
+        // file analyzes that edit instead of an empty committed diff.
+        let source_defaulted = source.is_none();
+        let source = match source {
+            Some(source) => source,
+            None => {
+                let probe_root = root.clone();
+                // A probe that could not finish keeps committed history, the
+                // same fallback the selection owner takes for a failed probe;
+                // `requested_source: "default"` still discloses the choice.
+                tokio::task::spawn_blocking(move || default_refresh_source(&probe_root))
+                    .await
+                    .unwrap_or(workspace::RefreshSource::Committed)
+            }
+        };
         let root_identity = self.root_identity.clone();
         let session = self.session.clone();
         {
             let mut session = session.lock().await;
-            if session.in_flight {
+            // A refresh the transport admitted beside a running one is
+            // refused even when that attempt has since committed (#15983):
+            // the caller re-sent it while an analysis was running.
+            let beside_running = BESIDE_RUNNING_REFRESH
+                .try_with(|beside| *beside)
+                .unwrap_or(false);
+            if session.in_flight || beside_running {
                 let failure = workspace::AttemptFailure::new(
                     workspace::CODE_ANALYSIS_IN_FLIGHT,
                     "an analysis attempt is already running",
-                    "wait for the running attempt to finish (the stdio transport answers one request at a time, so a pipelined request is served after it), then retry",
+                    "do not re-send ripr_refresh while it runs: poll ripr_workspace_status until attempt_state leaves in_flight, then use its snapshot or follow its failure recovery",
                 );
                 return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
             }
             session.in_flight = true;
+            self.attempt_running.store(true, Ordering::SeqCst);
             session.desired_base = base.clone();
             session.desired_source = source;
+            session.desired_source_defaulted = source_defaulted;
         }
+        let _attempt_running = AttemptRunning(self.attempt_running.clone());
         let mut attempt = workspace::InFlightAttempt::new(session.clone());
         #[cfg(test)]
         super::panic_containment::injected_tool_panic::fire(
@@ -219,6 +264,7 @@ impl McpServer {
                 "snapshot_id",
                 "offset",
                 "omitted_offset",
+                "independent_pages",
                 "limit",
                 "file",
                 "class",
@@ -226,15 +272,18 @@ impl McpServer {
                 "repair_ready",
             ],
         )?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let requested = optional_snapshot_id_argument(&arguments)?;
         let offset = optional_nonnegative_argument(&arguments, "offset")?;
         let omitted_offset = optional_nonnegative_argument(&arguments, "omitted_offset")?;
+        let independent_pages = optional_bool_argument(&arguments, "independent_pages")?;
         let limit = optional_capped_page_limit(
             &arguments,
             "limit",
             crate::lsp::diagnostic_budget::DEFAULT_MAX_ITEMS_PER_WORKSPACE_RESPONSE,
         )?;
-        let file = optional_nonempty_string_argument(&arguments, "file")?;
+        let file = optional_nonempty_string_argument(&arguments, "file")?
+            .map(|file| workspace_relative_file_filter(file, self.analysis_root.as_deref()))
+            .transpose()?;
         let class = optional_nonempty_string_argument(&arguments, "class")?;
         // An unknown class token would narrow to an empty page that reads like
         // "no such gaps"; name the vocabulary instead (a typo like `weak`).
@@ -247,17 +296,17 @@ impl McpServer {
                 .iter()
                 .map(crate::domain::ExposureClass::as_str)
                 .collect::<Vec<_>>();
-            // The echoed token is caller-controlled and unbounded; cap it so
+            // The echoed token is caller-controlled and unbounded; the shared
+            // helper escapes control and bidi characters and caps the echo so
             // the error stays well under the writer's response bound.
             const ECHO_CHARS: usize = 32;
-            let echoed: String = token.chars().take(ECHO_CHARS).collect();
-            let marker = if token.chars().nth(ECHO_CHARS).is_some() {
-                "..."
-            } else {
-                ""
-            };
+            let mut echoed =
+                super::escape_echoed_argument(&token.chars().take(ECHO_CHARS).collect::<String>());
+            if token.chars().nth(ECHO_CHARS).is_some() {
+                echoed.push_str("...");
+            }
             return Err(ErrorData::invalid_params(
-                format!("unknown class \"{echoed}{marker}\"; allowed: {allowed:?}"),
+                format!("unknown class \"{echoed}\"; allowed: {allowed:?}"),
                 Some(serde_json::json!({ "argument": "class", "allowed": allowed })),
             ));
         }
@@ -272,9 +321,10 @@ impl McpServer {
                 .collect();
             // Echo only a short value: a huge one would push the error past
             // the response cap and replace -32602 with a generic -32603.
-            let shown: String = language.chars().take(32).collect();
+            let shown =
+                super::escape_echoed_argument(&language.chars().take(32).collect::<String>());
             return Err(ErrorData::invalid_params(
-                format!("unknown language {shown:?}; allowed: {allowed:?}"),
+                format!("unknown language \"{shown}\"; allowed: {allowed:?}"),
                 Some(serde_json::json!({ "allowed": allowed })),
             ));
         }
@@ -286,6 +336,7 @@ impl McpServer {
                 offset: offset.unwrap_or(0),
                 limit,
                 omitted_offset: omitted_offset.unwrap_or(0),
+                independent_pages: independent_pages.unwrap_or(false),
             },
             &workspace::GapListFilter {
                 file,
@@ -313,7 +364,7 @@ impl McpServer {
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let requested = optional_snapshot_id_argument(&arguments)?;
         let session = self.session.lock().await;
         match session.get_gap_with_recovery(&canonical_id, requested.as_deref()) {
             Ok((document, recovery)) => self.bounded_tool_result(
@@ -353,7 +404,7 @@ impl McpServer {
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let requested = optional_snapshot_id_argument(&arguments)?;
         let session = self.session.lock().await;
         match session.get_limitation(&canonical_id, requested.as_deref()) {
             Ok(document) => self.bounded_tool_result(
@@ -394,13 +445,25 @@ impl McpServer {
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
-        let mut session = self.session.lock().await;
-        match session.prepare_repair(
-            &canonical_id,
-            requested.as_deref(),
-            self.root_identity.as_deref(),
-        ) {
+        let requested = optional_snapshot_id_argument(&arguments)?;
+        let result = match self.analysis_root.clone() {
+            Some(root) => {
+                self.prepare_repair_document_with(
+                    &canonical_id,
+                    requested.as_deref(),
+                    move |lookup| lookup.read(&root),
+                )
+                .await
+            }
+            // No store to check: the session-only route, as before.
+            None => self.session.lock().await.prepare_repair_checked(
+                &canonical_id,
+                requested.as_deref(),
+                self.root_identity.as_deref(),
+                None,
+            ),
+        };
+        match result {
             Ok(document) => {
                 // A refused item created no transaction: say so with
                 // `isError`, the same convention `ripr_get_repair_card`
@@ -417,6 +480,41 @@ impl McpServer {
             }
             Err(failure) => self.typed_failure(failure, repair::REPAIR_PACKET_SCHEMA_VERSION),
         }
+    }
+
+    /// `ripr_prepare_repair` without holding the session lock across the
+    /// durable store read (#15244): the lookup is taken under the lock, read
+    /// on a blocking worker (it runs git and the filesystem inventory, which
+    /// would stall the current-thread runtime), and the session lock is
+    /// re-taken to revalidate the admitted snapshot before any transaction is
+    /// replayed or created.
+    async fn prepare_repair_document_with(
+        &self,
+        canonical_id: &str,
+        requested: Option<&str>,
+        durable_read: impl FnOnce(
+            repair::DurableLookup,
+        ) -> Result<repair::DurableCheck, workspace::AttemptFailure>
+        + Send
+        + 'static,
+    ) -> Result<Value, workspace::AttemptFailure> {
+        let lookup = {
+            let session = self.session.lock().await;
+            session.prepare_repair_durable_lookup(canonical_id, requested)?
+        };
+        let durable = blocking_durable_worker(
+            move || durable_read(lookup),
+            "durable attempt store read worker failed",
+            "retry ripr_prepare_repair",
+        )
+        .await?;
+        let mut session = self.session.lock().await;
+        session.prepare_repair_checked(
+            canonical_id,
+            requested,
+            self.root_identity.as_deref(),
+            Some(durable),
+        )
     }
 
     async fn list_repair_attempts_tool(
@@ -557,7 +655,7 @@ impl McpServer {
     ) -> Result<CallToolResponse, ErrorData> {
         reject_unknown_arguments(&arguments, &["canonical_id", "snapshot_id"])?;
         let canonical_id = required_string_argument(&arguments, "canonical_id")?;
-        let requested = optional_string_argument(&arguments, "snapshot_id")?;
+        let requested = optional_snapshot_id_argument(&arguments)?;
         let session = self.session.lock().await;
         match session.repair_card_document(
             &canonical_id,
@@ -836,24 +934,172 @@ fn optional_string_argument(
     match arguments.get(name) {
         None => Ok(None),
         Some(Value::String(value)) => Ok(Some(value.clone())),
-        Some(_other) => Err(ErrorData::invalid_params(
-            format!("{name} must be a string"),
+        Some(other) => Err(ErrorData::invalid_params(
+            wrong_type_message(name, "a string", other),
             Some(serde_json::json!({ "argument": name, "expected": "string" })),
         )),
     }
 }
 
-/// The `ripr_refresh` `source` selector (#7357): `committed` (also the
-/// meaning of omission) or `worktree`. Any other value, including an empty
-/// string, wrong case or a non-string, is invalid params; nothing coerces.
+/// A tool's optional `snapshot_id`: a string of the portable
+/// `snapshot:sha256:<64 lowercase hex>` shape the server issues. A value of
+/// any other shape can never name a snapshot, so it is a malformed argument
+/// (`invalid_argument`) rather than a well-formed identity that merely is not
+/// current (`stale_snapshot`). Resources keep their own stale handling.
+fn optional_snapshot_id_argument(
+    arguments: &Option<serde_json::Map<String, Value>>,
+) -> Result<Option<String>, ErrorData> {
+    let Some(value) = optional_string_argument(arguments, "snapshot_id")? else {
+        return Ok(None);
+    };
+    if workspace::is_snapshot_identity_wire(&value) {
+        return Ok(Some(value));
+    }
+    // The form and the omit option come before the echoed preview: the
+    // detail is bounded, and an escaped preview can fill that bound.
+    Err(ErrorData::invalid_params(
+        format!(
+            "snapshot_id must be `snapshot:sha256:<64 lowercase hex characters>` as returned by ripr_refresh or ripr_workspace_status, or omit snapshot_id for the current snapshot; received \"{}\"",
+            super::escape_echoed_argument(&value)
+        ),
+        Some(serde_json::json!({
+            "argument": "snapshot_id",
+            "expected": "snapshot:sha256:<64 lowercase hex characters>, or omit for the current snapshot",
+        })),
+    ))
+}
+
+/// The refusal sentence for a wrongly typed optional argument. Optional
+/// arguments are omittable, not nullable (#7314), and a client that fills
+/// every schema property sends `null` for the ones it has no value for, so the
+/// null refusal names the fix: leave the argument out.
+fn wrong_type_message(name: &str, expected: &str, value: &Value) -> String {
+    if value.is_null() {
+        format!("{name} must be {expected}, not null; omit {name} to use its default")
+    } else {
+        format!("{name} must be {expected}")
+    }
+}
+
+/// The `file` filter as the workspace-relative path items are keyed by.
+///
+/// Items carry paths relative to the repository root, while an agent usually
+/// holds the absolute path its editor or shell gave it. An absolute filter
+/// can never equal, prefix or suffix a relative item path, so it used to
+/// narrow to an empty page that reads like "no gaps in that file". An
+/// absolute path under this workspace root is rewritten to its relative form
+/// (lexically first, then on Unix through the filesystem so a symlinked
+/// spelling of the canonical root still resolves); any other absolute path is refused
+/// with the form to send. The refusal is the same whether or not the path
+/// exists and never echoes a host path.
+fn workspace_relative_file_filter(
+    file: String,
+    root: Option<&std::path::Path>,
+) -> Result<String, ErrorData> {
+    let path = std::path::Path::new(&file);
+    if !path.is_absolute() {
+        return Ok(file);
+    }
+    let refuse = |message: &str| {
+        ErrorData::invalid_params(
+            message.to_string(),
+            Some(serde_json::json!({
+                "argument": "file",
+                "expected": "path relative to the repository root",
+            })),
+        )
+    };
+    let relative = root.and_then(|root| {
+        path.strip_prefix(root)
+            .map(std::path::Path::to_path_buf)
+            .ok()
+            .or_else(|| resolved_below_root(path, root))
+    });
+    // A `..` segment could leave the root again and nothing resolves it here,
+    // so only plain segments below the root count as inside.
+    let relative = relative.filter(|relative| {
+        relative.components().all(|component| {
+            matches!(
+                component,
+                std::path::Component::Normal(_) | std::path::Component::CurDir
+            )
+        })
+    });
+    // Item paths are rendered by the shared stable-path owner (which escapes
+    // a literal `%`), so the filter takes the same rendering to match them.
+    let segments = relative.map(|relative| {
+        crate::analysis::stable_path_text(&relative)
+            .split('/')
+            .filter(|segment| !segment.is_empty() && *segment != ".")
+            .map(str::to_owned)
+            .collect::<Vec<String>>()
+    });
+    match segments {
+        None => Err(refuse(
+            "file is an absolute path that does not resolve below this workspace root; send it relative to the repository root, for example \"src/lib.rs\", or omit file",
+        )),
+        Some(segments) if segments.is_empty() => Err(refuse(
+            "file names the workspace root itself, which narrows nothing; omit file to list every item",
+        )),
+        Some(segments) => Ok(segments.join("/")),
+    }
+}
+
+/// The filesystem spelling of `path` below `root`, for a root reached through
+/// a symlink (macOS `/tmp`). Unix only: on Windows resolving a caller-supplied
+/// path could contact a UNC share before containment is known, so an absolute
+/// filter there is matched lexically or refused.
+#[cfg(unix)]
+fn resolved_below_root(path: &std::path::Path, root: &std::path::Path) -> Option<PathBuf> {
+    let resolved = std::fs::canonicalize(path).ok()?;
+    resolved
+        .strip_prefix(root)
+        .map(std::path::Path::to_path_buf)
+        .ok()
+}
+
+#[cfg(not(unix))]
+fn resolved_below_root(_path: &std::path::Path, _root: &std::path::Path) -> Option<PathBuf> {
+    None
+}
+
+/// The source an omitted `ripr_refresh` `source` selects (#13096): the same
+/// `app::diff_source` decision `ripr check` makes with no `--worktree` or
+/// `--committed` flag. A clean or untracked-only tree, or a probe that could
+/// not run, keeps committed history. The probe runs under the same
+/// `RIPR_GIT_TIMEOUT` deadline as the refresh (#14386); an invalid value
+/// selects under the default here and the refresh itself then fails closed
+/// with `config_invalid`.
+fn default_refresh_source(root: &std::path::Path) -> workspace::RefreshSource {
+    let git_timeout = workspace::mcp_git_timeout()
+        .unwrap_or_else(|_invalid| Some(crate::app::default_cli_git_timeout()));
+    let selected = crate::app::diff_source::select_live_diff_source(
+        root,
+        crate::app::diff_source::DiffSourceRequest::Default,
+        git_timeout,
+    );
+    if selected.is_working_tree() {
+        workspace::RefreshSource::Worktree
+    } else {
+        workspace::RefreshSource::Committed
+    }
+}
+
+/// The `ripr_refresh` `source` selector (#7357): `committed`, `worktree`, or
+/// omitted (`None`, resolved by [`default_refresh_source`]). Any other value,
+/// including an empty string, wrong case or a non-string, is invalid params;
+/// nothing coerces.
 fn refresh_source_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
-) -> Result<workspace::RefreshSource, ErrorData> {
+) -> Result<Option<workspace::RefreshSource>, ErrorData> {
     match optional_string_argument(arguments, "source")?.as_deref() {
-        None | Some(workspace::RefreshSource::COMMITTED_NAME) => {
-            Ok(workspace::RefreshSource::Committed)
+        None => Ok(None),
+        Some(workspace::RefreshSource::COMMITTED_NAME) => {
+            Ok(Some(workspace::RefreshSource::Committed))
         }
-        Some(workspace::RefreshSource::WORKTREE_NAME) => Ok(workspace::RefreshSource::Worktree),
+        Some(workspace::RefreshSource::WORKTREE_NAME) => {
+            Ok(Some(workspace::RefreshSource::Worktree))
+        }
         Some(_other) => Err(ErrorData::invalid_params(
             "source must be one of: committed, worktree",
             Some(serde_json::json!({
@@ -882,7 +1128,7 @@ fn optional_nonempty_string_argument(
     }
 }
 
-/// A `repair_ready` selector (#7464): a JSON boolean. Strings, integers and
+/// An optional JSON boolean. Strings, integers and
 /// nulls stay invalid params instead of silently coercing.
 fn optional_bool_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
@@ -894,8 +1140,8 @@ fn optional_bool_argument(
     match arguments.get(name) {
         None => Ok(None),
         Some(Value::Bool(value)) => Ok(Some(*value)),
-        Some(_other) => Err(ErrorData::invalid_params(
-            format!("{name} must be a boolean"),
+        Some(other) => Err(ErrorData::invalid_params(
+            wrong_type_message(name, "a boolean", other),
             Some(serde_json::json!({ "argument": name, "expected": "boolean" })),
         )),
     }
@@ -1138,6 +1384,9 @@ fn resource_id_document<T>(
     }
 }
 
+/// Diagnostic-only bound: validation always compares the complete key.
+const MAX_ARGUMENT_NAME_PREVIEW_CHARS: usize = 128;
+
 /// The declared input schemas set `additionalProperties: false`; the adapter
 /// enforces the same bound at the dispatch edge instead of trusting the SDK
 /// or the client to reject unknown argument names.
@@ -1150,10 +1399,26 @@ fn reject_unknown_arguments(
     };
     for name in arguments.keys() {
         if !allowed.contains(&name.as_str()) {
-            return Err(ErrorData::invalid_params(
-                format!("unknown argument {name:?}; allowed: {allowed:?}"),
-                Some(serde_json::json!({ "argument": name, "allowed": allowed })),
-            ));
+            // Validate the full key, but never copy an input-sized key into
+            // failure data: the response cap is smaller than the input cap.
+            // Bound on Unicode scalar boundaries before Debug/JSON escaping.
+            let mut chars = name.chars();
+            let preview: String = chars
+                .by_ref()
+                .take(MAX_ARGUMENT_NAME_PREVIEW_CHARS)
+                .collect();
+            let truncated = chars.next().is_some();
+            let mut data = serde_json::json!({ "argument": preview, "allowed": allowed });
+            let detail = if truncated {
+                data["argument_truncated"] = serde_json::json!(true);
+                data["argument_bytes"] = serde_json::json!(name.len());
+                // Put the remedy before the preview so escaped characters
+                // cannot displace it from the bounded human detail.
+                format!("unknown argument (name truncated; allowed: {allowed:?}): {preview:?}")
+            } else {
+                format!("unknown argument {preview:?}; allowed: {allowed:?}")
+            };
+            return Err(ErrorData::invalid_params(detail, Some(data)));
         }
     }
     Ok(())
@@ -1163,7 +1428,18 @@ fn required_string_argument(
     arguments: &Option<serde_json::Map<String, Value>>,
     name: &str,
 ) -> Result<String, ErrorData> {
-    let value = optional_string_argument(arguments, name)?;
+    // A required argument has no default to fall back to, so its wrong-type
+    // refusal never borrows the optional parser's "omit it" sentence.
+    let value = match arguments.as_ref().and_then(|arguments| arguments.get(name)) {
+        None => None,
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(_other) => {
+            return Err(ErrorData::invalid_params(
+                format!("{name} must be a string"),
+                Some(serde_json::json!({ "argument": name, "expected": "string" })),
+            ));
+        }
+    };
     value.filter(|value| !value.is_empty()).ok_or_else(|| {
         ErrorData::invalid_params(
             format!("{name} is required and must be a non-empty string"),
@@ -1196,6 +1472,28 @@ fn invalid_argument_failure(error: &ErrorData) -> workspace::AttemptFailure {
         recovery,
     )
     .with_data(data)
+}
+
+/// An unknown method can fit the input cap while its diagnostic exceeds the
+/// response cap. Bound only the echo, after routing the complete method name.
+fn unknown_method_error(method: &str) -> ErrorData {
+    const MAX_METHOD_NAME_PREVIEW_CHARS: usize = 128;
+    let mut chars = method.chars();
+    let preview: String = chars.by_ref().take(MAX_METHOD_NAME_PREVIEW_CHARS).collect();
+    let truncated = chars.next().is_some();
+    let (message, data) = if truncated {
+        (
+            format!("Method not found: {preview} (name truncated)"),
+            Some(serde_json::json!({
+                "method": preview,
+                "method_truncated": true,
+                "method_bytes": method.len(),
+            })),
+        )
+    } else {
+        (format!("Method not found: {preview}"), None)
+    };
+    ErrorData::new(ErrorCode::METHOD_NOT_FOUND, message, data)
 }
 
 /// Failure schema version of each tool whose handler panics are contained at
@@ -1239,11 +1537,24 @@ fn repair_document_from_session(
 async fn blocking_repair_read(
     read: impl FnOnce() -> Result<Value, workspace::AttemptFailure> + Send + 'static,
 ) -> Result<Value, workspace::AttemptFailure> {
+    blocking_durable_worker(
+        read,
+        "durable repair read worker failed",
+        "retry the exact attempt or receipt read",
+    )
+    .await
+}
+
+async fn blocking_durable_worker<T: Send + 'static>(
+    read: impl FnOnce() -> Result<T, workspace::AttemptFailure> + Send + 'static,
+    failure: &str,
+    recovery: &str,
+) -> Result<T, workspace::AttemptFailure> {
     tokio::task::spawn_blocking(read).await.map_err(|error| {
         workspace::AttemptFailure::new(
             workspace::CODE_ANALYSIS_FAILED,
-            format!("durable repair read worker failed: {error}"),
-            "retry the exact attempt or receipt read",
+            format!("{failure}: {error}"),
+            recovery,
         )
     })?
 }
@@ -1302,21 +1613,26 @@ impl ServerHandler for McpServer {
         ];
         if SERVED_METHODS.contains(&request.method.as_str()) {
             let message = if request.method == "initialize" {
-                "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
-                    .to_owned()
+                // The same description the pre-handshake path gives, so a
+                // repeated malformed `initialize` names its bad field too.
+                super::transport::describe_malformed_initialize(request.params.as_ref())
+                    .unwrap_or_else(|| {
+                        "invalid params for `initialize`: expected `protocolVersion`, `capabilities` and `clientInfo`"
+                            .to_owned()
+                    })
             } else {
-                format!("invalid params for `{}`", request.method)
+                match request.method.as_str() {
+                    "tools/call" => "invalid params for `tools/call`: `name` (string) is required and `arguments`, when present, must be an object".to_owned(),
+                    "resources/read" => "invalid params for `resources/read`: `uri` (string) is required".to_owned(),
+                    other => format!("invalid params for `{other}`"),
+                }
             };
             return Err(ErrorData::invalid_params(
                 message,
                 Some(serde_json::json!({ "method": request.method })),
             ));
         }
-        Err(ErrorData::new(
-            ErrorCode::METHOD_NOT_FOUND,
-            format!("Method not found: {}", request.method),
-            None,
-        ))
+        Err(unknown_method_error(&request.method))
     }
     async fn list_tools(
         &self,
@@ -1367,7 +1683,16 @@ impl ServerHandler for McpServer {
         // the response bound minus the JSON-escaped request id of the call
         // being answered minus the fixed outer reserve.
         let max_envelope_bytes = super::outer_envelope_budget(&context.id);
-        self.call_tool_contained(request, max_envelope_bytes).await
+        let beside_running = context
+            .extensions
+            .get::<super::transport::BesideRunningRefresh>()
+            .is_some();
+        BESIDE_RUNNING_REFRESH
+            .scope(
+                beside_running,
+                self.call_tool_contained(request, max_envelope_bytes),
+            )
+            .await
     }
     async fn read_resource(
         &self,
@@ -1414,7 +1739,7 @@ impl ServerHandler for McpServer {
         }
         if let Some(snapshot_id) = gaps::snapshot_resource_id(&request.uri) {
             let session = self.session.lock().await;
-            return match session.snapshot_document(snapshot_id) {
+            return match session.snapshot_document(snapshot_id.as_ref()) {
                 Ok(document) => self.resource_result(
                     document,
                     &request.uri,
@@ -1518,12 +1843,12 @@ impl McpServer {
         recovery: &str,
         max_envelope_bytes: usize,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        // Resources pretty-print their document text while tool payloads
-        // serialize compact (`bounded_tool_envelope`): the encodings differ
-        // by design, and tool/resource equivalence (#7145) is pinned over the
-        // parsed document, never over the wire bytes. Do not reformat either
-        // side to match the other.
-        let text = serde_json::to_string_pretty(&document)
+        // Resource payloads serialize compact, the same encoding tool
+        // payloads use (`bounded_tool_envelope`): a resource is LLM-facing
+        // text, and pretty-print inflation spends tokens on whitespace a
+        // JSON parser discards. Tool/resource equivalence (#7145) stays
+        // pinned over the parsed document, never over the wire bytes.
+        let text = serde_json::to_string(&document)
             .map_err(|_error| ErrorData::internal_error("serialize resource", None))?;
         let envelope = json_envelope(uri, text);
         let bytes = serde_json::to_vec(&envelope)
@@ -1626,6 +1951,10 @@ impl InitializeSessionService {
             handshake_seen: AtomicBool::new(false),
         })
     }
+    /// The flag the transport reads when it admits a repeated refresh.
+    pub(super) fn attempt_running(&self) -> Arc<AtomicBool> {
+        self.inner.attempt_running.clone()
+    }
 }
 
 fn initialize_session_answers_ping(context: &RequestContext<RoleServer>) -> bool {
@@ -1649,8 +1978,24 @@ async fn answer_initialize_session_ping(
     Ok(result)
 }
 
-impl rmcp::Service<RoleServer> for InitializeSessionService {
-    async fn handle_request(
+/// The pinned SDK answers a method it can type but this server does not
+/// serve (`prompts/get`, `logging/setLevel`, `resources/subscribe`, the task
+/// methods, a discovery-session `ping`) with a `-32601` whose whole message is
+/// the bare method name. Give those the same `Method not found: <method>`
+/// wording as a method the SDK cannot type (#14186). Only that exact SDK
+/// shape is rewritten: the code is unchanged, and an error that already
+/// carries a message or data of its own passes through.
+fn name_missing_method(error: ErrorData, method: &str) -> ErrorData {
+    if error.code == ErrorCode::METHOD_NOT_FOUND && error.message == method && error.data.is_none()
+    {
+        unknown_method_error(method)
+    } else {
+        error
+    }
+}
+
+impl InitializeSessionService {
+    async fn route_request(
         &self,
         request: ClientRequest,
         context: RequestContext<RoleServer>,
@@ -1675,6 +2020,19 @@ impl rmcp::Service<RoleServer> for InitializeSessionService {
             context,
         ))
         .await
+    }
+}
+
+impl rmcp::Service<RoleServer> for InitializeSessionService {
+    async fn handle_request(
+        &self,
+        request: ClientRequest,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ServerResult, ErrorData> {
+        let method = request.method().to_owned();
+        self.route_request(request, context)
+            .await
+            .map_err(|error| name_missing_method(error, &method))
     }
 
     async fn handle_notification(
@@ -1736,3 +2094,7 @@ mod source_recovery_tests;
 #[cfg(test)]
 #[path = "worktree_custody_tests.rs"]
 mod worktree_custody_tests;
+
+#[cfg(test)]
+#[path = "owner_opt_out_tests.rs"]
+mod owner_opt_out_tests;

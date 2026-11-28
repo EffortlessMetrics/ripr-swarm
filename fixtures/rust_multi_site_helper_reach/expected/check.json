@@ -1,0 +1,112 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_multi_site_helper_reach/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:3022b2289e6f842da04a0ea3610f2ad5d972edf457134ee08d2a1a345939a381","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:c64ed629",
+      "canonical_gap_id": "gap:rust:src/lib.rs:number:predicate_boundary:predicate:s.len==1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:number:predicate_boundary:predicate:s.len==1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "number",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "s.len==1"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:c64ed629",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 16,
+        "expression": "s.len() > 1 && s.starts_with('0')"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach number: parses_a_plain_version"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `s.len()` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide"},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Propagation unknown: the related tests reach `number` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"weak","confidence":"high","summary":"Only smoke oracle found, such as unwrap/expect or execution without a discriminator"}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"medium"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"medium"},
+        {"stage":"discriminate","state":"weak","confidence":"high"}
+      ],
+      "evidence_path": ["reach yes: Related tests appear to reach number: parses_a_plain_version", "infection unknown: Changed boundary input is unresolved: boundary operand `s.len()` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide", "propagation unknown: Propagation unknown: the related tests reach `number` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Only smoke oracle found, such as unwrap/expect or execution without a discriminator", "local flow reaches error variant: Result::Err(ParseError::LeadingZero) (line 17)", "related test tests/existing.rs:4 parses_a_plain_version uses smoke only oracle: assert!(parse(\"1.2.3\").is_ok());", "source assertion argument value \"1.2.3\" at line 5", "missing discriminator ParseError::LeadingZero: No exact error variant assertion for ParseError::LeadingZero"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"Result::Err(ParseError::LeadingZero)","line":17}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Changed boundary input is unresolved: boundary operand `s.len()` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide", "Only smoke oracle found, such as unwrap/expect or execution without a discriminator", "Propagation unknown: the related tests reach `number` only through a caller that does not forward its result unchanged (helper_result_not_forwarded)", "Related tests appear to reach number: parses_a_plain_version"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `s.len()` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown; a related test that passes literal inputs on each side of the boundary would let ripr decide", "Missing check value: ParseError::LeadingZero", "No detected boundary input for the changed predicate", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "5": "assert!(parse(\"1.2.3\").is_ok());"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 5,
+            "value": "\"1.2.3\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+          {
+            "value": "ParseError::LeadingZero",
+            "reason": "No exact error variant assertion for ParseError::LeadingZero",
+            "flow_sink": {"kind":"error_variant","text":"Result::Err(ParseError::LeadingZero)","line":17}
+          }
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 5,
+          "value": "\"1.2.3\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+        {
+          "value": "ParseError::LeadingZero",
+          "reason": "No exact error variant assertion for ParseError::LeadingZero",
+          "flow_sink": {"kind":"error_variant","text":"Result::Err(ParseError::LeadingZero)","line":17}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "parses_a_plain_version",
+          "file": "tests/existing.rs",
+          "line": 4,
+          "oracle_strength": "smoke",
+          "oracle_kind": "smoke_only",
+          "oracle": "assert!(parse(\"1.2.3\").is_ok());",
+          "relation_reason": "helper_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "smoke_only",
+      "oracle_strength": "smoke",
+      "recommended_next_step": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "suggested_next_action": "Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

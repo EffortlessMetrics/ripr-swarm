@@ -400,7 +400,11 @@ pub(crate) fn object_each_assertions(
                 }
                 locals.push((local.name.to_string(), key.name.to_string()));
             }
-            if locals.is_empty() {
+            if locals.is_empty()
+                || super::table_rows::callback_writes_row(callback, |p| {
+                    locals.iter().any(|(name, _)| name == p)
+                })
+            {
                 return None;
             }
             destructured_case_assertions(callback_span, body_span, &locals, &rows, source, bindings)
@@ -642,7 +646,6 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
     if let Some(inner) = text.strip_prefix('{').and_then(|t| t.strip_suffix('}')) {
         text = inner.trim();
     }
-    let text = text.strip_suffix(';').unwrap_or(text).trim();
     let bytes = text.as_bytes();
     let mut depth = 0usize;
     let mut idx = 0;
@@ -678,6 +681,20 @@ pub(crate) fn single_expect_statement(body: &str) -> bool {
                 },
                 _ => idx += 1,
             },
+            // One closing `;` is allowed when only whitespace and complete
+            // comments follow it (`expect(..).toBe(y); // note`).
+            b';' => {
+                idx += 1;
+                while idx < bytes.len() {
+                    if bytes[idx].is_ascii_whitespace() {
+                        idx += 1;
+                    } else if let Some(next) = skip_comment(bytes, idx) {
+                        idx = next;
+                    } else {
+                        return false;
+                    }
+                }
+            }
             b'.' => {
                 previous_dot = true;
                 idx += 1;
@@ -755,7 +772,9 @@ pub(crate) fn container_read_is_direct(
     // Callee: the identifier run before `(`.
     let head = body[..open].trim_end();
     let name_start = head
-        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        // A non-ASCII char continues the identifier (`größe`), so the char
+        // found here is ASCII and one byte wide (#14089).
+        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$' || !c.is_ascii()))
         .map_or(0, |at| at + 1);
     let name = &head[name_start..];
     if name.is_empty() {
@@ -789,6 +808,8 @@ mod tests {
             "{ // a plain note\n expect(f(x)).toBe(y); }",
             "{ /* a plain note */ expect(f(x)).toBe(y); }",
             "{ expect(f(a)).toBe(y) // note\n }",
+            "{ expect(f(x)).toBe(y); /* note */ }",
+            "{ /* a */ expect(f(x)) /* b */ .toBe(y); // c\n }",
         ] {
             assert!(single_expect_statement(body), "{body}");
         }
@@ -799,6 +820,10 @@ mod tests {
             "{ const z = 1; expect(f(a)).toBe(z); }",
             "{ if (a) expect(f(a)).toBe(y); }",
             "{ \"s\"; expect(f(a)).toBe(y); }",
+            "{ expect(f(a)).toBe(y) /* open }",
+            "{ expect(f(a)).toBe(y); // note\n g(a); }",
+            "{ expect(f(a)).toBe(y) // note\n g(a) }",
+            "{ \"//x\"; expect(f(a)).toBe(y); }",
             "{ }",
             "{ foo(expect(f(a)).toBe(y)); }",
         ] {
@@ -819,5 +844,25 @@ mod tests {
         assert!(!direct("x.expect(f(t.input)).toEqual(1)", "t.input"));
         assert!(!direct("expect(f(g(t.input))).toEqual(1)", "t.input"));
         assert!(!direct("expect(f((t.input).pop())).toEqual(1)", "t.input"));
+    }
+
+    /// #14089: the callee scan stopped on a non-ASCII identifier char and
+    /// the slice began one byte later, inside it.
+    #[test]
+    fn container_read_under_a_non_ascii_callee_is_direct() {
+        for callee in ["größe", "prüfe", "owner"] {
+            let body = format!("expect({callee}(t.out)).toEqual(1)");
+            let read_start = body.find("t.out").unwrap_or(0);
+            assert!(read_start > 0, "{body}");
+            assert!(
+                container_read_is_direct(
+                    &body,
+                    read_start,
+                    read_start + "t.out".len(),
+                    Some(read_start - 1)
+                ),
+                "{body}"
+            );
+        }
     }
 }

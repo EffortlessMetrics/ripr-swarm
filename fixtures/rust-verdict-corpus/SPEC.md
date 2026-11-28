@@ -26,7 +26,9 @@ classes with five test styles: exact pin, table-driven loop, property-style
 invariant, helper-wrapped assert and no assertion; `authored-trap-kit` and
 `authored-trap-reach` for false-credit traps, tests that look like they check
 the change but cannot notice it, paired where useful with a negative control
-that does; `authored-spot` for shapes
+that does; `authored-tier-flow-13037` for a tier literal reaching a returned local,
+paired with wrong-input, transformed, masked, discarded, opaque-input, and
+unrelated-test controls; `authored-spot` for shapes
 behind `ripr pilot` picks that real cargo-mutants runs refuted, each case
 naming the refuted picks in its reasoning; `authored-mined-wire` and
 `authored-mined-codec` for test shapes mined from real crates, each case naming

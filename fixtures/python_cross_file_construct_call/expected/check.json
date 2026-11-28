@@ -27,6 +27,11 @@
       "classification": "exposed",
       "severity": "info",
       "confidence": 0.60,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution. Preview score, not on the same scale as Rust confidence.",
       "probe": {
         "id": "probe:src_formatter.py:python_preview:v1-9b65c2a2",
         "family": "predicate",
@@ -43,6 +48,13 @@
         "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)"},
         "discriminate": {"state":"yes","confidence":"low","summary":"Related Python test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated."}
        },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"yes","confidence":"low"},
+        {"stage":"propagate","state":"weak","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"yes","confidence":"low"}
+      ],
       "evidence_path": ["reach yes: 1 related Python test(s) found for owner `__call__`", "infection yes: Changed Python predicate can alter branch selection: `if any(c < \" \" for c in key):`", "propagation weak: Changed Python control flow can propagate by selecting a different branch; preview evidence does not prove the concrete downstream sink.", "observation yes: Strongest extracted Python oracle kind: `exact_error_variant` (rank 5)", "discriminator yes: Related Python test uses an `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches unknown sink: if any(c < \" \" for c in key): (line 4)", "related test tests/test_render.py:6 test_rejects_space_in_key uses strong exact error variant oracle: pytest.raises(ValueError, match='Invalid key')"],
       "flow_sinks": [
         {"kind":"unknown","text":"if any(c < \" \" for c in key):","line":4}

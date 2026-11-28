@@ -37,6 +37,60 @@ another crate, so placement is unavailable and the binding cannot be verified.
 The refusal then dropped the relation to `weak_token_substring` and the finding
 to a gap, an actionable repair signal on a receiver never shown to differ.
 
+## Draft placement and unindexed members (#14260, #14116)
+
+A workspace member that the index omitted, as a Draft index omits members that
+are not the changed package or its reverse path-dependents, may compile an
+indexed file into a crate the index does not hold (#10149). Such a file cannot
+be charged to the one root the index records, so placement (RIPR-SPEC-0240)
+is withheld from it.
+
+The omitted member is read as a whole: every `.rs` file under its directory,
+except its own `target/`. A file read that way needs no module edge to be seen,
+so a default-layout `mod child;`, a `#[path]` that stays inside the member and
+an `include!` of a member file compile nothing ripr has not read. Then:
+
+1. Each `#[path]` must be exactly one plain string literal on a top-level
+   out-of-line `mod name;`, and every `#[path` in the file must be such an
+   attribute. Its target is resolved from the declaring file's directory with
+   symlinks followed and must be an existing file.
+2. A target inside the member's directory is the member's own file, read
+   under the same rules even when it is not `.rs`. A target outside it is a
+   **mounted** file.
+3. A mounted file must itself declare no `mod name;`, `#[path]` or
+   `include!`, which would resolve beside it into further files outside the
+   member.
+4. Each `include!` must be one plain string literal whose target, resolved
+   from the invoking file's directory, lies inside the member; a target that
+   is not `.rs` is read under the same rule. An included file names no
+   `#[path]` or `include!` itself, because pasted text resolves them from the
+   includer's context.
+5. Every crate target path the member's manifest names (`[lib]`, `[[bin]]`,
+   `[[test]]`, `[[bench]]`, `[[example]]`, `package.build`), resolved from the
+   member's directory, lies inside the member and is read under the same
+   rules.
+
+Every mounted file is unplaced, exactly like a file no recognized target
+places, and every other file keeps placement. For a test in a mounted file,
+placement counts as unavailable in the trigger below, so its receiver reads
+this limitation rather than a gap. Anything the reading cannot
+bound keeps placement unavailable workspace-wide: a symbolic link anywhere in
+the member, a file that is not a regular file (a FIFO or device named `.rs`, a
+directory named as a target), an unreadable or non-UTF-8 file, more than 8192
+distinct files in the closure read (listed `.rs` files, manifest targets,
+includes, in-member `#[path]` modules and mounts) or 64 MiB of source, a member
+`Cargo.toml` over 1 MiB, a member with no readable source root or closure (no `.rs` file and no existing
+declared target), a manifest target outside the member (its path is
+joined exactly as Cargo spells it, surrounding whitespace included), an
+inner `#![path]`, a raw-identifier `r#path`, a `cfg_attr` that may introduce a
+`path`, a `#[path]` on a nested module, and any shape that breaks a rule
+above. Each read is bounded before it happens: a file is opened only when it is
+a regular file and at most the remaining byte budget plus one byte is consumed
+from it, so an oversized or growing file is refused without its remainder being
+read. This bounds the bytes consumed, not the exact capacity of the read buffer.
+
+Ready mode indexes every member and is unchanged.
+
 ## Trigger
 
 All of these hold, and any doubt keeps today's behavior:
@@ -109,13 +163,30 @@ cause.
   the variant brings it in, the enum has one declaration, the spelling is not a
   prelude value and no macro or same-named item can rebind it (#8782); then
   only the placement input is missing and this rule withholds the gap.
-- Unexercised guards, not claimed proved here (the hardening follow-up, #10666
-  and PR3, adds their controls and mutation experiments): the own-scope
-  negatives for a `#[path]` mount, glob or explicit import of a dependency
-  macro and a renamed dependency behind a decoy directory; the `#[ignore]`
-  exclusion, the own-related-tests filter, each manifest rename/mismatch arm,
-  crate-local and scoped names under trust, the reach-every-package rules and
-  the `toml::Table` parse-failure arm.
+- Own-scope controls (PR3): a mounted file, a `#[macro_use]` module, a literal
+  `#[path]` into another package, a nested `src`, and files with no package
+  keep the bare-assertion gap; so do a glob or explicit import, `extern crate`,
+  a renamed dependency, a directory holding another crate, and a crate named
+  differently from its directory. An `#[ignore]` test, a same-named type in
+  another crate and a call outside the assertion do not trigger the withhold.
+  Mutation experiments (one guard disabled, a control must fail): mounted-file
+  scope, unnameable-package scope, import-root scan, manifest rename/mismatch
+  check and unmatched-name reach-every-package each fail a control, as does the
+  `#[ignore]` exclusion.
+- A bare `assert_matches!` (#10666) is no prelude macro, so only the
+  limit-naming pass reads its first operand, and only when no workspace file
+  declares a `macro_rules! assert_matches`. The credit path never admits it: a
+  placed workspace keeps the token-substring gap, and a qualified spelling, a
+  local macro, a wrong receiver and a broad `Err(_)` pattern keep theirs. A
+  placed workspace's gap for an inherent method behind a non-standard assertion
+  macro still reads no named limit; that is tracked separately.
+- Still unexercised: the duplicate-directory clause of the reach-every-package
+  rule, crate-local and scoped names under trust, the own-related-tests
+  filter (the same-named-type control pins the outcome, not the filter), the
+  seeding of the mounted set from the test file's declaring parents, and the
+  unreadable-manifest arms of the manifest check. The `toml::Table` parse-failure arm is equivalent to the name-mismatch
+  arm below it (an unparsable manifest declares no name), so no control can
+  tell them apart.
 - Known open: when the owner call sits outside the assertion the relation is
   already direct and only the oracle row is refused, so the finding stays a gap.
   The withhold checks relation and oracle strength, not that the trusted

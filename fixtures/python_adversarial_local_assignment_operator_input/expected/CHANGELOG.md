@@ -435,3 +435,138 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (35)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (36)
+
+Reason:
+RIPR-SPEC-0026: Python preview findings carry per-finding confidence_basis (#12419)
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (37)
+
+Reason:
+RIPR-SPEC-0238 / #5574: per-row sink alignment tri-state re-serializes related-test oracle rows and human related-test lines; goldens check formatting_only; exposure classes unchanged.
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (38)
+
+Reason:
+RIPR-SPEC-0028: a plain local value edit is presented as a value, not a predicate (#13587); gap id, family, delta and change-type label only, class and evidence unchanged
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (39)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (40)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0423) unioned with main-side bless entries
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (41)
+
+Reason:
+RIPR-SPEC-0147: human verify-command wording (Verify command (Bash)) now rendered by main; fixture goldens predate it, main-health recovery
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (42)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (43)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (44)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — python_adversarial_local_assignment_operator_input (45)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless python_adversarial_local_assignment_operator_input --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

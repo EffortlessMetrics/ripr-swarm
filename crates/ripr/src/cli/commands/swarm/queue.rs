@@ -1,6 +1,6 @@
 use crate::cli::commands_context::ensure_command_root;
 use crate::cli::commands_numeric::parse_positive_usize;
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::{unknown_argument, unknown_value};
 use crate::output;
 use std::path::{Path, PathBuf};
@@ -15,6 +15,7 @@ pub(super) struct Options {
 
 pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
     let mut root = PathBuf::from(".");
+    let mut root_explicit = false;
     let mut gap_ledger = PathBuf::from("target/ripr/reports/gap-decision-ledger.json");
     let mut language = "python".to_string();
     let mut top = 10usize;
@@ -26,15 +27,17 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--root")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --root requires a non-empty path; pass a value right after --root".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value("--root", "swarm queue --root requires a non-empty path; pass a value right after --root"));
                 }
-                root = PathBuf::from(value);
+                let reconciled = reconcile_root(&root, root_explicit, value, "swarm queue")?;
+                root = reconciled;
+                root_explicit = true;
             }
             "--gap-ledger" => {
                 i += 1;
                 let value = expect_value(args, i, "--gap-ledger")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --gap-ledger requires a non-empty path; pass a value right after --gap-ledger".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value("--gap-ledger", "swarm queue --gap-ledger requires a non-empty path; pass a value right after --gap-ledger"));
                 }
                 gap_ledger = PathBuf::from(value);
             }
@@ -42,7 +45,7 @@ pub(super) fn parse_options(args: &[String]) -> Result<Options, String> {
                 i += 1;
                 let value = expect_value(args, i, "--language")?;
                 if value.trim().is_empty() {
-                    return Err("swarm queue --language requires a non-empty language; pass a value right after --language".to_string());
+                    return Err(crate::cli::usage_refusal::empty_value("--language", "swarm queue --language requires a non-empty language; pass a value right after --language"));
                 }
                 language = value.to_string();
             }
@@ -83,7 +86,7 @@ pub(super) fn run(options: Options) -> Result<(), String> {
 /// diagnostic (#9851): plain `not found` — never a raw OS errno — plus the
 /// producer command, in the sibling `reports gap-ledger` vocabulary.
 fn read_gap_ledger(path: &Path) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path).map_err(|err| {
+    crate::bounded_input::read_artifact_text(path).map_err(|err| {
         let mut message = format!(
             "swarm queue --gap-ledger {} is invalid: {}",
             output::outcome::display_path(path),
@@ -104,7 +107,7 @@ fn render_from_gap_ledger_contents(options: &Options, contents: &str) -> Result<
     let source =
         output::gap_decision_ledger::parse_gap_record_source_json(contents).map_err(|err| {
             format!(
-                "swarm queue --gap-ledger {} is invalid: {err}",
+                "swarm queue --gap-ledger {} is invalid: {err}; regenerate it with `ripr reports gap-ledger` or pass the ledger that command wrote",
                 options.gap_ledger.display()
             )
         })?;

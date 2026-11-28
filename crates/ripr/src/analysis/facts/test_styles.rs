@@ -43,6 +43,7 @@ impl<'a> FunctionKey<'a> {
 /// every index consumer sees the same executable-test role regardless of
 /// which syntax producer handled the file.
 pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), String> {
+    let generator_impls = super::quickcheck_generator::verified_impls(index);
     let aliases = LocalTestAliases::collect(
         &index.files,
         &index.function_facts,
@@ -52,11 +53,13 @@ pub(super) fn normalize_index_test_styles(index: &mut RustIndex) -> Result<(), S
     for facts in index.files.values_mut() {
         cancellation::checkpoint()?;
         let alias_credit = aliases.credit_for(&facts.path);
+        let generator_file = generator_impls.get(&facts.path).map(Vec::as_slice);
         normalize_indexed_file_test_styles(
             facts,
             &mut index.function_facts,
             &mut index.test_facts,
             alias_credit,
+            generator_file,
         )?;
     }
     index.test_order.clear();
@@ -100,6 +103,7 @@ fn normalize_indexed_file_test_styles(
     functions: &mut FactArena<FunctionFact>,
     tests: &mut FactArena<TestFact>,
     alias_credit: FileAliasCredit,
+    generator_file: Option<&[super::quickcheck_generator::AdmittedImpl]>,
 ) -> Result<(), String> {
     let mut existing_tests = std::mem::take(&mut facts.tests)
         .into_iter()
@@ -166,6 +170,10 @@ fn normalize_indexed_file_test_styles(
             // A proof harness is verification source, not a production seam
             // and not a test: no `TestFact`, no assertion credit.
             FunctionSourceRole::ProofHarness
+        } else if generator_file
+            .is_some_and(|impls| super::quickcheck_generator::is_generator(function, impls))
+        {
+            FunctionSourceRole::TestInputGenerator
         } else {
             FunctionSourceRole::Production
         };
@@ -194,6 +202,7 @@ fn test_fact_from_function(function: &FunctionFact) -> TestFact {
         // facts — same body, same decisions.
         nested_fn_names: function.nested_fn_names.clone(),
         let_bindings: function.let_bindings.clone(),
+        generated: None,
     }
 }
 
@@ -211,6 +220,67 @@ pub(crate) fn attributes_define_test<'attribute>(
             // `#[cfg_attr(all(), test)]` is a `#[test]` in a test build.
             || cfg_predicates::attribute_introduces_only_test(attribute)
     })
+}
+
+/// Attributes that cannot rewrite a function body: they gate, document,
+/// lint, or carry harness arguments. An attribute outside this set and the
+/// built-in test harnesses may be an attribute macro, which can add a `use`
+/// or replace the body (#12857).
+const BODY_PRESERVING_ATTRIBUTE_PATHS: &[&str] = &[
+    "ignore",
+    "should_panic",
+    "cfg",
+    "allow",
+    "warn",
+    "deny",
+    "forbid",
+    "expect",
+    "doc",
+    "inline",
+    "track_caller",
+    "must_use",
+    "deprecated",
+    "rustfmt::skip",
+    "case",
+    "serial",
+    "serial_test::serial",
+];
+
+/// Whether every attribute is a known test harness or a body-preserving
+/// built-in. `false` means an unrecognised attribute macro could rewrite the
+/// body, so a macro-generated test must not borrow invocation-site scopes.
+pub(crate) fn attributes_preserve_body<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().all(|attribute| {
+        attribute_path_before_arguments(attribute).is_some_and(|path| {
+            is_test_attribute_path(&path)
+                || BODY_PRESERVING_ATTRIBUTE_PATHS.contains(&path.as_str())
+        }) || cfg_predicates::attribute_introduces_only_test(attribute)
+    })
+}
+
+/// The attribute's path, read up to its first `(`, `=` or `]`. Only the path
+/// decides whether an attribute can rewrite a body, so the arguments are not
+/// scanned: a `#[doc = "an opening ( token"]` string must not hide a
+/// body-preserving `doc` (#12857). `normalized_test_attribute_path` stays
+/// strict because `attributes_define_test` must keep rejecting
+/// `#[test = "x"]` and unbalanced arguments. Anything that is not
+/// `#[` + path + one of those delimiters reads as unknown, which withholds.
+fn attribute_path_before_arguments(attribute: &str) -> Option<String> {
+    let body = attribute.trim().strip_prefix("#[")?;
+    let delimiter = body.find(['(', '=', ']'])?;
+    let path = body
+        .get(..delimiter)?
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
+    let path = path.trim_start_matches("::");
+    let is_path = !path.is_empty()
+        && path
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | ':'));
+    is_path.then(|| path.to_string())
 }
 
 /// Whether any attribute is `#[crate::test]` / `#[self::test]` and the file's
@@ -597,6 +667,9 @@ pub(crate) const BUILT_IN_TEST_ATTRIBUTE_PATHS: &[&str] = &[
     "test",
     "tokio::test",
     "async_std::test",
+    "actix_rt::test",
+    "actix_web::test",
+    "test_log::test",
     "rstest",
     "rstest::rstest",
     "quickcheck",
@@ -639,6 +712,90 @@ pub(crate) fn attributes_define_proof_harness<'attribute>(
             || cfg_attr_introduced_paths(attribute)
                 .iter()
                 .any(|path| PROOF_HARNESS_ATTRIBUTE_PATHS.contains(&path.as_str()))
+    })
+}
+
+/// The exact attribute path cargo-mutants reads as an owner opt-out (#13819).
+/// Matching is exact on the written path, so `my::mutants::skip` and an
+/// unimported `skip` do not match.
+pub(crate) const MUTANTS_SKIP_ATTRIBUTE_PATH: &str = "mutants::skip";
+
+/// Whether any attribute declares a cargo-mutants owner opt-out (#13819): a
+/// literal `#[mutants::skip]`, or the same path introduced by
+/// `#[cfg_attr(<predicate>, mutants::skip)]`. The predicate is not evaluated:
+/// cargo-mutants itself reads the attribute syntactically, and the opt-out
+/// records the team's intent, not whether a build compiles the attribute.
+///
+/// The `cfg_attr` form is read through the Rust parser's attribute metadata
+/// ([`cfg_attr_introduces_mutants_skip`]), so string literals of every kind
+/// (`"..."`, `r#"..."#`, `b"..."`, `br"..."`, escaped quotes) stay opaque
+/// tokens and cannot expose a path. An attribute that does not parse cleanly
+/// is never a skip: withholding findings is the direction that must fail
+/// closed.
+pub(crate) fn attributes_define_mutants_skip<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().any(|attribute| {
+        normalized_test_attribute_path(attribute).as_deref() == Some(MUTANTS_SKIP_ATTRIBUTE_PATH)
+            || cfg_attr_introduces_mutants_skip(attribute)
+    })
+}
+
+/// Whether `attribute` is a single outer `#[cfg_attr(<predicate>, ...)]`
+/// whose introduced metadata includes the bare path `mutants::skip` (or
+/// `::mutants::skip`, the same crate path). Parsed as attribute metadata on a
+/// synthetic item: any parse error, a second attribute or a non-`cfg_attr`
+/// head returns `false`. Nested `cfg_attr` introductions are not followed (a
+/// documented bound; the miss keeps findings reporting).
+fn cfg_attr_introduces_mutants_skip(attribute: &str) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    // Cheap reject before parsing: the path must be spelled somewhere.
+    if !attribute.contains("mutants") || !attribute.contains("skip") {
+        return false;
+    }
+    let attribute = attribute.trim();
+    if !attribute.starts_with("#[") {
+        return false;
+    }
+    let source = format!("{attribute}\nfn __ripr_mutants_skip_metadata() {{}}");
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let Some(function) = parsed.tree().syntax().children().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let attrs: Vec<ast::Attr> = function
+        .syntax()
+        .children()
+        .filter_map(ast::Attr::cast)
+        .collect();
+    let [attr] = attrs.as_slice() else {
+        return false;
+    };
+    let Some(ast::Meta::CfgAttrMeta(cfg_attr)) = attr.meta() else {
+        return false;
+    };
+    cfg_attr.metas().any(|meta| {
+        // `mutants::skip` or `mutants::skip(..)`, as the earlier text split
+        // accepted; a `key = value` introduction names no attribute path.
+        let path = match meta {
+            ast::Meta::PathMeta(meta) => meta.path(),
+            ast::Meta::TokenTreeMeta(meta) => meta.path(),
+            _ => None,
+        };
+        let Some(path) = path else {
+            return false;
+        };
+        let spelled: String = path
+            .syntax()
+            .text()
+            .to_string()
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .collect();
+        // A leading `::` names the same crate path, as it does on the bare
+        // `#[::mutants::skip]` form.
+        spelled.strip_prefix("::").unwrap_or(&spelled) == MUTANTS_SKIP_ATTRIBUTE_PATH
     })
 }
 

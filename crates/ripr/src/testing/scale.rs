@@ -10,13 +10,12 @@
 //! minimum over many alternating slices. An unresolved measurement fails instead of passing
 //! below the floor. Interleaved samples reduce order effects; they cannot
 //! eliminate asymmetric scheduling delays or establish a universal bound.
+//! A retry retains the faster small baseline across batches, normalized for
+//! equal repetitions: a small-only slowdown cannot erase a failed ratio.
+//! This conservative baseline can reject a genuine cross-batch rate change.
 //! Nontermination is handled by the test runner, not by this assertion.
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
-
-#[cfg(test)]
-static MEASUREMENT_PASS: AtomicU32 = AtomicU32::new(0);
 
 const NOISE_ALLOWANCE: Duration = Duration::from_millis(2);
 const MIN_SAMPLE: Duration = Duration::from_millis(20);
@@ -101,8 +100,6 @@ fn assert_measured_growth(
     mut measure: impl FnMut(usize, usize) -> Duration,
 ) {
     assert!(small > 0 && large > small && factor > 0);
-    #[cfg(test)]
-    MEASUREMENT_PASS.store(0, Ordering::Relaxed);
     let mut repetitions = 1;
     loop {
         let (small_time, large_time) = measure_batch(small, large, repetitions, RUNS, &mut measure);
@@ -115,8 +112,6 @@ fn assert_measured_growth(
                 return;
             }
             let retry_repetitions = repetitions * 2;
-            #[cfg(test)]
-            MEASUREMENT_PASS.store(1, Ordering::Relaxed);
             eprintln!(
                 "{label}: ratio check failed; remeasuring once at {retry_repetitions} repetitions"
             );
@@ -125,10 +120,20 @@ fn assert_measured_growth(
             eprintln!(
                 "{label}: remeasure size {small} {small_retry:?}, size {large} {large_retry:?}"
             );
+            // Both retry batches double their work. A slower small batch must
+            // not inflate the denominator and overturn an observed failure.
+            // Retain the faster normalized baseline, just as measure_batch
+            // retains its fastest sample, without changing factor or allowance.
+            let retry_baseline = small_retry.min(small_time * 2);
             assert!(
-                growth_within_factor(small_retry, large_retry, factor),
+                retry_baseline >= MIN_SAMPLE,
+                "{label}: measurement unresolved: retry small sample {retry_baseline:?} \
+                 remains below {MIN_SAMPLE:?}"
+            );
+            assert!(
+                growth_within_factor(retry_baseline, large_retry, factor),
                 "{label}: growth exceeded {factor}x plus {NOISE_ALLOWANCE:?} after remeasure: \
-                 {small_retry:?} -> {large_retry:?}"
+                 {retry_baseline:?} -> {large_retry:?} (measured retry small {small_retry:?})"
             );
             return;
         }
@@ -143,11 +148,8 @@ fn assert_measured_growth(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        MEASUREMENT_PASS, assert_growth_with_clock, assert_growth_within, assert_measured_growth,
-    };
+    use super::{assert_growth_with_clock, assert_growth_within, assert_measured_growth};
     use std::cell::{Cell, RefCell};
-    use std::sync::atomic::Ordering;
     use std::time::Duration;
 
     #[test]
@@ -234,14 +236,36 @@ mod tests {
 
     #[test]
     fn one_stalled_large_sample_is_remeasured_before_failing() {
-        assert_measured_growth("stalled large remeasure", 1, 2, 3, |size, repetitions| {
-            let base = Duration::from_millis(20 * size as u64 * repetitions as u64);
-            if MEASUREMENT_PASS.load(Ordering::Relaxed) == 0 && size == 2 {
-                base * 4
-            } else {
+        for interleave in [false, true] {
+            let mut samples = Vec::new();
+            let mut large_samples = 0;
+            assert_measured_growth("stalled large remeasure", 1, 2, 3, |size, repetitions| {
+                if interleave {
+                    // Deterministically exercise another measurement between
+                    // samples. A shared phase flag let it restart this stall.
+                    assert_measured_growth("interleaved linear", 1, 2, 3, |size, repetitions| {
+                        Duration::from_millis(20 * size as u64 * repetitions as u64)
+                    });
+                }
+                samples.push((size, repetitions));
+                let base = Duration::from_millis(20 * size as u64 * repetitions as u64);
+                if size == 2 {
+                    large_samples += 1;
+                    // Stall the entire initial batch so its minimum fails,
+                    // then recover independently of the implementation's phase.
+                    if large_samples <= 15 {
+                        return base * 4;
+                    }
+                }
                 base
+            });
+            // A silent success without retrying, or a retry without doubling
+            // both sizes, must not satisfy this control.
+            assert_eq!(samples.len(), 60);
+            for sample in [(1, 1), (2, 1), (1, 2), (2, 2)] {
+                assert_eq!(samples.iter().filter(|&&seen| seen == sample).count(), 15);
             }
-        });
+        }
     }
 
     #[test]
@@ -269,6 +293,84 @@ mod tests {
     fn measurement_just_outside_allowance_fails() {
         assert_measured_growth("over boundary", 1, 2, 3, |size, _| {
             Duration::from_micros(if size == 1 { 20_000 } else { 62_001 })
+        });
+    }
+
+    #[test]
+    fn inflated_retry_small_samples_cannot_hide_observed_quadratic_growth() -> Result<(), String> {
+        let mut initial_pairs = 0;
+        let mut retry_small = 0;
+        let mut retry_large = 0;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            assert_measured_growth("inflated retry", 1_000, 2_000, 3, |size, repetitions| {
+                assert!(repetitions <= 32);
+                if repetitions == 32 {
+                    if size == 1_000 {
+                        retry_small += 1;
+                        Duration::from_nanos(101_406_267)
+                    } else {
+                        retry_large += 1;
+                        Duration::from_nanos(297_208_640)
+                    }
+                } else {
+                    if repetitions == 16 && size == 1_000 {
+                        initial_pairs += 1;
+                    }
+                    let nanos = if size == 1_000 {
+                        32_640_922
+                    } else {
+                        135_825_710
+                    };
+                    Duration::from_nanos(nanos * repetitions as u64 / 16)
+                }
+            });
+        }));
+        assert_eq!(initial_pairs, 15);
+        assert!(retry_small >= 3);
+        assert_eq!(retry_small, retry_large);
+        let failure = match result {
+            Ok(()) => return Err("the observed quadratic trace must not pass".to_owned()),
+            Err(failure) => failure,
+        };
+        let message = failure
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| failure.downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        assert!(
+            message.contains("inflated retry: growth exceeded"),
+            "{message}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[should_panic(expected = "faster retry: growth exceeded")]
+    fn faster_retry_small_sample_remains_the_baseline() {
+        assert_measured_growth("faster retry", 1, 2, 3, |size, repetitions| {
+            assert!(matches!(size, 1 | 2) && matches!(repetitions, 1 | 2));
+            let millis = if repetitions == 1 {
+                if size == 1 { 20 } else { 80 }
+            } else if size == 1 {
+                30
+            } else {
+                100
+            };
+            Duration::from_millis(millis)
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "measurement unresolved")]
+    fn retry_small_sample_below_floor_cannot_pass() {
+        assert_measured_growth("retry floor", 1, 2, 3, |size, repetitions| {
+            assert!(matches!(size, 1 | 2) && matches!(repetitions, 1 | 2));
+            let millis = if repetitions == 1 {
+                if size == 1 { 20 } else { 80 }
+            } else {
+                size as u64
+            };
+            Duration::from_millis(millis)
         });
     }
 

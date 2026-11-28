@@ -12,7 +12,9 @@ Two further tests replace `r` through the non-adjacent targets
 `(x, (r)) = 2, [1]` and `[a, [r]] = [2, [[1]]]` (#9531).
 
 Four review controls cover an unbracketed outer tuple, a chained outer
-assignment, and inline loop/with suites. Each must remain uncredited.
+assignment, and inline loop/with suites. Four more controls cover multiline
+tuple targets, a split conditional header, and multiline loop/with targets
+(#9992). All eleven subjects must remain uncredited.
 
 ## When
 

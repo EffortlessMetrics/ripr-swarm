@@ -56,7 +56,7 @@ discriminate: yes (Strong oracle found: exact value or pattern assertion)
 while simultaneously listing:
 
 ```
-missing: ["Missing discriminator value: ParseError::TooLong"]
+missing: ["Missing check value: ParseError::TooLong"]
 ```
 
 The finding self-contradicted: `exposed` + `missing` at the same time. The
@@ -236,11 +236,11 @@ Evidence
   - related test tests/validation.rs:8 valid_input_returns_valid uses strong exact value oracle
 
 Missing
-  - Missing discriminator value: ParseError::TooLong
+  - Missing check value: ParseError::TooLong
 ```
 
 The finding says `exposed` (discriminated) but simultaneously lists
-`Missing discriminator value: ParseError::TooLong`. Self-contradiction.
+`Missing check value: ParseError::TooLong`. Self-contradiction.
 
 1. After (correct â€” weakly_exposed, no self-contradiction):
 
@@ -254,7 +254,7 @@ The finding says `exposed` (discriminated) but simultaneously lists
 
    Missing
      - No exact error variant discriminator was detected
-     - Missing discriminator value: ParseError::TooLong
+     - Missing check value: ParseError::TooLong
    ```
 
 2. Variant-pinning positive (must-not-over-correct):

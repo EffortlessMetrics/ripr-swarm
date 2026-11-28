@@ -1,0 +1,69 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_trait_impl_std_into_iter_takes_call/input
+
+Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
+
+Analysis outcome: findings below (analysis complete; complete_with_findings)
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 changed behavior(s) checked, 1 finding(s)
+
+NOTE ./src/lib.rs:18
+  id: probe:src_lib.rs:predicate:c43ea864
+
+Changed
+  before: self.0 > 3
+  after:  self.0 >= 3
+
+Change type
+  a condition or comparison changed
+  family: predicate
+  delta:  control (changes which code path runs)
+  owner:  src/lib.rs::impl Peeky for Foo::into_iter
+
+Static exposure
+  static_unknown (note, confidence 0.48)
+
+Evidence
+  - reach weak: No test is seen calling into_iter; tests share only a name token
+  - infection weak: Related tests contain the changed boundary literal [0, 3] only outside the changed owner's inputs (for example as an expected value); no test input at the changed boundary was detected
+  - propagation yes: Changed behavior appears to influence returned value: 1
+  - observation no: Related tests were found, but no assertion appears to observe the changed value, error, field, or effect
+  - discriminator no: No assertion found on related tests
+  - local flow reaches returned value: 1 (line 18)
+  - related test src/lib.rs:25 via_new uses strong exact value oracle: assert_eq!(Foo::new(3).into_iter().count(), 0); misses: no established call path to the changed code; linked by name only
+  - source assertion argument value 0 at line 26
+
+Weakness
+  - A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim
+
+Stop reasons:
+  - ripr could not establish the evidence a gap needs for this change, so it does not claim one (gap_evidence_unresolved)
+
+Static limitation
+  rust_implicit_call_unresolved — A Rust test names the type of the changed trait-impl method and may run that method through an operator, scope exit, loop, index or a method call on a receiver whose type ripr does not infer (`dyn Trait`, a second impl of the trait), but ripr does not follow that call to the changed method. ripr does not claim a gap; this is a named limitation, not a coverage claim.
+  Next: Call the changed method explicitly by its fully qualified path in the test, instead of relying on an operator, `Drop`, `Deref` or other implicit trait call, and assert on its result.
+
+Limitation detail
+  last established edge: reach weak: No test is seen calling into_iter; tests share only a name token
+  first unresolved edge: whether the operator, drop glue, iterator or virtual call a test makes lands on the changed method
+  analyzer route: analysis/classify/gap-admission
+  non-claim: no missing test, no weak oracle, and no test adequacy is established
+
+Next step
+  `via_new` (src/lib.rs:25) names `Foo` and calls a method named `into_iter` on a receiver whose type ripr does not infer, and ripr does not follow that call to `into_iter`, so it does not report a gap. Check that an assertion in that test would fail if `into_iter` returned the wrong value; add a test only if none does
+Drill in:
+  (finding id, for explain/context)
+  ripr explain --root <cwd>/fixtures/rust_trait_impl_std_into_iter_takes_call/input --diff <cwd>/fixtures/rust_trait_impl_std_into_iter_takes_call/diff.patch --mode fast probe:src_lib.rs:predicate:c43ea864
+  ripr context --root <cwd>/fixtures/rust_trait_impl_std_into_iter_takes_call/input --diff <cwd>/fixtures/rust_trait_impl_std_into_iter_takes_call/diff.patch --mode fast --at probe:src_lib.rs:predicate:c43ea864
+
+Note: ripr could not classify any of the 1 changed expression(s) in this diff well enough to
+  establish a static test path. Scope analyzed: 1 changed Rust file(s), 1 changed expression(s), and
+  1 statically linked related test(s). This is not a coverage assessment. A test may already
+  exercise these changes through macros, helper-call chains, or integration tests that ripr's static
+  model does not yet trace; if none does, add co-located tests that observe the changed behavior.

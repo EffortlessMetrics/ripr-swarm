@@ -1,0 +1,71 @@
+# Golden Output Changes
+
+## Pending — ts_strong_snapshot_untied (1)
+
+Reason:
+RIPR-SPEC-0027: new fixture, strong inline snapshot untied to the changed line gets the untied-strong-check next step (#12463)
+
+Command:
+`cargo xtask goldens bless ts_strong_snapshot_untied --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_strong_snapshot_untied (2)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless ts_strong_snapshot_untied --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_strong_snapshot_untied (3)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless ts_strong_snapshot_untied --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_strong_snapshot_untied (4)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless ts_strong_snapshot_untied --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_strong_snapshot_untied (5)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless ts_strong_snapshot_untied --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — ts_strong_snapshot_untied (6)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless ts_strong_snapshot_untied --reason "..."`
+
+Updated:
+- `expected/human.txt`

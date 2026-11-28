@@ -21,7 +21,7 @@ use super::owners_tests::collect_imports_from_statements;
 use super::related_tests::is_python_identifier_char;
 use super::source_facts::parse_module_result;
 use super::source_utils::{SourceText, line_for_range_start, text_for_range};
-use super::{PythonAssertion, PythonOracleShape, PythonTest};
+use super::{PythonAssertion, PythonImport, PythonOracleShape, PythonTest};
 use rustpython_parser::ast::{self, Expr, Mod, Ranged, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -50,6 +50,118 @@ pub(super) struct PythonHelperModule {
     /// `try` whose every handler re-raises (RIPR-SPEC-0238 rule 27).
     reraisers: BTreeSet<String>,
     bound: BTreeSet<String>,
+    /// How many import statements bind each name anywhere in the module,
+    /// nested and conditional ones included (`bound` skips imports).
+    #[serde(default)]
+    import_bindings: BTreeMap<String, usize>,
+    /// Names (and attribute names) a `del` removes anywhere in the module.
+    #[serde(default)]
+    deleted: BTreeSet<String>,
+    /// Attribute names assigned anywhere in the module (`x.attr = ...`).
+    #[serde(default)]
+    assigned_attributes: BTreeSet<String>,
+    /// True only when the module has no star import, no walrus, and nowhere
+    /// names a patcher or dynamic namespace writer (`patch`, `setattr`,
+    /// `globals`, `sys.modules`, ...). A module-level or autouse-fixture
+    /// patch of an imported module's attribute is otherwise invisible to the
+    /// module-attribute helper read; both the test module and the helper's
+    /// module must be patch-free. Defaults to false so a stale cached module
+    /// fails closed.
+    #[serde(default)]
+    patch_free: bool,
+}
+
+/// Counts every import binding and `del` target in `statements`, descending
+/// into every nested block, def and class.
+fn scan_import_rebinding(
+    statements: &[Stmt],
+    imports: &mut BTreeMap<String, usize>,
+    deleted: &mut BTreeSet<String>,
+) {
+    fn deleted_targets(target: &Expr, deleted: &mut BTreeSet<String>) {
+        match target {
+            Expr::Name(name) => {
+                deleted.insert(name.id.to_string());
+            }
+            Expr::Attribute(attribute) => {
+                deleted.insert(attribute.attr.to_string());
+            }
+            Expr::Tuple(tuple) => tuple.elts.iter().for_each(|e| deleted_targets(e, deleted)),
+            Expr::List(list) => list.elts.iter().for_each(|e| deleted_targets(e, deleted)),
+            _ => {}
+        }
+    }
+    fn handlers(
+        handlers: &[ast::ExceptHandler],
+        imports: &mut BTreeMap<String, usize>,
+        deleted: &mut BTreeSet<String>,
+    ) {
+        for handler in handlers {
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            scan_import_rebinding(&handler.body, imports, deleted);
+        }
+    }
+    for stmt in statements {
+        match stmt {
+            Stmt::Import(import) => {
+                for alias in &import.names {
+                    let name = match &alias.asname {
+                        Some(asname) => asname.to_string(),
+                        None => alias.name.split('.').next().unwrap_or_default().to_string(),
+                    };
+                    *imports.entry(name).or_default() += 1;
+                }
+            }
+            Stmt::ImportFrom(import) => {
+                for alias in &import.names {
+                    let name = alias.asname.as_ref().unwrap_or(&alias.name).to_string();
+                    *imports.entry(name).or_default() += 1;
+                }
+            }
+            Stmt::Delete(delete) => delete
+                .targets
+                .iter()
+                .for_each(|target| deleted_targets(target, deleted)),
+            Stmt::FunctionDef(f) => scan_import_rebinding(&f.body, imports, deleted),
+            Stmt::AsyncFunctionDef(f) => scan_import_rebinding(&f.body, imports, deleted),
+            Stmt::ClassDef(c) => scan_import_rebinding(&c.body, imports, deleted),
+            Stmt::For(f) => {
+                scan_import_rebinding(&f.body, imports, deleted);
+                scan_import_rebinding(&f.orelse, imports, deleted);
+            }
+            Stmt::AsyncFor(f) => {
+                scan_import_rebinding(&f.body, imports, deleted);
+                scan_import_rebinding(&f.orelse, imports, deleted);
+            }
+            Stmt::While(w) => {
+                scan_import_rebinding(&w.body, imports, deleted);
+                scan_import_rebinding(&w.orelse, imports, deleted);
+            }
+            Stmt::If(i) => {
+                scan_import_rebinding(&i.body, imports, deleted);
+                scan_import_rebinding(&i.orelse, imports, deleted);
+            }
+            Stmt::With(w) => scan_import_rebinding(&w.body, imports, deleted),
+            Stmt::AsyncWith(w) => scan_import_rebinding(&w.body, imports, deleted),
+            Stmt::Try(t) => {
+                scan_import_rebinding(&t.body, imports, deleted);
+                handlers(&t.handlers, imports, deleted);
+                scan_import_rebinding(&t.orelse, imports, deleted);
+                scan_import_rebinding(&t.finalbody, imports, deleted);
+            }
+            Stmt::TryStar(t) => {
+                scan_import_rebinding(&t.body, imports, deleted);
+                handlers(&t.handlers, imports, deleted);
+                scan_import_rebinding(&t.orelse, imports, deleted);
+                scan_import_rebinding(&t.finalbody, imports, deleted);
+            }
+            Stmt::Match(m) => m
+                .cases
+                .iter()
+                .for_each(|case| scan_import_rebinding(&case.body, imports, deleted)),
+            _ => {}
+        }
+    }
 }
 
 pub(super) fn collect_helper_module(
@@ -59,9 +171,19 @@ pub(super) fn collect_helper_module(
 ) -> PythonHelperModule {
     let mut module = PythonHelperModule::default();
     bound_names(statements, &mut module.bound);
+    scan_import_rebinding(statements, &mut module.import_bindings, &mut module.deleted);
+    module.assigned_attributes = super::module_constants::assigned_attribute_names(statements)
+        .into_iter()
+        .collect();
     let imports = collect_imports_from_statements(file, statements);
     // A star import may rebind any name, wrapper included.
     let star_import = imports.iter().any(|import| import.imported == "*");
+    // A walrus (`conftest := other`) rebinds a name that `bound_names` and
+    // the import scan do not see.
+    module.patch_free = !star_import
+        && !source.contains(":=")
+        && !source.contains("patch")
+        && !super::module_constants::writes_namespace_in_text(source);
     let imported: BTreeSet<String> = imports.into_iter().map(|import| import.alias).collect();
     let bindings = super::module_constants::ModuleBindingFacts::of(source, statements);
     let attributes = Arc::new(super::module_constants::assigned_attribute_names(
@@ -221,6 +343,346 @@ fn is_reraising_wrapper(function: &ast::StmtFunctionDef) -> bool {
         })
 }
 
+/// A def of one plain parameter `fn` whose whole body is `try: return fn()`
+/// (or `fn()`) and that provably swallows an `AssertionError` the callable
+/// raises, so an assertion inside the callable can never fail the test
+/// (#13723, the negative side of RIPR-SPEC-0238 rule 27). Two shapes are read:
+/// a `finally` whose only statement is `return` with no value or a literal,
+/// which discards any exception; or no `finally`, where the first handler
+/// that catches `AssertionError` (bare, `Exception`, `BaseException` or
+/// `AssertionError`, after only handlers for builtin classes unrelated to
+/// `AssertionError`) ends without raising: `pass`, `return` of nothing or a
+/// literal, or `if isinstance(<bound name>, <unrelated builtins>): raise`.
+/// Any `else`, other statement, handler, parameter shape or name that a
+/// module binding may replace leaves the def unread, as does a parameter or
+/// handler `as` name that shadows an exception class or `isinstance`.
+pub(super) fn swallowing_wrapper(
+    function: &ast::StmtFunctionDef,
+    module_rebinds: &dyn Fn(&str) -> bool,
+) -> bool {
+    let args = function.args.as_ref();
+    if !function.decorator_list.is_empty()
+        || !args.posonlyargs.is_empty()
+        || !args.kwonlyargs.is_empty()
+        || args.vararg.is_some()
+        || args.kwarg.is_some()
+        || args.args.len() != 1
+        || args.args[0].default.is_some()
+    {
+        return false;
+    }
+    let param = args.args[0].def.arg.as_str();
+    // The parameter or a handler's `as` name could shadow an exception
+    // class or `isinstance` inside the wrapper (`except ValueError as
+    // Exception:`), so neither may spell a name the read depends on.
+    let shadows = |name: &str| {
+        name == "isinstance"
+            || matches!(name, "Exception" | "BaseException" | "AssertionError")
+            || UNRELATED_BUILTIN_EXCEPTIONS.contains(&name)
+    };
+    if shadows(param) {
+        return false;
+    }
+    let rebinds = |name: &str| shadows_in_handlers(function, name) || module_rebinds(name);
+    let mut body = function.body.as_slice();
+    if let [Stmt::Expr(first), rest @ ..] = body
+        && matches!(
+            first.value.as_ref(),
+            Expr::Constant(ast::ExprConstant {
+                value: ast::Constant::Str(_),
+                ..
+            })
+        )
+    {
+        body = rest;
+    }
+    let [Stmt::Try(try_stmt)] = body else {
+        return false;
+    };
+    if !try_stmt.orelse.is_empty() {
+        return false;
+    }
+    let called = match try_stmt.body.as_slice() {
+        [Stmt::Return(ret)] => ret.value.as_deref(),
+        [Stmt::Expr(expr)] => Some(expr.value.as_ref()),
+        _ => None,
+    };
+    let Some(Expr::Call(call)) = called else {
+        return false;
+    };
+    if !matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == param)
+        || !call.args.is_empty()
+        || !call.keywords.is_empty()
+    {
+        return false;
+    }
+    // Every handler type must be inert to evaluate and every handler body
+    // must only raise, pass or return a literal, so nothing before the
+    // `finally` can end the test another way (`os._exit`, a hook).
+    for handler in &try_stmt.handlers {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        if !handler.type_.as_deref().is_none_or(plain_exception_type) {
+            return false;
+        }
+    }
+    // Every handler, whichever exception reaches it, may only re-raise bare,
+    // pass, return a literal or re-raise behind an unrelated `isinstance`:
+    // a handler for `ValueError` that asserts on the message is a check the
+    // owner's own exception can fail.
+    let handlers_inert = try_stmt.handlers.iter().all(|handler| {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        let bound = handler.name.as_ref().map(|name| name.as_str());
+        handler_ends_in_bare_raise(&handler.body)
+            || handler_swallows(&handler.body, bound, &rebinds)
+    });
+    if !handlers_inert {
+        return false;
+    }
+    if !try_stmt.finalbody.is_empty() {
+        let [Stmt::Return(ret)] = try_stmt.finalbody.as_slice() else {
+            return false;
+        };
+        return ret.value.as_deref().is_none_or(is_literal);
+    }
+    for handler in &try_stmt.handlers {
+        let ast::ExceptHandler::ExceptHandler(handler) = handler;
+        let catches = match handler.type_.as_deref() {
+            None => Some(true),
+            Some(kind) => catch_of(kind, &rebinds),
+        };
+        match catches {
+            None => return false,
+            Some(false) => continue,
+            Some(true) => {}
+        }
+        let bound = handler.name.as_ref().map(|name| name.as_str());
+        return handler_swallows(&handler.body, bound, &rebinds);
+    }
+    false
+}
+
+/// Whether a handler's `as` name in `function` is `name`.
+fn shadows_in_handlers(function: &ast::StmtFunctionDef, name: &str) -> bool {
+    function.body.iter().any(|stmt| {
+        matches!(stmt, Stmt::Try(try_stmt) if try_stmt.handlers.iter().any(|handler| {
+            let ast::ExceptHandler::ExceptHandler(handler) = handler;
+            handler.name.as_ref().is_some_and(|bound| bound.as_str() == name)
+        }))
+    })
+}
+
+/// The swallowing wrappers and assert-only helpers of one test module, for
+/// the admission scan (#13723). A wrapper or helper is read only when the
+/// module binds its name once, by that def, and otherwise only calls it; no
+/// star import, `builtins` access or dynamic namespace write may replace a
+/// builtin exception class or the def.
+pub(super) fn swallowing_wrappers(
+    source: &str,
+    statements: &[Stmt],
+    imports: &[PythonImport],
+) -> (BTreeSet<String>, BTreeSet<String>) {
+    let mut swallowers = BTreeSet::new();
+    let mut assert_only = BTreeSet::new();
+    if imports
+        .iter()
+        .any(|import| import.imported == "*" || import.alias == "*")
+        || super::mentions_python_name(source, "builtins")
+        || [
+            "__builtins__",
+            "__globals__",
+            "f_globals",
+            "f_locals",
+            "f_builtins",
+        ]
+        .iter()
+        .any(|namespace| source.contains(namespace))
+        || source.contains(":=")
+    {
+        return (swallowers, assert_only);
+    }
+    // Any binding, `global`, `match` capture, patch or dynamic namespace
+    // write of a builtin name the wrapper relies on refuses it.
+    let bindings = super::module_constants::ModuleBindingFacts::of(source, statements);
+    let module_rebinds = |name: &str| !bindings.unbound(name);
+    for (index, stmt) in statements.iter().enumerate() {
+        let Stmt::FunctionDef(function) = stmt else {
+            continue;
+        };
+        let name = function.name.as_str();
+        let swallower = swallowing_wrapper(function, &module_rebinds);
+        let asserts = assert_only_helper(function);
+        if !swallower && !asserts {
+            continue;
+        }
+        let mut others = BTreeSet::new();
+        bound_names(&statements[..index], &mut others);
+        bound_names(&statements[index + 1..], &mut others);
+        if others.contains(name)
+            || imports.iter().any(|import| import.alias == name)
+            || !wrapper_only_defined_and_called(source, name)
+        {
+            continue;
+        }
+        if swallower {
+            swallowers.insert(name.to_string());
+        } else {
+            assert_only.insert(name.to_string());
+        }
+    }
+    (swallowers, assert_only)
+}
+
+/// A def of plain positional parameters whose whole body (after a docstring)
+/// is `assert` statements over parameters, literals and plain operators. It
+/// calls nothing, so on plain operand values it raises only `AssertionError`
+/// (or an error from an operator) and a handler for `Exception` swallows its
+/// failure. An operand's own operator dunder is not typed (RIPR-SPEC-0238
+/// rule 27, amended residual).
+fn assert_only_helper(function: &ast::StmtFunctionDef) -> bool {
+    let args = function.args.as_ref();
+    if !function.decorator_list.is_empty()
+        || !args.posonlyargs.is_empty()
+        || !args.kwonlyargs.is_empty()
+        || args.vararg.is_some()
+        || args.kwarg.is_some()
+        || args.args.is_empty()
+        || args.args.iter().any(|arg| arg.default.is_some())
+    {
+        return false;
+    }
+    let params: BTreeSet<&str> = args.args.iter().map(|arg| arg.def.arg.as_str()).collect();
+    let mut body = function.body.as_slice();
+    if let [Stmt::Expr(first), rest @ ..] = body
+        && matches!(
+            first.value.as_ref(),
+            Expr::Constant(ast::ExprConstant {
+                value: ast::Constant::Str(_),
+                ..
+            })
+        )
+    {
+        body = rest;
+    }
+    !body.is_empty()
+        && body.iter().all(|stmt| {
+            matches!(stmt, Stmt::Assert(assert)
+                if plain_operand(&assert.test, &params)
+                    && assert.msg.as_deref().is_none_or(|msg| plain_operand(msg, &params)))
+        })
+}
+
+/// Parameters, literals, comparisons and boolean or arithmetic operators.
+fn plain_operand(expr: &Expr, params: &BTreeSet<&str>) -> bool {
+    match expr {
+        Expr::Name(name) => params.contains(name.id.as_str()),
+        Expr::Constant(_) => true,
+        Expr::Compare(compare) => {
+            plain_operand(&compare.left, params)
+                && compare
+                    .comparators
+                    .iter()
+                    .all(|value| plain_operand(value, params))
+        }
+        Expr::BoolOp(op) => op.values.iter().all(|value| plain_operand(value, params)),
+        Expr::UnaryOp(op) => plain_operand(&op.operand, params),
+        Expr::BinOp(op) => plain_operand(&op.left, params) && plain_operand(&op.right, params),
+        Expr::Tuple(tuple) => tuple.elts.iter().all(|value| plain_operand(value, params)),
+        _ => false,
+    }
+}
+
+/// Whether a handler for `kind` catches an `AssertionError`: `Some(true)`
+/// when it does, `Some(false)` when every class is a builtin unrelated to
+/// `AssertionError`, and `None` when RIPR cannot tell.
+fn catch_of(kind: &Expr, rebinds: &dyn Fn(&str) -> bool) -> Option<bool> {
+    let names: Vec<&str> = match kind {
+        Expr::Tuple(tuple) => tuple
+            .elts
+            .iter()
+            .map(builtin_class_name)
+            .collect::<Option<Vec<_>>>()?,
+        other => vec![builtin_class_name(other)?],
+    };
+    if names.iter().any(|name| rebinds(name)) {
+        return None;
+    }
+    if names
+        .iter()
+        .any(|name| matches!(*name, "Exception" | "BaseException" | "AssertionError"))
+    {
+        return Some(true);
+    }
+    names
+        .iter()
+        .all(|name| UNRELATED_BUILTIN_EXCEPTIONS.contains(name))
+        .then_some(false)
+}
+
+/// A bare class name. `builtins.<name>` is not read: a module that mentions
+/// `builtins` is refused, since it can replace any builtin class.
+fn builtin_class_name(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Name(name) => Some(name.id.as_str()),
+        _ => None,
+    }
+}
+
+/// Builtin exception classes that neither are nor derive from
+/// `AssertionError`, so a handler for them lets an `AssertionError` pass.
+const UNRELATED_BUILTIN_EXCEPTIONS: &[&str] = &[
+    "ArithmeticError",
+    "AttributeError",
+    "ImportError",
+    "IndexError",
+    "KeyError",
+    "LookupError",
+    "NameError",
+    "NotImplementedError",
+    "OSError",
+    "OverflowError",
+    "RuntimeError",
+    "StopIteration",
+    "TypeError",
+    "UnicodeError",
+    "ValueError",
+    "ZeroDivisionError",
+];
+
+/// The handler ends without raising an `AssertionError` again: `pass`,
+/// `return` of nothing or a literal, or a re-raise guarded only by
+/// `isinstance(<bound name>, <unrelated builtins>)`.
+fn handler_swallows(body: &[Stmt], bound: Option<&str>, rebinds: &dyn Fn(&str) -> bool) -> bool {
+    body.iter().all(|stmt| match stmt {
+        Stmt::Pass(_) => true,
+        Stmt::Return(ret) => ret.value.as_deref().is_none_or(is_literal),
+        Stmt::If(guard) => {
+            guard.orelse.is_empty()
+                && matches!(guard.body.as_slice(), [Stmt::Raise(raise)] if raise.exc.is_none() && raise.cause.is_none())
+                && bound.is_some_and(|bound| isinstance_unrelated(&guard.test, bound, rebinds))
+        }
+        _ => false,
+    })
+}
+
+/// `isinstance(<bound>, <unrelated builtins>)` with `isinstance` unbound.
+fn isinstance_unrelated(test: &Expr, bound: &str, rebinds: &dyn Fn(&str) -> bool) -> bool {
+    let Expr::Call(call) = test else {
+        return false;
+    };
+    let [Expr::Name(subject), kind] = call.args.as_slice() else {
+        return false;
+    };
+    matches!(call.func.as_ref(), Expr::Name(name) if name.id.as_str() == "isinstance")
+        && !rebinds("isinstance")
+        && call.keywords.is_empty()
+        && subject.id.as_str() == bound
+        && catch_of(kind, rebinds) == Some(false)
+}
+
+fn is_literal(expr: &Expr) -> bool {
+    matches!(expr, Expr::Constant(_))
+}
+
 /// An exception class expression that cannot run code: a name, a dotted
 /// attribute path or a tuple of those. The type expression is evaluated when
 /// an exception reaches the handler, so `except pytest.skip('x'):` would skip.
@@ -239,7 +701,7 @@ fn plain_exception_type(expr: &Expr) -> bool {
 /// `setattr`) could rebind it, and the binding scan does not see inside
 /// function bodies, expressions or nested imports. Dynamic namespace access
 /// (`globals()`, `vars()`, `exec`, `eval`, a star import) refuses the module.
-fn wrapper_only_defined_and_called(text: &str, name: &str) -> bool {
+pub(super) fn wrapper_only_defined_and_called(text: &str, name: &str) -> bool {
     if [
         "import *", "globals(", "vars(", "exec(", "eval(", "__dict__",
     ]
@@ -380,17 +842,27 @@ fn resolve_test(test: &mut PythonTest, modules: &BTreeMap<PathBuf, PythonHelperM
             continue;
         };
         let call = unwrapped_call(test, call, &local, modules).unwrap_or(call);
-        let Expr::Name(callee) = call.func.as_ref() else {
-            continue;
+        // `helper(...)` or `module.helper(...)` where `module` is an imported
+        // workspace module (`from . import conftest`).
+        let (name, module_attr) = match call.func.as_ref() {
+            Expr::Name(callee) => (callee.id.as_str(), None),
+            Expr::Attribute(attribute) => match attribute.value.as_ref() {
+                Expr::Name(base) => (base.id.as_str(), Some(attribute.attr.as_str())),
+                _ => continue,
+            },
+            _ => continue,
         };
-        let name = callee.id.as_str();
         if local.contains(name)
             || !call.keywords.is_empty()
             || call.args.iter().any(|arg| matches!(arg, Expr::Starred(_)))
         {
             continue;
         }
-        let Some(helper) = resolve_helper(test, name, modules) else {
+        let helper = match module_attr {
+            None => resolve_helper(test, name, modules),
+            Some(attr) => resolve_module_helper(test, name, attr, modules),
+        };
+        let Some(helper) = helper else {
             continue;
         };
         if helper.params.len() != call.args.len() {
@@ -497,7 +969,7 @@ fn resolve_helper<'a>(
             if own.is_some_and(|module| module.bound.contains(name)) {
                 return None;
             }
-            if import.source_module.is_empty() || import.imported == "*" {
+            if import.source_module.is_empty() {
                 return None;
             }
             (
@@ -511,6 +983,85 @@ fn resolve_helper<'a>(
         .helpers
         .iter()
         .find(|helper| helper.name == helper_name)
+}
+
+/// The helper `module_name.helper_name` names when `module_name` is bound by
+/// exactly one import of a workspace module: `from . import conftest` /
+/// `from pkg import helpers` (a submodule file, with no same-named binding in
+/// the package `__init__`) or `import pkg.helpers as helpers`. The test must
+/// not rebind the module name or assign the attribute (#13629).
+fn resolve_module_helper<'a>(
+    test: &PythonTest,
+    module_name: &str,
+    helper_name: &str,
+    modules: &'a BTreeMap<PathBuf, PythonHelperModule>,
+) -> Option<&'a PythonAssertionHelper> {
+    let mut matching = test
+        .imports
+        .iter()
+        .filter(|import| import.alias == module_name);
+    let import = matching.next()?;
+    let own = modules.get(&test.file)?;
+    if matching.next().is_some()
+        // Any other import of the alias (nested, conditional, in the test
+        // body), or a `del` of it, makes the bound module order-dependent.
+        || own.import_bindings.get(module_name).copied() != Some(1)
+        || own.deleted.contains(module_name)
+        || own.deleted.contains(helper_name)
+        || own.bound.contains(module_name)
+        // The helper attribute replaced anywhere in the test file.
+        || own.assigned_attributes.contains(helper_name)
+        // A star import, or a patcher anywhere in the test file (module
+        // level, an autouse fixture, a decorator), may replace the attribute.
+        || !own.patch_free
+        || test.body_text.contains("setattr")
+        || test.body_text.contains("patch")
+        || assigns_module_attribute(&test.body_text, module_name, helper_name)
+    {
+        return None;
+    }
+    let dotted = if import.source_module.is_empty() {
+        // `import pkg.helpers as helpers`. An undotted module (`import
+        // helpers`, `import helpers as h`) resolves through `sys.path`, and
+        // an empty source from `from ... import x` is a relative import that
+        // escaped the package; neither names a workspace module.
+        if !import.imported.contains('.') {
+            return None;
+        }
+        import.imported.clone()
+    } else {
+        // `from pkg import helpers` names a submodule only when the package
+        // `__init__` does not bind the same name itself, by assignment, def,
+        // import or star import.
+        let package = format!("{}/__init__.py", import.source_module.replace('.', "/"));
+        if modules.get(Path::new(&package)).is_some_and(|init| {
+            init.bound.contains(&import.imported)
+                || init.import_bindings.contains_key(&import.imported)
+                || init.import_bindings.contains_key("*")
+        }) {
+            return None;
+        }
+        format!("{}.{}", import.source_module, import.imported)
+    };
+    let target = module_for(&dotted, modules)?;
+    // The helper's own module may replace its helper (an autouse fixture
+    // patching `sys.modules[__name__]`, a module-level `setattr`).
+    if !target.patch_free {
+        return None;
+    }
+    target
+        .helpers
+        .iter()
+        .find(|helper| helper.name == helper_name)
+}
+
+/// Whether the text assigns `module.attr` (`module.attr = ...`, not `==`).
+fn assigns_module_attribute(text: &str, module: &str, attr: &str) -> bool {
+    let target = format!("{module}.{attr}");
+    text.match_indices(&target).any(|(index, _)| {
+        let rest = text[index + target.len()..].trim_start();
+        rest.starts_with('=') && !rest.starts_with("==")
+    })
 }
 
 /// The workspace module a dotted `from` source names, as a plain module file

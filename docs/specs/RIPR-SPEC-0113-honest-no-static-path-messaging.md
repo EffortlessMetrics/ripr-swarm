@@ -72,8 +72,8 @@ The text for `ExposureClass::NoStaticPath` becomes:
 > a discriminator exists.
 
 The text is defined as the single `pub(crate) const NO_STATIC_PATH_NEXT_STEP`
-in `crates/ripr/src/domain/classification.rs`, re-exported through
-`crates/ripr/src/domain/mod.rs`. Both the production call site in
+in `crates/ripr-contract/src/domain/classification.rs`, re-exported through
+`crates/ripr-contract/src/domain/mod.rs`. Both the production call site in
 `analysis::classify::decision::recommended_next_step` and the unit-test
 assertion in `analysis::classifier` reference this single const; the literal is
 not duplicated.
@@ -167,8 +167,8 @@ static path alone does not establish that another test is needed.
 
 | Component | Location |
 |---|---|
-| `NO_STATIC_PATH_NEXT_STEP` const | `crates/ripr/src/domain/classification.rs` |
-| Re-export | `crates/ripr/src/domain/mod.rs` |
+| `NO_STATIC_PATH_NEXT_STEP` const | `crates/ripr-contract/src/domain/classification.rs` |
+| Re-export | `crates/ripr-contract/src/domain/mod.rs` |
 | Production call site | `crates/ripr/src/analysis/classify/decision.rs` |
 | Test assertion | `crates/ripr/src/analysis/classifier.rs` |
 | All-no-path Note | `crates/ripr/src/output/human.rs` |

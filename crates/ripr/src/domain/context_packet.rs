@@ -154,10 +154,10 @@ impl ContextPacket {
 mod tests {
     use super::*;
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, ProbeId,
-        RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
-        ValueContext, ValueFact,
+        ActivationEvidence, Confidence, DeltaKind, DiscriminatorShape, ExposureClass, Finding,
+        FindingCanonicalGap, MissingDiscriminatorFact, OracleKind, OracleStrength, Probe,
+        ProbeFamily, ProbeId, RevealEvidence, RiprEvidence, SourceLocation, StageEvidence,
+        StageState, SymbolId, ValueContext, ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -204,6 +204,8 @@ mod tests {
                 value: "x == 0".to_string(),
                 reason: "boundary not asserted".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             });
         finding.missing.push("exact boundary assertion".to_string());
         finding.recommended_next_step = Some("add exact boundary assertion".to_string());
@@ -335,6 +337,7 @@ mod tests {
             id: "probe:src_lib_rs:9:predicate".to_string(),
             canonical_gap: None,
             probe: Probe {
+                before_condition: None,
                 id: ProbeId("probe:src_lib_rs:9:predicate".to_string()),
                 location: SourceLocation::new("src/lib.rs", 9, 1),
                 owner: Some(SymbolId("crate::sample".to_string())),
@@ -380,13 +383,13 @@ mod tests {
     #[test]
     fn boundary_input_observed_flag_requires_every_condition() {
         let mut positive = sample_finding();
-        positive.infect_for_boundary_test();
+        infect_for_boundary_test(&mut positive);
         assert!(positive.boundary_input_observed_with_weak_oracle());
 
         // The shared gate itself (not just the Finding wrapper) rejects another
         // class or family.
         let gate = |class: &ExposureClass, family: &ProbeFamily| {
-            crate::domain::probe::boundary_input_observed_with_weak_oracle(
+            ripr_contract::domain::probe::boundary_input_observed_with_weak_oracle(
                 class,
                 family,
                 &positive.ripr.infect,
@@ -456,31 +459,40 @@ mod tests {
         stopped.stop_reasons = vec![crate::domain::StopReason::NoChangedRustLine];
         assert!(!stopped.boundary_input_observed_with_weak_oracle());
 
+        // The unsafe-contract note carried from a replaced boundary (#16302)
+        // does not say the call may not run, so it keeps the flag; beside a
+        // reach stop the flag still drops.
+        let mut obligation = positive.clone();
+        obligation.stop_reasons = vec![crate::domain::StopReason::UnsafeObligation];
+        assert!(obligation.boundary_input_observed_with_weak_oracle());
+        obligation
+            .stop_reasons
+            .push(crate::domain::StopReason::NoChangedRustLine);
+        assert!(!obligation.boundary_input_observed_with_weak_oracle());
+
         let mut no_step = positive;
         no_step.recommended_next_step = None;
         assert!(!no_step.boundary_input_observed_with_weak_oracle());
     }
 
-    impl Finding {
-        fn infect_for_boundary_test(&mut self) {
-            self.ripr.infect = StageEvidence::new(
-                StageState::Yes,
-                Confidence::Medium,
-                crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY,
-            );
-            self.ripr.reveal.discriminate = StageEvidence::new(
-                StageState::Weak,
-                Confidence::High,
-                "Only relational oracle found; it may not discriminate the changed value exactly",
-            );
-            let mut weak = related("boundary");
-            weak.oracle_kind = OracleKind::RelationalCheck;
-            weak.oracle_strength = OracleStrength::Weak;
-            self.related_tests = vec![weak];
-            self.stop_reasons = Vec::new();
-            self.recommended_next_step =
-                Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
-        }
+    fn infect_for_boundary_test(finding: &mut Finding) {
+        finding.ripr.infect = StageEvidence::new(
+            StageState::Yes,
+            Confidence::Medium,
+            crate::domain::BOUNDARY_INPUT_OBSERVED_SUMMARY,
+        );
+        finding.ripr.reveal.discriminate = StageEvidence::new(
+            StageState::Weak,
+            Confidence::High,
+            "Only relational oracle found; it may not discriminate the changed value exactly",
+        );
+        let mut weak = related("boundary");
+        weak.oracle_kind = OracleKind::RelationalCheck;
+        weak.oracle_strength = OracleStrength::Weak;
+        finding.related_tests = vec![weak];
+        finding.stop_reasons = Vec::new();
+        finding.recommended_next_step =
+            Some(crate::domain::BOUNDARY_OBSERVED_WEAK_ORACLE_NEXT_STEP.to_string());
     }
 
     fn related(name: &str) -> RelatedTest {

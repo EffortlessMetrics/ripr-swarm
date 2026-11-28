@@ -70,6 +70,7 @@ pub(super) fn canonical_next_action_for_pilot(
         check_item: None,
         card_item: None,
         item_candidates: Vec::new(),
+        item_candidate_labels: Vec::new(),
         attempts: Vec::new(),
         currentness: NextActionCurrentness {
             head_expected: None,
@@ -89,6 +90,8 @@ pub(super) fn canonical_next_action_for_pilot(
         transition_to: None,
         restart_route: "ripr pilot".to_string(),
         check_case: None,
+        check_repair_route: None,
+        check_scope_route: None,
         doctor_recovery: None,
         pilot_delegation: delegation,
         alternatives: Vec::new(),

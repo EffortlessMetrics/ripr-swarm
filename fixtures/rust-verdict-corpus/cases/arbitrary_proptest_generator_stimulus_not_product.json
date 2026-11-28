@@ -1,0 +1,47 @@
+{
+  "case_id": "arbitrary_proptest_generator_stimulus_not_product",
+  "subject_id": "authored-arbitrary-shapes-proptest",
+  "diff": "cases/arbitrary_proptest_generator_stimulus_not_product.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "proptest_arbitrary_impl_change",
+  "hard_case": "The changed line is inside `arbitrary_with` of `impl proptest::arbitrary::Arbitrary for Pair`, the strategy the property draws pairs from. It alters stimulus, not product behavior.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Pair(a, a.wrapping_add(5))",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: `prop_assert_eq!(gap(&pair), pair.1.wrapping_sub(pair.0))` holds for every generated pair, so the strategy's distribution cannot fail it. Run under rustc 1.95.0 with `cargo test` on the edited subject: tests_passed."
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A changed hand-written `Arbitrary` body is test-input generation, not product behavior (#11545, RIPR-SPEC-0153 TestInputGenerator). ripr must report it as a stimulus change with a stated reason (`static_unknown`, read as limited), never as a missing product test or test credit. The provider is proptest, the crate's sole verified registry dependency.",
+  "axes": [
+    "test_library_idiom"
+  ],
+  "labeling_observation": {
+    "ripr_commit": "9d0d4fecc0",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

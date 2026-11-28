@@ -1,0 +1,11 @@
+diff --git a/src/fmt.ts b/src/fmt.ts
+index 0000000..1111111 100644
+--- a/src/fmt.ts
++++ b/src/fmt.ts
+@@ -1,5 +1,5 @@
+ const String = (x: unknown): string => "S" + x;
+ 
+ export function fmt(input: unknown): string {
+-  return typeof input === "object" ? JSON.stringify(input) : String(input);
++  return typeof input !== "object" ? JSON.stringify(input) : String(input);
+ }

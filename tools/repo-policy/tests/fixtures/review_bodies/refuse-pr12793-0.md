@@ -1,0 +1,15 @@
+REVIEW_INCOMPLETE — source review complete; native proof pending.
+
+Subject: head `9ccb697d3a25a8f93f9355cc55711a0dacecbc2e`, tree `0cf24ef346a940341dca6ff7f8819e458a15b29e`, accepted base `245e5442e94225c3643e3099de03f3640e37597c`. This published tree is byte-identical to the locally reviewed candidate `73aa7e31d963fa2b7faeee9dd0fea6d88214be3f`. The six Git blob identities and remote parent/tree were verified.
+
+Directed review covered all six changed files plus importer/parser/rendering/error/fixture-policy/process-policy consumers. The literal oracle was independently reconstructed from all ten retained fixture documents: expected-panic FAILURE is not flattened into ordinary success; missing expected panic, partial selection, cover-count exclusion and raw `is_bounded: false` values remain literal. Exact owned-report equality, full raw retention and Markdown-embedded JSON equality prevent stronger result promotion. Digest rebinding in malformed-input controls reaches the intended parser rather than merely exercising a stale-hash refusal. Output alias controls cover both result flags and source/binding/native input paths.
+
+Public CLI invocation uses the Cargo-provided executable, separate path arguments and an isolated working directory. The one process occurrence is specifically allowlisted. Normal fixture cleanup now propagates errors, disarms only after successful removal and canonicalizes the owned root; unwinding retains fallback cleanup. Existing private tests, raw fixtures and production behavior remain unchanged. Only the two Kani fixture ledger entries move to the genuine integration target.
+
+Proof actually run: `git diff --check 245e5442e94225c3643e3099de03f3640e37597c..HEAD`; bounded Node source/fixture audit (10 literal cases, 8 native export hashes, 7 traceability tests, 1 spawn allowance, 2 selector substitutions, 19 retained production/private/raw files). Additional independent metadata/process/packaging and oracle reviews found no outstanding source blocker. These are not Rust execution.
+
+Composition: GitHub merge subject `58114e790aaaa1aa9da8420ac1c56572d49765aa` has parents `ac0133758f5bdfa5575684500237083706444a8e` and the exact PR head, and tree `8d4ad88115c902475a05a40d80e85e08821fce6c`, matching the locally computed clean merge tree. Current main changes are disjoint; #12784 is not a prerequisite.
+
+Remaining proof: native rustfmt/compile/Clippy, real nonzero integration enumeration and all seven executions, full policy and full required suite, actual gate preparation and whole-route cost. No net saving or compiler-memory improvement is established. CodeRabbit is quota-limited (not a clean review). No inline threads are present in the current successful read.
+
+The delivery owner continues with one ordinary pre-merge qualification request; Ready is not REVIEW_READY. Any native defect returns through Draft repair and affected review.

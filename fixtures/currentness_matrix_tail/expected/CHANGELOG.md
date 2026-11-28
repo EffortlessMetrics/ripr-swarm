@@ -312,3 +312,94 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_tail (24)
+
+Reason:
+RIPR-SPEC-0156: the fixture diff header now names the line before the gap (+12,0) as git writes it, so the input identity changes while the anchor stays at line 13 (#13098)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (25)
+
+Reason:
+RIPR-SPEC-0122: collapse identical consecutive hidden rows with a repeat count
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (26)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (27)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (28)
+
+Reason:
+RIPR-SPEC-0122: removed-code-only runs name the static evidence on the removed code in Safe next action (#15335)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (29)
+
+Reason:
+RIPR-SPEC-0122: removal-only runs name why nothing is selected in the State line (#15335)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (33)
+
+Reason:
+RIPR-SPEC-0122: a removal-only run lists the removed lines, their kind and what the static evidence on each shows (#15617)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_tail (30)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless currentness_matrix_tail --reason "..."`
+
+Updated:
+- `expected/human.txt`

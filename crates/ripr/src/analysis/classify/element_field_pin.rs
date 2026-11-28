@@ -365,7 +365,7 @@ fn observes_with(
     };
     // Exactly `#[test]`: the lexical fallback and harness-registered tests
     // carry no attributes, so an empty list cannot vouch for the test.
-    if !matches!(test.attrs.as_slice(), [only] if only.trim() == "#[test]") {
+    if !matches!(&*test.attrs, [only] if only.trim() == "#[test]") {
         return false;
     }
     // An integer field compares by value; a workspace `PartialEq` may not.
@@ -492,7 +492,7 @@ fn observes_with(
 /// The answer is a lookup in the run-scoped [`DropImplIndex`] (#9209): the
 /// corpus is parsed once per index instead of once per probe and returned
 /// record type.
-pub(super) fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
+pub(in crate::analysis) fn drop_is_plain(index: &RustIndex, type_name: &str) -> bool {
     index
         .call_identity_memos
         .workspace_drop_impls(|| DropImplIndex::build(index))
@@ -512,6 +512,19 @@ pub(in crate::analysis) fn drop_is_plain_in_closed_sources(
         .is_plain_in_closed_sources(type_name)
 }
 
+/// #14407: whether any indexed source holds a `Drop` impl with a non-empty
+/// `drop` body, or does not parse cleanly so its impls are unread. Unlike
+/// [`drop_is_plain_in_closed_sources`] this does not also ask that no
+/// dependency `use` or macro appears anywhere, so it can withhold a credit
+/// in an ordinary workspace without withholding every credit there; a
+/// macro-generated `Drop` impl stays unread.
+pub(in crate::analysis) fn workspace_has_visible_non_plain_drop(index: &RustIndex) -> bool {
+    let drops = index
+        .call_identity_memos
+        .workspace_drop_impls(|| DropImplIndex::build(index));
+    drops.any_unparseable || !drops.non_plain.is_empty()
+}
+
 /// The workspace's non-plain `Drop` impls, read once per index (#9209).
 #[derive(Debug, Default)]
 pub(in crate::analysis) struct DropImplIndex {
@@ -519,7 +532,10 @@ pub(in crate::analysis) struct DropImplIndex {
     /// invisible and no type can be called plain.
     any_unparseable: bool,
     /// Self-type names (last path segment, generics dropped) of a `Drop`
-    /// impl whose `drop` body is not empty.
+    /// impl whose `drop` body is not empty, or that a macro writes
+    /// (#15107; [`MACRO_DROP_TARGET`] when the macro names no fixed type).
+    /// Every name a rename or type alias in any source binds to such a type
+    /// is included too (#15107).
     non_plain: BTreeSet<String>,
     /// The sources hold no macro, `extern crate` or outside-crate item that
     /// could generate a `Drop` impl this scan cannot read.
@@ -539,18 +555,54 @@ impl DropImplIndex {
         // Scanned in line, once per index. A nested `par_iter` inside this
         // `OnceLock` init can deadlock against probes that re-enter it
         // (#8756), and the scan is a one-time cost.
-        let scans: Vec<Option<BTreeSet<String>>> = sources
+        let scans: Vec<Option<DropSourceScan>> = sources
             .iter()
-            .map(|source| non_plain_drop_types(source))
+            .map(|source| scan_drop_source(source))
             .collect();
         let mut built = Self {
             sources_closed: closed_field_workspace(index, &[], false),
             ..Self::default()
         };
+        // Names bound to the same type: original -> alias, and back.
+        let mut aliases_of: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        let mut originals_of: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
         for scan in scans {
             match scan {
-                Some(types) => built.non_plain.extend(types),
+                Some(scan) => {
+                    built.non_plain.extend(scan.non_plain);
+                    for (original, alias) in scan.same_type_names {
+                        aliases_of
+                            .entry(original.clone())
+                            .or_default()
+                            .push(alias.clone());
+                        originals_of.entry(alias).or_default().push(original);
+                    }
+                }
                 None => built.any_unparseable = true,
+            }
+        }
+        // #15107: an impl reaches the type it names (an impl against an
+        // alias reaches the aliased type) and then every alias of that type,
+        // transitively. Aliases are keyed by name only, so a name two scopes
+        // bind to different types (`use a::Loud as Local;`, `use b::Cfg as
+        // Local;`) is never walked back to the other scope's type.
+        let mut seeds: Vec<String> = built.non_plain.iter().cloned().collect();
+        let mut back = seeds.clone();
+        while let Some(name) = back.pop() {
+            for original in originals_of.get(&name).into_iter().flatten() {
+                if built.non_plain.insert(original.clone()) {
+                    back.push(original.clone());
+                    seeds.push(original.clone());
+                }
+            }
+        }
+        while let Some(name) = seeds.pop() {
+            for alias in aliases_of.get(&name).into_iter().flatten() {
+                if built.non_plain.insert(alias.clone()) {
+                    seeds.push(alias.clone());
+                }
             }
         }
         built
@@ -563,7 +615,9 @@ impl DropImplIndex {
     }
 
     fn is_plain(&self, type_name: &str) -> bool {
-        !self.any_unparseable && !self.non_plain.contains(type_name)
+        !self.any_unparseable
+            && !self.non_plain.contains(MACRO_DROP_TARGET)
+            && !self.non_plain.contains(type_name)
     }
 }
 
@@ -598,17 +652,198 @@ fn drop_alias_names(tree: &ast::SourceFile) -> Vec<String> {
     names
 }
 
+/// A [`DropImplIndex::non_plain`] entry for a `Drop` impl a macro writes for
+/// a type it receives (`impl Drop for $name`): no type is then called plain.
+const MACRO_DROP_TARGET: &str = "$";
+
+/// #15107: `(original, alias)` pairs of names `tree` binds to the same type.
+/// A rename `use guard::Cfg as Config;` and an alias `type Config = Cfg;`
+/// (generics dropped) each yield `(Cfg, Config)`.
+fn same_type_name_pairs(tree: &ast::SourceFile) -> Vec<(String, String)> {
+    // A plain path's last segment, read from the tree so comments and
+    // generics do not matter (`guard::/* c */Cfg<T>` reads `Cfg`). A
+    // qualified path (`<Cfg as T>::Out`) or a keyword segment (`self`) names
+    // no type. An alias's tuple or reference type (`(Cfg, u8)`, `&Cfg`) is
+    // not a path and is not read.
+    let last_segment = |path: &ast::Path| -> Option<String> {
+        if path
+            .segments()
+            .any(|segment| segment.type_anchor().is_some())
+        {
+            return None;
+        }
+        let name = path.segment()?.name_ref()?;
+        let text = name.text();
+        let last = text.strip_prefix("r#").unwrap_or(text);
+        (!last.is_empty()
+            && !matches!(last, "self" | "Self" | "super" | "crate")
+            && last.chars().all(|ch| ch.is_alphanumeric() || ch == '_'))
+        .then(|| last.to_string())
+    };
+    let ident = |text: &str| text.strip_prefix("r#").unwrap_or(text).to_string();
+    let mut pairs = Vec::new();
+    for node in tree.syntax().descendants() {
+        if let Some(rename) = ast::Rename::cast(node.clone())
+            && let Some(name) = rename.name()
+            && let Some(use_tree) = rename.syntax().parent().and_then(ast::UseTree::cast)
+            && let Some(path) = renamed_use_path(&use_tree)
+            && let Some(original) = last_segment(&path)
+        {
+            pairs.push((original, ident(name.text())));
+        } else if let Some(alias) = ast::TypeAlias::cast(node)
+            // An associated type (`type Output = Guard;`) binds a name per
+            // impl, not one workspace type.
+            && alias
+                .syntax()
+                .parent()
+                .and_then(ast::AssocItemList::cast)
+                .is_none()
+            && let Some(name) = alias.name()
+            && let Some(ast::Type::PathType(ty)) = alias.ty().map(unparenthesized)
+            && let Some(path) = ty.path()
+            && let Some(original) = last_segment(&path)
+        {
+            pairs.push((original, ident(name.text())));
+        }
+    }
+    pairs
+}
+
+/// The path a renaming use tree binds: its own path, or for `self`
+/// (`use guard::Cfg::{self as Config};`) the enclosing tree's path.
+fn renamed_use_path(use_tree: &ast::UseTree) -> Option<ast::Path> {
+    let path = use_tree.path()?;
+    let is_self = path.qualifier().is_none()
+        && path
+            .segment()
+            .is_some_and(|segment| segment.self_token().is_some());
+    if !is_self {
+        return Some(path);
+    }
+    use_tree
+        .syntax()
+        .parent()
+        .and_then(ast::UseTreeList::cast)
+        .and_then(|list| list.syntax().parent())
+        .and_then(ast::UseTree::cast)
+        .and_then(|outer| outer.path())
+}
+
+/// `ty` with any grouping parentheses removed (`(Cfg)` reads `Cfg`); a
+/// tuple (`(Cfg, u8)`) is not a parenthesized type and is kept.
+fn unparenthesized(mut ty: ast::Type) -> ast::Type {
+    while let ast::Type::ParenType(paren) = &ty {
+        let Some(inner) = paren.ty() else {
+            break;
+        };
+        ty = inner;
+    }
+    ty
+}
+
+/// #15107: the types a `Drop` impl written inside a macro definition or
+/// invocation is for. A macro body is a token tree, not parsed items, so the
+/// impl's `drop` body is unread and the type is called non-plain; a target
+/// the macro receives (`impl Drop for $name`) yields [`MACRO_DROP_TARGET`].
+/// Derive and attribute macros from other crates stay unread.
+fn macro_drop_targets(tree: &ast::SourceFile, drop_names: &[String]) -> BTreeSet<String> {
+    let mut targets = BTreeSet::new();
+    for token_tree in tree.syntax().descendants().filter_map(ast::TokenTree::cast) {
+        if token_tree
+            .syntax()
+            .parent()
+            .and_then(ast::TokenTree::cast)
+            .is_some()
+        {
+            // Nested trees are read through their outermost tree.
+            continue;
+        }
+        let tokens: Vec<_> = token_tree
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia())
+            .collect();
+        for (at, token) in tokens.iter().enumerate() {
+            if token.kind() != SyntaxKind::IDENT
+                || !drop_names.iter().any(|name| name == token.text())
+            {
+                continue;
+            }
+            // `Drop for Target`, the target maybe `$name` or a path. `for`
+            // must follow `Drop` at once: in `impl<T: Drop> Describe for X`
+            // the `Drop` is a bound, not the implemented trait.
+            let mut rest = tokens.iter().skip(at + 1);
+            if rest
+                .next()
+                .is_none_or(|token| token.kind() != SyntaxKind::FOR_KW)
+            {
+                continue;
+            }
+            let mut target = None;
+            // A path's tokens are read to its end however long it is, so a
+            // truncated prefix is never recorded as the target.
+            for token in rest {
+                match token.kind() {
+                    SyntaxKind::DOLLAR => {
+                        target = Some(MACRO_DROP_TARGET.to_string());
+                        break;
+                    }
+                    SyntaxKind::IDENT => {
+                        let text = token.text();
+                        target = Some(text.strip_prefix("r#").unwrap_or(text).to_string());
+                    }
+                    // A type-position macro (`for my_ty!()`) names no
+                    // readable type.
+                    SyntaxKind::BANG => {
+                        target = Some(MACRO_DROP_TARGET.to_string());
+                        break;
+                    }
+                    SyntaxKind::COLON2
+                    | SyntaxKind::COLON
+                    | SyntaxKind::CRATE_KW
+                    | SyntaxKind::SELF_KW
+                    | SyntaxKind::SUPER_KW => {}
+                    _ => break,
+                }
+            }
+            targets.insert(target.unwrap_or_else(|| MACRO_DROP_TARGET.to_string()));
+        }
+    }
+    targets
+}
+
 /// The self-type names of every non-plain `Drop` impl in `source`, or `None`
 /// when the source does not parse cleanly. A source that never spells `Drop`
 /// cannot hold a `Drop` impl or a `Drop` alias, so it is parsed only to
 /// confirm it is readable and its tree is not walked.
+#[cfg(test)]
 fn non_plain_drop_types(source: &str) -> Option<BTreeSet<String>> {
+    scan_drop_source(source).map(|scan| scan.non_plain)
+}
+
+/// One source's contribution to the [`DropImplIndex`].
+struct DropSourceScan {
+    non_plain: BTreeSet<String>,
+    same_type_names: Vec<(String, String)>,
+}
+
+/// [`non_plain_drop_types`] and [`same_type_name_pairs`] from one parse.
+fn scan_drop_source(source: &str) -> Option<DropSourceScan> {
     let parse = parse_clean_source_file(source)?;
+    let same_type_names = same_type_name_pairs(&parse.tree());
     let mut types = BTreeSet::new();
     if !source.contains("Drop") {
-        return Some(types);
+        return Some(DropSourceScan {
+            non_plain: types,
+            same_type_names,
+        });
     }
     let aliases = drop_alias_names(&parse.tree());
+    let drop_names: Vec<String> = std::iter::once("Drop".to_string())
+        .chain(aliases.iter().cloned())
+        .collect();
+    types.extend(macro_drop_targets(&parse.tree(), &drop_names));
     for node in parse.tree().syntax().descendants() {
         let Some(imp) = ast::Impl::cast(node) else {
             continue;
@@ -651,7 +886,10 @@ fn non_plain_drop_types(source: &str) -> Option<BTreeSet<String>> {
         let last = text.rsplit("::").next().unwrap_or(&text);
         types.insert(last.split('<').next().unwrap_or(last).to_string());
     }
-    Some(types)
+    Some(DropSourceScan {
+        non_plain: types,
+        same_type_names,
+    })
 }
 
 #[cfg(test)]
@@ -660,6 +898,116 @@ thread_local! {
     /// thread (#9209 work-unit pin).
     pub(super) static DROP_SCAN_COUNT: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
+}
+
+fn field_initializer_is_plain(initializer: Option<ast::Expr>) -> bool {
+    match initializer {
+        // Shorthand `Row { total }` reads the plain path.
+        None => true,
+        Some(expr) => {
+            integer_literal(&expr).is_some()
+                || matches!(
+                    unwrap_parens(expr),
+                    ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
+                )
+        }
+    }
+}
+
+/// Whether evaluating this initializer while building a returned array element
+/// may leave the process before the owner returns (#8084 return_value demotion).
+fn field_initializer_may_exit_during_construction(initializer: Option<ast::Expr>) -> bool {
+    match initializer {
+        None => false,
+        Some(expr) => expression_may_exit_during_construction(unwrap_parens(expr)),
+    }
+}
+
+fn expression_may_exit_during_construction(expr: ast::Expr) -> bool {
+    match expr {
+        ast::Expr::BlockExpr(_) | ast::Expr::CallExpr(_) | ast::Expr::MethodCallExpr(_) => true,
+        ast::Expr::MacroExpr(_) => true,
+        ast::Expr::Literal(_) | ast::Expr::PathExpr(_) => false,
+        ast::Expr::BinExpr(bin) => [bin.lhs(), bin.rhs()]
+            .into_iter()
+            .flatten()
+            .map(unwrap_parens)
+            .any(expression_may_exit_during_construction),
+        ast::Expr::PrefixExpr(prefix) => prefix
+            .expr()
+            .map(unwrap_parens)
+            .is_some_and(expression_may_exit_during_construction),
+        ast::Expr::CastExpr(cast) => cast
+            .expr()
+            .map(unwrap_parens)
+            .is_some_and(expression_may_exit_during_construction),
+        ast::Expr::ParenExpr(paren) => paren
+            .expr()
+            .map(unwrap_parens)
+            .is_some_and(expression_may_exit_during_construction),
+        ast::Expr::RecordExpr(_) | ast::Expr::ArrayExpr(_) => true,
+        _ => true,
+    }
+}
+
+/// #8084: whether constructing the owner's single array return cannot exit
+/// before the owner returns. Blocks, calls and other exit-capable shapes
+/// refuse; ordinary arithmetic on literals and paths does not. Owners that
+/// are not that shape are treated as plain (no demotion).
+pub(in crate::analysis) fn returned_array_construction_plain(owner: &FunctionSummary) -> bool {
+    let source = owner.body.as_str();
+    let Some(parse) = parse_clean_source_file(source) else {
+        return true;
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return true;
+    };
+    let Some(body) = function.body() else {
+        return true;
+    };
+    let Some(statements) = body.stmt_list() else {
+        return true;
+    };
+    if statements.statements().next().is_some() {
+        return true;
+    }
+    let Some(tail) = statements.tail_expr() else {
+        return true;
+    };
+    let ast::Expr::ArrayExpr(array) = unwrap_parens(tail) else {
+        return true;
+    };
+    if array.semicolon_token().is_some()
+        || array
+            .syntax()
+            .descendants()
+            .any(|node| node.kind() == SyntaxKind::ATTR)
+    {
+        return true;
+    }
+    for element in array.exprs() {
+        match element {
+            ast::Expr::RecordExpr(record) => {
+                let Some(list) = record.record_expr_field_list() else {
+                    return true;
+                };
+                if list.spread().is_some() || list.dotdot_token().is_some() {
+                    return true;
+                }
+                for initializer in list.fields() {
+                    if field_initializer_may_exit_during_construction(initializer.expr()) {
+                        return false;
+                    }
+                }
+            }
+            other => {
+                if expression_may_exit_during_construction(unwrap_parens(other)) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 /// The owner's whole body is one array of struct literals, and the probe
@@ -776,17 +1124,7 @@ impl ReturnedArray {
                             .field_name()
                             .is_some_and(|name| name.text() == field.as_str())
                     })
-                    .is_some_and(|initializer| match initializer.expr() {
-                        // Shorthand `Row { total }` reads the plain path.
-                        None => true,
-                        Some(expr) => {
-                            integer_literal(&expr).is_some()
-                                || matches!(
-                                    unwrap_parens(expr),
-                                    ast::Expr::Literal(_) | ast::Expr::PathExpr(_)
-                                )
-                        }
-                    })
+                    .is_some_and(|initializer| field_initializer_is_plain(initializer.expr()))
         });
         Some(Self {
             type_name,
@@ -1189,6 +1527,7 @@ fn squeeze(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::facts::FunctionSummary;
     use crate::domain::{DeltaKind, ProbeFamily, ProbeId, SourceLocation};
     use std::path::PathBuf;
 
@@ -1206,6 +1545,7 @@ mod tests {
 
     fn probe() -> Probe {
         Probe {
+            before_condition: None,
             id: ProbeId("probe:src/lib.rs:6:rows".to_string()),
             location: SourceLocation::new("src/lib.rs", 6, 24),
             owner: None,
@@ -1351,6 +1691,34 @@ mod tests {
             return Err("a sibling of the opposite sign refused the pin".to_string());
         }
         Ok(())
+    }
+
+    #[test]
+    fn returned_array_construction_plain_reads_every_field_initializer() -> Result<(), String> {
+        let plain = |array: &str| -> Result<bool, String> {
+            let owner = summarize_owner(&format!(
+                "pub fn rows(a: u32, b: u32) -> [Row; 2] {{\n    {array}\n}}"
+            ))?;
+            Ok(returned_array_construction_plain(&owner))
+        };
+        assert!(plain("[Row { total: 0 }, Row { total: a + b }]")?);
+        assert!(!plain(
+            "[Row { total: { std::process::exit(0) } }, Row { total: a + b }]"
+        )?);
+        assert!(!plain("[{ std::process::exit(0) }, Row { total: 0 }]")?);
+        assert!(plain(
+            "std::process::exit(0);\n    [Row { total: 0 }, Row { total: a + b }]"
+        )?);
+        Ok(())
+    }
+
+    fn summarize_owner(body: &str) -> Result<FunctionSummary, String> {
+        let source = format!("pub struct Row {{ pub total: u32, }}\n\n{body}\n");
+        crate::analysis::rust_index::summarize_file(PathBuf::from("src/lib.rs"), source)
+            .functions
+            .into_iter()
+            .find(|function| function.name == "rows")
+            .ok_or_else(|| "owner indexed".to_string())
     }
 
     #[test]
@@ -1806,6 +2174,192 @@ mod tests {
             files,
             ..Default::default()
         }))
+    }
+
+    /// #15107: a `Drop` impl a macro writes is unread, so its type is not
+    /// plain; one the macro writes for a type it receives calls no type plain.
+    #[test]
+    fn a_drop_impl_written_by_a_macro_is_not_plain() -> Result<(), String> {
+        for (source, row_plain, other_plain) in [
+            // A macro definition writing the impl for a received type.
+            (
+                "macro_rules! loud { ($t:ident) => { impl Drop for $t { fn drop(&mut self) { std::process::exit(0); } } }; }\nloud!(Row);\n",
+                false,
+                false,
+            ),
+            // An invocation whose tokens hold an impl for a fixed type.
+            (
+                "wrap! { impl Drop for Row { fn drop(&mut self) { std::process::exit(0); } } }\n",
+                false,
+                true,
+            ),
+            (
+                "use std::ops::Drop as Cleanup;\nwrap! { impl Cleanup for crate::Row { fn drop(&mut self) {} } }\n",
+                false,
+                true,
+            ),
+            // A raw target names the type; a type-position macro target
+            // names none, so no type is plain.
+            (
+                "wrap! { impl Drop for r#Row { fn drop(&mut self) { std::process::exit(0); } } }\n",
+                false,
+                true,
+            ),
+            (
+                "wrap! { impl Drop for my_ty!() { fn drop(&mut self) { std::process::exit(0); } } }\n",
+                false,
+                false,
+            ),
+            // A long target path is read to its last segment.
+            (
+                "wrap! { impl Drop for crate::a::b::c::d::e::f::g::h::Row { fn drop(&mut self) { std::process::exit(0); } } }\n",
+                false,
+                true,
+            ),
+            // `Drop` as a bound on the impl's generics is not the trait.
+            (
+                "macro_rules! describe { ($t:ident) => { impl<T: Drop> Describe for $t<T> {} }; }\ndescribe!(Row);\n",
+                true,
+                true,
+            ),
+            // A macro that names no `Drop` impl leaves every type plain.
+            (
+                "macro_rules! describe { ($t:ident) => { impl $t { fn d(&self) {} } }; }\ndescribe!(Row);\n",
+                true,
+                true,
+            ),
+        ] {
+            let index = drop_index(&[("src/lib.rs", source)])?;
+            if drop_is_plain(&index, "Row") != row_plain
+                || drop_is_plain(&index, "Other") != other_plain
+            {
+                return Err(format!(
+                    "expected Row plain={row_plain}, Other plain={other_plain} for {source}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #15107: an impl written against one name is read for every name a
+    /// rename or type alias binds to the same type, in any file.
+    #[test]
+    fn a_renamed_or_aliased_type_shares_its_drop_impl() -> Result<(), String> {
+        let loud = "pub struct Cfg;\nimpl Drop for Cfg { fn drop(&mut self) { std::process::exit(0); } }\n";
+        for (lib, name, expected) in [
+            (
+                "mod guard;\npub use guard::Cfg as Config;\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub type Config = guard::Cfg;\n",
+                "Config",
+                false,
+            ),
+            // Transitively, and from the alias back to the original.
+            (
+                "mod guard;\npub use guard::Cfg as Config;\npub type Settings = Config;\n",
+                "Settings",
+                false,
+            ),
+            // A nested group, a raw identifier and a generic alias.
+            (
+                "mod guard;\npub use guard::{Cfg as r#Config};\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub type Config<T> = guard::Cfg<T>;\n",
+                "Config",
+                false,
+            ),
+            // An associated type names one type per impl, so it links no
+            // other type to the exiting one.
+            (
+                "mod guard;\npub struct Row;\nimpl Iterator for Row { type Item = guard::Cfg; fn next(&mut self) -> Option<guard::Cfg> { None } }\npub struct Two;\nimpl Iterator for Two { type Item = Row; fn next(&mut self) -> Option<Row> { None } }\n",
+                "Row",
+                true,
+            ),
+            // Grouping parentheses and line breaks around `as`/`type`.
+            (
+                "mod guard;\npub type Config = (guard::Cfg);\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub type Config = (guard::/* note */Cfg);\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub use guard::/* note */Cfg as Config;\n",
+                "Config",
+                false,
+            ),
+            (
+                "mod guard;\npub type Config = <guard::Cfg as Iterator>::Item;\n",
+                "Config",
+                true,
+            ),
+            ("mod guard;\npub type\nConfig = ((Cfg));\n", "Config", false),
+            (
+                "mod guard;\npub use guard::Cfg\nas\nConfig;\n",
+                "Config",
+                false,
+            ),
+            // `self` in a group binds the group's prefix.
+            (
+                "mod guard;\npub use guard::Cfg::{self as Config};\n",
+                "Config",
+                false,
+            ),
+            // A tuple or reference alias names no single type.
+            (
+                "mod guard;\npub type Config = (guard::Cfg, u8);\n",
+                "Config",
+                true,
+            ),
+            (
+                "mod guard;\npub type Config = &'static guard::Cfg;\n",
+                "Config",
+                true,
+            ),
+            // An unrelated rename stays plain.
+            (
+                "mod guard;\npub use guard::Other as Config;\n",
+                "Config",
+                true,
+            ),
+        ] {
+            let index = drop_index(&[("src/guard.rs", loud), ("src/lib.rs", lib)])?;
+            if drop_is_plain(&index, name) != expected {
+                return Err(format!("{name} plain should be {expected} for {lib}"));
+            }
+        }
+        let reverse = drop_index(&[
+            ("src/guard.rs", "pub struct Cfg;\n"),
+            (
+                "src/lib.rs",
+                "mod guard;\npub use guard::Cfg as Config;\nimpl Drop for Config { fn drop(&mut self) { std::process::exit(0); } }\n",
+            ),
+        ])?;
+        if drop_is_plain(&reverse, "Cfg") {
+            return Err("an impl against the rename must reach the original name".into());
+        }
+        // One name bound to different types in two scopes links neither
+        // type to the other.
+        let scoped = drop_index(&[
+            ("src/guard.rs", loud),
+            (
+                "src/lib.rs",
+                "mod guard;\npub struct Row;\nmod one { use crate::guard::Cfg as Local; }\nmod two { use crate::Row as Local; }\n",
+            ),
+        ])?;
+        if !drop_is_plain(&scoped, "Row") || drop_is_plain(&scoped, "Local") {
+            return Err("a shared alias name must not carry Cfg's Drop to Row".into());
+        }
+        Ok(())
     }
 
     /// #9209: the corpus is scanned once per index, not once per probe and

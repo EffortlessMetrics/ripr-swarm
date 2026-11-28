@@ -39,6 +39,13 @@ assertion verifies reachability, not discrimination.
 false `exposed` — the test would then be reported as discriminating a value it
 provably does not observe.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_notifier.py:python_preview:3c36f1be -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` from a `mock_expectation` (call-happened) oracle.

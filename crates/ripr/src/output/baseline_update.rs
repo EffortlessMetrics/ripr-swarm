@@ -138,7 +138,7 @@ pub(crate) fn build_baseline_update_remove_resolved(
         .and_then(Value::as_array)
         .ok_or_else(|| {
             format!(
-                "baseline update input {} is missing entries array",
+                "baseline update input {} is missing entries array; pass the reviewed baseline ledger, restored from version control if this copy is damaged (`ripr baseline create` starts a new, unreviewed one)",
                 input.baseline_path
             )
         })?;
@@ -147,7 +147,7 @@ pub(crate) fn build_baseline_update_remove_resolved(
         .and_then(Value::as_array)
         .ok_or_else(|| {
             format!(
-                "baseline update current gate-decision input {} is missing decisions array",
+                "baseline update current gate-decision input {} is missing decisions array; pass the gate-decision JSON that `ripr gate evaluate` writes",
                 input.current_gate_decision_path
             )
         })?;
@@ -158,7 +158,7 @@ pub(crate) fn build_baseline_update_remove_resolved(
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| {
             format!(
-                "baseline update current gate-decision input {} contains a decision without stable identity; refusing to remove or migrate reviewed debt",
+                "baseline update current gate-decision input {} contains a decision without stable identity; refusing to remove or migrate reviewed debt; regenerate it with `ripr gate evaluate`, then rerun",
                 input.current_gate_decision_path
             )
         })?;
@@ -289,6 +289,27 @@ pub(crate) fn build_baseline_update_remove_resolved(
                     ));
                     kept_entries.push(entry.clone());
                 } else if input.remove_resolved
+                    && let Some(absence) = crate::output::baseline_delta::owner_opt_out_absence(
+                        &absence_scope,
+                        &crate::output::baseline_delta::AbsentBaselineEntry {
+                            path: string_field(entry.get("path"))
+                                .or_else(|| string_field(entry.pointer("/placement/path")))
+                                .as_deref(),
+                            seam_id: identity.seam_id.as_deref(),
+                            changed_owner: string_field(entry.get("changed_owner")).as_deref(),
+                        },
+                    )
+                {
+                    // #14898: delta reads this absence as withheld (or
+                    // not evaluated), so update must keep the live debt.
+                    preserved_stale += 1;
+                    warnings.push(format!(
+                        "preserved baseline entry {} because it is absent from current evidence because {}",
+                        identity.sort_key(),
+                        absence.reason(),
+                    ));
+                    kept_entries.push(entry.clone());
+                } else if input.remove_resolved
                     && let Some(reason) =
                         crate::output::baseline_delta::absence_not_evaluated_reason(
                             &absence_scope,
@@ -415,31 +436,47 @@ fn disclosed_analyzer_version(version: Option<&str>) -> String {
 
 pub(crate) use crate::output::path::display_path;
 
+/// Where a usable `baseline update` input comes from, so a refusal for an
+/// unreadable or foreign file names it. A baseline carries review decisions
+/// that `ripr baseline create` cannot rebuild (it writes `reviewed: false`),
+/// so the advice is to restore the reviewed ledger, not regenerate it.
+/// `BASELINE_KIND` is the baseline ledger; every other kind, including the
+/// empty kind the current gate-decision input passes, is named as
+/// gate-decision JSON. A new input kind needs its own arm here.
+fn input_source(expected_kind: &str) -> &'static str {
+    if expected_kind == BASELINE_KIND {
+        "the reviewed baseline ledger, restored from version control if this copy is damaged (`ripr baseline create` starts a new, unreviewed one)"
+    } else {
+        "the gate-decision JSON that `ripr gate evaluate` writes"
+    }
+}
+
 fn parse_json(
     label: &str,
     path: &str,
     json_text: &str,
     expected_kind: &str,
 ) -> Result<Value, String> {
+    let source = input_source(expected_kind);
     let value = serde_json::from_str::<Value>(json_text)
-        .map_err(|err| format!("parse {label} {path} failed: {err}"))?;
+        .map_err(|err| format!("parse {label} {path} failed: {err}; pass {source}"))?;
     let schema_version = value
         .get("schema_version")
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("{label} {path} missing schema_version"))?;
+        .ok_or_else(|| format!("{label} {path} missing schema_version; pass {source}"))?;
     if schema_version != SCHEMA_VERSION {
         return Err(format!(
-            "{label} {path} has unsupported schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`"
+            "{label} {path} has unsupported schema_version `{schema_version}`; expected `{SCHEMA_VERSION}`; pass {source}"
         ));
     }
     if !expected_kind.is_empty() {
         let kind = value
             .get("kind")
             .and_then(Value::as_str)
-            .ok_or_else(|| format!("{label} {path} missing kind"))?;
+            .ok_or_else(|| format!("{label} {path} missing kind; pass {source}"))?;
         if kind != expected_kind {
             return Err(format!(
-                "{label} {path} has unsupported kind `{kind}`; expected `{expected_kind}`"
+                "{label} {path} has unsupported kind `{kind}`; expected `{expected_kind}`; pass {source}"
             ));
         }
     }

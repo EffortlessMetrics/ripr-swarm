@@ -3,11 +3,12 @@ mode: fast
 root: fixtures/fixture_receiver_coincident_data/input
 
 Summary: 3 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 3 static_unknown; 3 of 3 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 3 changed file(s), 6 changed line(s), 3 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
@@ -59,6 +60,7 @@ Limitation detail
 Next step
   `exact_columns_total` (src/equal_components.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast probe:src_equal_components.rs:return_value:a3735aac
   ripr context --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast --at probe:src_equal_components.rs:return_value:a3735aac
 
@@ -109,6 +111,7 @@ Limitation detail
 Next step
   `exact_single_total` (src/single_product_sum.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast probe:src_single_product_sum.rs:return_value:5eeeabdd
   ripr context --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast --at probe:src_single_product_sum.rs:return_value:5eeeabdd
 
@@ -159,5 +162,6 @@ Limitation detail
 Next step
   `exact_zero_total` (src/zero_product_sum.rs:14) pins the owner's result on a receiver a test helper builds, and ripr does not read what the helper puts in it for the changed closure to run over, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast probe:src_zero_product_sum.rs:return_value:e0eed6a5
   ripr context --root <cwd>/fixtures/fixture_receiver_coincident_data/input --diff <cwd>/fixtures/fixture_receiver_coincident_data/diff.patch --mode fast --at probe:src_zero_product_sum.rs:return_value:e0eed6a5

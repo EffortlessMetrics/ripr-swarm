@@ -1,0 +1,13 @@
+# Spec-only contract for #5682 / RIPR-SPEC-0395. Implementation tests land in #5684–#5694.
+[[behavior]]
+id = "RIPR-SPEC-0395"
+name = "Apple shared project facts and separate Swift and Objective-C evidence contracts"
+spec = "docs/specs/RIPR-SPEC-0395-apple-shared-project-swift-objective-c-evidence-contracts.md"
+tests = [
+  "xtask/tests/spec_format_determinism.rs::spec_format_does_not_require_git_history",
+]
+outputs = [
+  "docs/spec-index.d/RIPR-SPEC-0395.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0395.toml",
+]
+metrics = ["spec_contract_registered"]

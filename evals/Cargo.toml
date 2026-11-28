@@ -1,0 +1,13 @@
+# Tier 2 evals workspace (#14643). Excluded from the root workspace so root
+# `cargo check` and merge_group builds never compile it.
+[workspace]
+members = ["ripr-eval-smoke"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

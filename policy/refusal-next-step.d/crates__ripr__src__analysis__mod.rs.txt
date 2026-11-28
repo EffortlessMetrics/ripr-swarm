@@ -1,0 +1,4 @@
+crates/ripr/src/analysis/mod.rs|TypeScript rerun scope line must be 1-based; got {line}
+crates/ripr/src/analysis/mod.rs|TypeScript rerun scope line {line} is too large: {err}
+crates/ripr/src/analysis/mod.rs|TypeScript rerun scope {} no longer has line {line}
+crates/ripr/src/analysis/mod.rs|read TypeScript rerun scope {} failed: {err}

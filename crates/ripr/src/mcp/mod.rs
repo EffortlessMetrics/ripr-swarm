@@ -4,7 +4,7 @@ pub(crate) mod gaps;
 mod panic_containment;
 mod protocol;
 mod repair;
-mod repair_admission;
+pub(crate) mod repair_admission;
 mod repair_card;
 mod server;
 mod transport;
@@ -16,6 +16,44 @@ use std::path::PathBuf;
 pub(super) const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 
+/// Characters echoed from caller-supplied arguments into error text, before
+/// the `...` truncation marker.
+const MAX_ECHO_CHARS: usize = 256;
+
+/// The one escaping rule for every caller-supplied value echoed into a
+/// failure detail (canonical_id, class, snapshot_id, attempt_id, language).
+/// Control characters (ESC, newline, ...) and invisible format characters
+/// (bidi marks, zero-width characters, BOM) are rendered as visible escapes so
+/// an echoed value can neither forge a line, drive a terminal, nor reorder the
+/// surrounding text. The echo is capped so a large value cannot push the
+/// error past the response bound.
+pub(super) fn escape_echoed_argument(text: &str) -> String {
+    let mut out = String::new();
+    for (index, character) in text.chars().enumerate() {
+        if index == MAX_ECHO_CHARS {
+            out.push_str("...");
+            break;
+        }
+        if character.is_control() {
+            out.extend(character.escape_default());
+        } else if matches!(
+            character,
+            '\u{061C}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2028}'..='\u{2029}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{206F}'
+                | '\u{FEFF}'
+        ) {
+            out.extend(character.escape_unicode());
+        } else {
+            out.push(character);
+        }
+    }
+    out
+}
+
 /// Largest JSON-serialized request id (quotes and escapes included) the
 /// transport admits. JSON-RPC ids are correlation tokens, not payloads; an
 /// id near the response cap leaves no room for any correlated reply and
@@ -26,7 +64,7 @@ pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 /// [`outer_envelope_budget`] always leaves a usable budget.
 pub(super) const MAX_REQUEST_ID_BYTES: usize = 16 * 1024;
 
-/// Fixed wire overhead the pinned SDK (rmcp 3.7.0) can add around a
+/// Fixed wire overhead the pinned SDK (rmcp 3.12.0) can add around a
 /// measured tool or resource envelope when it serializes the complete
 /// JSON-RPC response: the `{"jsonrpc":"2.0","id":` + `,"result":` + `}` +
 /// `\n` frame fields (34 bytes) plus, when the negotiated peer keeps the
@@ -84,17 +122,15 @@ The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
 `ripr://gap/{canonical_id}/limitation`, `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
-`ripr_refresh` analyzes the committed default-branch diff by default through
-the shared check authority; its optional `base` argument selects another
-revision. By default, staged and unstaged tracked edits and untracked files
-are outside the analyzed scope. Opt in with `source: "worktree"` to include
-saved staged and unstaged tracked edits; unsaved buffers and untracked files
-remain outside. Worktree snapshots withhold repair cards and readiness, with
-consumed-source commitment explicitly not established. Its warm cache lives
-under the root's `target/ripr/`. `ripr check` defaults to the working tree
-when staged or unstaged tracked edits exist; shared check authority does not
-mean identical input. Use `ripr check --committed` for committed input, or
-`ripr check --worktree --format json` for saved tracked edits outside MCP.
+`ripr_refresh` analyzes the default-branch diff through the shared check
+authority; its optional `base` argument selects another revision. Like
+`ripr check`, it reads saved staged and unstaged tracked edits when any exist
+and committed input otherwise; `source: "committed"` or `source: "worktree"`
+forces one; unsaved buffers and untracked files remain outside. Worktree cards
+require established producer custody; otherwise withheld with the cause.
+Readiness depends on per-item gates. Refresh after edits. Its warm cache lives
+under the root's `target/ripr/`. Outside MCP, `ripr check --committed` reads
+committed input and `ripr check --worktree --format json` saved tracked edits.
 Gap tools read their captured snapshot and never re-run analysis.
 `ripr_list_repair_attempts` discovers durable CLI attempts before or after
 refresh, with bounded inventory-bound pages; it never creates the store.
@@ -104,8 +140,8 @@ transaction; `ripr_get_repair_attempt` and `ripr_get_receipt_status` read
 session transactions and the durable attempt store without executing
 anything. `ripr_get_repair_card` projects the same bounded repair card as
 `ripr agent card` and the standard-LSP handoff for one canonical item of the
-committed snapshot, assembled by the shared application authority; it edits
-nothing, executes nothing, and never upgrades readiness or currentness.
+completed session snapshot, assembled by the shared application authority;
+it edits nothing, executes nothing, and never upgrades readiness or currentness.
 The server does not edit source, execute verification or mutation
 commands, launch processes, load project-local provider configuration, or
 embed a model provider, and no evidence document is ever a repair

@@ -16,6 +16,9 @@ use crate::domain::{CanonicalNextActionV1, NextActionDiffSource, NextActionStop}
 use crate::output::human::plain_repair_card_user_wording;
 use std::path::Path;
 
+/// Placeholder for a retry line when the user must supply one item id (#9006).
+pub(crate) const SELECT_ITEM_RETRY_PLACEHOLDER: &str = "<item-id>";
+
 /// The machine projection as a JSON value for envelope embedding. A DTO
 /// that cannot serialize degrades to null rather than breaking the envelope.
 pub(crate) fn render_next_action_json_value(action: &CanonicalNextActionV1) -> serde_json::Value {
@@ -34,6 +37,20 @@ pub(crate) fn append_canonical_next_action_member(
         return rendered;
     };
     append_top_level_json_object_member(rendered, "canonical_next_action", &value)
+}
+
+/// Append one more compact top-level member (#11976) before the document
+/// closes. Callers attach it before `canonical_next_action` so that member
+/// stays last.
+pub(crate) fn append_top_level_member(
+    rendered: String,
+    name: &str,
+    value: &serde_json::Value,
+) -> String {
+    let Ok(compact) = serde_json::to_string(value) else {
+        return rendered;
+    };
+    append_top_level_json_object_member(rendered, name, &compact)
 }
 
 fn append_top_level_json_object_member(rendered: String, name: &str, compact_json: &str) -> String {
@@ -130,6 +147,12 @@ pub(crate) fn render_next_action_plain_at_root(
         }
         Some(NextActionStop::InspectTarget { detail_route }) if !detail_route.is_empty() => {
             out.extend(route_line("look at the details first", detail_route));
+        }
+        Some(NextActionStop::CheckTriage { repair_route, .. }) if !repair_route.is_empty() => {
+            out.extend(route_line("start the guided repair", repair_route));
+        }
+        Some(NextActionStop::CheckTriage { scope_route, .. }) if !scope_route.is_empty() => {
+            out.extend(route_line("check the last commit", scope_route));
         }
         Some(NextActionStop::TerminalComplete { .. }) => {
             out.push("  Next: nothing; this repair is already complete.".to_string());
@@ -299,10 +322,14 @@ fn powershell_pair_line(route: &str) -> Option<String> {
 /// unqualified command string (control 8).
 fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
     let (text, route) = match stop {
-        NextActionStop::SelectItem { candidates, total } => (
+        NextActionStop::SelectItem {
+            candidates,
+            labels,
+            total,
+        } => (
             format!(
                 "select one of {total}: {}",
-                render_candidates(candidates, *total)
+                render_candidates(candidates, labels, *total)
             ),
             None,
         ),
@@ -311,7 +338,7 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             format!(
                 "select one of {}: {}",
                 crate::output::count_noun::count_noun(*total, "attempt", "attempts"),
-                render_candidates(candidates, *total)
+                render_candidates(candidates, &[], *total)
             ),
             None,
         ),
@@ -414,16 +441,27 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             let route = bind_route_root(detail_route, bound);
             (format!("see {route}"), Some(route))
         }
-        NextActionStop::CheckTriage { case, detail_route } => {
+        NextActionStop::CheckTriage {
+            case,
+            detail_route,
+            repair_route,
+            scope_route,
+        } => {
             let route = bind_route_root(detail_route, bound);
-            if route.is_empty() {
-                (format!("check case {}", case.as_str()), None)
+            let mut line = if route.is_empty() {
+                format!("check case {}", case.as_str())
             } else {
-                (
-                    format!("check case {}; see {route}", case.as_str()),
-                    Some(route),
-                )
+                format!("check case {}; see {route}", case.as_str())
+            };
+            // The verbose view names the same guided start the plain view
+            // prints, so the two views never offer different follow-ups.
+            if !repair_route.is_empty() {
+                line.push_str(&format!("; guided repair: {repair_route}"));
             }
+            if !scope_route.is_empty() {
+                line.push_str(&format!("; check the last commit: {scope_route}"));
+            }
+            (line, (!route.is_empty()).then_some(route))
         }
         NextActionStop::DoctorRecovery {
             check_name,
@@ -456,14 +494,29 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
     lines
 }
 
-fn render_candidates(candidates: &[String], total: usize) -> String {
-    if candidates.len() >= total {
-        candidates.join(", ")
+fn render_candidates(candidates: &[String], labels: &[String], total: usize) -> String {
+    let displayed: Vec<String> = if labels.len() == candidates.len() {
+        candidates
+            .iter()
+            .zip(labels)
+            .map(|(id, label)| {
+                if label.trim().is_empty() {
+                    id.clone()
+                } else {
+                    format!("{id} ({label})")
+                }
+            })
+            .collect()
+    } else {
+        candidates.to_vec()
+    };
+    if displayed.len() >= total {
+        displayed.join(", ")
     } else {
         format!(
             "{} (and {} more)",
-            candidates.join(", "),
-            total - candidates.len()
+            displayed.join(", "),
+            total - displayed.len()
         )
     }
 }
@@ -475,6 +528,42 @@ mod tests {
         CommandPlatform, CommandRole, NextActionAlternative, NextActionCommandRef,
         NextActionCurrentness, NextActionProducer, NextActionSubject, NextActionTransition,
     };
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum SelectItemTokenMatch {
+        Exact(usize),
+        Unknown,
+        Ambiguous(Vec<usize>),
+    }
+
+    fn match_select_item_token(token: &str, candidates: &[String]) -> SelectItemTokenMatch {
+        let token = token.trim();
+        if token.is_empty() {
+            return SelectItemTokenMatch::Unknown;
+        }
+        let hits = candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(index, candidate)| {
+                select_item_token_matches_candidate(token, candidate).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        match hits.len() {
+            0 => SelectItemTokenMatch::Unknown,
+            1 => SelectItemTokenMatch::Exact(hits[0]),
+            _ => SelectItemTokenMatch::Ambiguous(hits),
+        }
+    }
+
+    fn select_item_token_matches_candidate(token: &str, candidate: &str) -> bool {
+        if token == candidate {
+            return true;
+        }
+        if token.contains(':') {
+            return false;
+        }
+        candidate.ends_with(&format!(":{token}"))
+    }
 
     fn test_subject(item: Option<&str>) -> NextActionSubject {
         NextActionSubject {
@@ -773,6 +862,7 @@ mod tests {
         let stops = vec![
             NextActionStop::SelectItem {
                 candidates: vec!["a".to_string(), "b".to_string()],
+                labels: vec!["src/a.rs:1".to_string(), "src/b.rs:2".to_string()],
                 total: 3,
             },
             NextActionStop::SelectAttempt {
@@ -827,6 +917,8 @@ mod tests {
             NextActionStop::CheckTriage {
                 case: crate::domain::NextActionCheckCase::TopGap,
                 detail_route: "r".to_string(),
+                repair_route: String::new(),
+                scope_route: String::new(),
             },
             NextActionStop::DoctorRecovery {
                 check_name: "c".to_string(),
@@ -851,10 +943,88 @@ mod tests {
     }
 
     #[test]
+    fn select_item_stop_lists_locations_beside_ids() -> Result<(), String> {
+        let stop = NextActionStop::SelectItem {
+            candidates: vec!["seam:a".to_string(), "seam:b".to_string()],
+            labels: vec!["src/a.rs:1 `x`".to_string(), "src/b.rs:2 `y`".to_string()],
+            total: 2,
+        };
+        let human = render_next_action_human(&stopped_action(stop)?);
+        assert!(
+            human.contains("seam:a (src/a.rs:1 `x`)"),
+            "human must carry the location label:\n{human}"
+        );
+        assert!(
+            human.contains("seam:b (src/b.rs:2 `y`)"),
+            "human must carry both labels:\n{human}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn match_select_item_token_cases() {
+        let candidates = [
+            "67fc764ba37d77bd".to_string(),
+            "probe:src_lib.rs:predicate:e4b79a1b".to_string(),
+            "probe:src_lib.rs:return_value:c7c856d1".to_string(),
+        ];
+        assert_eq!(
+            match_select_item_token("67fc764ba37d77bd", &candidates),
+            SelectItemTokenMatch::Exact(0)
+        );
+        assert_eq!(
+            match_select_item_token("probe:src_lib.rs:predicate:e4b79a1b", &candidates),
+            SelectItemTokenMatch::Exact(1)
+        );
+        assert_eq!(
+            match_select_item_token("e4b79a1b", &candidates),
+            SelectItemTokenMatch::Exact(1)
+        );
+        assert_eq!(
+            match_select_item_token("missing", &candidates),
+            SelectItemTokenMatch::Unknown
+        );
+        let twin = [
+            "probe:src_lib.rs:predicate:e4b79a1b".to_string(),
+            "probe:src_other.rs:predicate:e4b79a1b".to_string(),
+        ];
+        assert_eq!(
+            match_select_item_token("e4b79a1b", &twin),
+            SelectItemTokenMatch::Ambiguous(vec![0, 1])
+        );
+    }
+
+    #[test]
+    fn scope_missing_stop_names_the_last_commit_rerun_in_both_views() -> Result<(), String> {
+        let stop = NextActionStop::CheckTriage {
+            case: crate::domain::NextActionCheckCase::ScopeMissing,
+            detail_route: String::new(),
+            repair_route: String::new(),
+            scope_route: "ripr check --root . --base HEAD~1".to_string(),
+        };
+        let verbose = render_stop(&stop, None);
+        if verbose.len() != 1
+            || !verbose[0].ends_with("; check the last commit: ripr check --root . --base HEAD~1")
+        {
+            return Err(format!("verbose stop must name the rerun: {verbose:?}"));
+        }
+        let plain = render_next_action_plain_at_root(&stopped_action(stop)?, None);
+        if !plain
+            .iter()
+            .any(|line| line.contains("check the last commit") && line.contains("--base HEAD~1"))
+        {
+            return Err(format!("plain view must name the rerun: {plain:?}"));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn append_canonical_next_action_member_keeps_one_json_document() -> Result<(), String> {
         let action = stopped_action(NextActionStop::CheckTriage {
             case: crate::domain::NextActionCheckCase::TopGap,
             detail_route: "ripr explain finding:top".to_string(),
+            repair_route: String::new(),
+            scope_route: String::new(),
         })?;
         let rendered = "{\n  \"schema_version\": \"0.2\",\n  \"findings\": []\n}\n".to_string();
         let attached = append_canonical_next_action_member(rendered, &action);

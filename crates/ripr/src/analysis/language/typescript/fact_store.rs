@@ -36,8 +36,13 @@ pub(crate) use crate::analysis::language::adapter::render_fact_cache_line;
 
 /// On-disk schema version of a `typescript-file-facts` envelope. Any change
 /// to a serialized fact spelling (field rename, type change, new label) is
-/// a schema change: bump this so stale entries read as misses.
-pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "6";
+/// a schema change: bump this so stale entries read as misses. `13`: module
+/// entries carry `closure` (#13592). `14`: test scope bindings carry
+/// `namespace_member_of` (#13592, implementation tables). `15`: module
+/// entries reach built values and module-private class methods (#15928).
+/// `16`: CommonJS export writes are module entries, which carry
+/// `commonjs_whole` (#16369).
+pub(crate) const TYPESCRIPT_FILE_FACT_SCHEMA_VERSION: &str = "16";
 
 /// Approximate per-run ceiling on newly persisted fact bytes. Parsing the
 /// file already happened by store time, so exhausting the budget only skips
@@ -221,6 +226,8 @@ pub(crate) struct TypeScriptFileFactStore {
     /// content-invalidation signal the `-v` line and the stats disclose.
     known_paths: OnceLock<BTreeSet<String>>,
     remaining_store_bytes: AtomicUsize,
+    /// Set once this instance has recorded a hit for the retention prune.
+    use_noted: std::sync::Once,
 }
 
 impl TypeScriptFileFactStore {
@@ -249,6 +256,7 @@ impl TypeScriptFileFactStore {
             unusable_base_reason: OnceLock::new(),
             known_paths: OnceLock::new(),
             remaining_store_bytes: AtomicUsize::new(MAX_STORE_BYTES_PER_RUN),
+            use_noted: std::sync::Once::new(),
         }
     }
 
@@ -259,6 +267,29 @@ impl TypeScriptFileFactStore {
     /// the constructor pin both call this — never a hand-written copy.
     pub(crate) fn entry_dir(&self) -> (PathBuf, bool) {
         (self.dir.clone(), false)
+    }
+
+    /// The shared build-retention policy (#7047) over this store's layout
+    /// `{base}/typescript-file-facts/{schema}`, which `at_base` always builds.
+    fn with_retention(&self, act: impl FnOnce(&seam_cache::BuildRetention<'_>)) {
+        let Some(layer_dir) = self.dir.parent() else {
+            return;
+        };
+        let read_build = seam_cache::analyzer_version_from_entry_prefix;
+        act(&seam_cache::BuildRetention::new(
+            &self.base,
+            layer_dir.to_path_buf(),
+            TYPESCRIPT_FILE_FACT_SCHEMA_VERSION,
+            seam_cache::integer_schema_rank,
+            &read_build,
+        ));
+    }
+
+    /// Entries and bytes in this layer that this build never reads.
+    pub(crate) fn reclaimable(&self) -> seam_cache::Reclaimable {
+        let mut total = seam_cache::Reclaimable::default();
+        self.with_retention(|retention| total = retention.reclaimable());
+        total
     }
 
     /// Borrow of the versioned entry directory (`entry_dir` without the flag),
@@ -330,6 +361,10 @@ impl TypeScriptFileFactStore {
                 if let Some((tests, _, _)) = test_extraction.as_mut() {
                     super::types::reshare_file_lists(tests);
                 }
+                // A warm run never writes, so the hit itself marks this build
+                // as in use for the retention prune (#7047).
+                self.use_noted
+                    .call_once(|| self.with_retention(|retention| retention.note_use()));
                 CacheLoad::Hit(PersistedFileFacts {
                     file_facts: envelope.file_facts,
                     test_extraction,
@@ -338,6 +373,14 @@ impl TypeScriptFileFactStore {
             }
             Err(reason) => corrupt_entry(&path, format!("decode failed: {reason}")),
         }
+    }
+
+    /// True when an envelope file for `key` exists, so a [`Self::load`] could
+    /// serve it. Existence only: the load still validates identity and
+    /// integrity. The parallel lookahead skips such files, leaving them to the
+    /// loop's own lookup.
+    pub(crate) fn entry_exists(&self, key: &TypeScriptFileFactKey) -> bool {
+        self.dir.join(key.filename()).exists()
     }
 
     /// True when a schema- and analyzer-matching entry for `normalized_file`
@@ -426,6 +469,7 @@ impl TypeScriptFileFactStore {
             &bytes,
             "typescript file fact cache",
         )?;
+        self.with_retention(|retention| retention.prune_once());
         Ok(true)
     }
 }
@@ -526,8 +570,18 @@ mod tests {
     #[test]
     fn schema_version_pins_ast_probe_shape_facts() -> Result<(), String> {
         // #11250 added per-line probe shapes to the persisted facts, so
-        // envelopes written before them must read as misses.
-        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "6");
+        // envelopes written before them must read as misses. "11" adds the
+        // per-file function replacement list (#15939): a test
+        // extraction persisted without it would keep crediting a stubbed
+        // owner. "12" adds import-then-export forwards, class heritage,
+        // namespace member calls and method-owner instance factories
+        // (#15922-#15924). "13" adds the module entries' `closure` flag
+        // (#13592). "14" adds the scope bindings' `namespace_member_of`
+        // (#13592). "15" adds module entries through built values and
+        // module-private class methods (#15928): an envelope written without
+        // them would keep withholding that reach. "16" adds CommonJS export
+        // writes as module entries and their `commonjs_whole` flag (#16369).
+        assert_eq!(TYPESCRIPT_FILE_FACT_SCHEMA_VERSION, "16");
         // A stale-schema envelope: the exact bytes the pre-#11250 ("3")
         // binary wrote — same identity, valid integrity digest, older
         // schema version — sitting at the entry path the current key
@@ -579,6 +633,92 @@ mod tests {
     }
 
     #[test]
+    fn store_prunes_old_builds_and_schemas_and_a_hit_marks_this_build_used() -> Result<(), String> {
+        let root = super::super::tests::ts_unique_tempdir("ts-fact-retention")?;
+        let store = TypeScriptFileFactStore::at(&root);
+        let dir = store.dir_path().to_path_buf();
+        let layer = dir.parent().map(Path::to_path_buf).unwrap_or_default();
+        let hour = std::time::Duration::from_hours(1);
+        let plant = |name: &str,
+                     build: &str,
+                     age: std::time::Duration|
+         -> Result<PathBuf, String> {
+            let path = dir.join(name);
+            let body = format!(
+                "{{\"typescript_file_fact_schema_version\":\"{TYPESCRIPT_FILE_FACT_SCHEMA_VERSION}\",\"analyzer_version\":\"{build}\",\"file_path\":\"x.ts\"}}"
+            );
+            std::fs::write(&path, body).map_err(|err| err.to_string())?;
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|file| file.set_modified(std::time::SystemTime::now() - age))
+                .map_err(|err| err.to_string())?;
+            Ok(path)
+        };
+        let checks = (|| -> Result<(), String> {
+            std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+            let newest = plant("a.json", "build-new", hour)?;
+            let middle = plant("b.json", "build-mid", hour * 2)?;
+            let oldest = plant("c.json", "build-old", hour * 3)?;
+            let stale_schema = layer.join("1");
+            std::fs::create_dir_all(&stale_schema).map_err(|err| err.to_string())?;
+            std::fs::write(stale_schema.join("old.json"), b"{}").map_err(|err| err.to_string())?;
+            // A newer schema belongs to a newer ripr that still reads it.
+            let newer_schema = layer.join("9999");
+            std::fs::create_dir_all(&newer_schema).map_err(|err| err.to_string())?;
+            std::fs::write(newer_schema.join("new.json"), b"{}").map_err(|err| err.to_string())?;
+            // Reclaimable is what the next prune removes: the third build's entry
+            // and the older schema's file, not the newer schema.
+            assert_eq!(store.reclaimable().entry_count, 2);
+
+            let relative = Path::new("src/a.ts");
+            let source = "export const a = 1;\n";
+            let key = TypeScriptFileFactKey::with_alias_digest(relative, source, &root, (0, 0));
+            let facts = FileFacts {
+                parse_error: None,
+                owners: Vec::new(),
+                export_facts: super::super::related_tests::ModuleExportFacts::default(),
+                phase_two: super::super::owners::PhaseTwoFacts::default(),
+            };
+            assert_eq!(store.store(&key, &facts, None, None), Ok(true));
+            // The reader must recognize the entry the store really writes; if
+            // it did not, every real other-build entry would be skipped.
+            assert_eq!(
+                seam_cache::analyzer_version_from_entry_prefix(&store.entry_path(relative, source)),
+                Some(crate::build_identity::cache_identity().to_string())
+            );
+            assert!(
+                newest.is_file() && middle.is_file(),
+                "two most recent other builds kept"
+            );
+            assert!(!oldest.exists(), "a third, older build is pruned");
+            assert!(
+                !stale_schema.exists(),
+                "an older schema directory is pruned"
+            );
+            assert!(
+                newer_schema.join("new.json").is_file(),
+                "a newer schema directory is never pruned"
+            );
+            assert_eq!(store.reclaimable().entry_count, 0);
+
+            assert!(matches!(store.load(&key), CacheLoad::Hit(_)));
+            let marker_dir = layer.join(".build-use");
+            let identity = crate::build_identity::cache_identity();
+            let marked = std::fs::read_dir(&marker_dir)
+                .map_err(|err| format!("a hit must create {}: {err}", marker_dir.display()))?
+                .flatten()
+                .any(|entry| {
+                    std::fs::read_to_string(entry.path()).is_ok_and(|text| text == identity)
+                });
+            assert!(marked, "a hit records this build's use marker");
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        checks
+    }
+
+    #[test]
     fn envelope_round_trips_through_codec() -> Result<(), String> {
         let key = TypeScriptFileFactKey::with_alias_digest(
             Path::new("src/a.ts"),
@@ -619,14 +759,36 @@ mod tests {
         };
         let envelope = TypeScriptFileFactEnvelope::new(&key, facts, None, None);
         let digest = envelope.expected_digest()?;
-        let mut bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
-        let flip = bytes.len() / 2;
-        bytes[flip] = bytes[flip].wrapping_add(1);
-        // A tampered entry must not be served, whether the flip breaks the
-        // JSON outright (a decode refusal) or leaves a digest mismatch.
-        if let Ok(decoded) = serde_json::from_slice::<TypeScriptFileFactEnvelope>(&bytes) {
-            assert!(!decoded.matches_key(&key) || decoded.validate_integrity().is_err())
+        let bytes = seam_cache::encode_integrity_body(&envelope, digest)?;
+        // Every single-byte flip, not one position: where a fixed offset
+        // lands depends on the build identity's length. A tampered entry is
+        // either refused (decode, key or digest) or carries exactly the
+        // original content: a flip inside the name of a defaulted empty
+        // field decodes to the same facts, and the semantic digest binds
+        // content, not spelling.
+        let mut refused_by_key_or_digest = 0usize;
+        for flip in 0..bytes.len() {
+            let mut tampered = bytes.clone();
+            tampered[flip] = tampered[flip].wrapping_add(1);
+            let Ok(decoded) = serde_json::from_slice::<TypeScriptFileFactEnvelope>(&tampered)
+            else {
+                continue;
+            };
+            if !decoded.matches_key(&key) || decoded.validate_integrity().is_err() {
+                refused_by_key_or_digest += 1;
+                continue;
+            }
+            let digest = decoded.expected_digest()?;
+            assert_eq!(
+                seam_cache::encode_integrity_body(&decoded, digest)?,
+                bytes,
+                "flip at byte {flip} was served with different content"
+            );
         }
+        assert!(
+            refused_by_key_or_digest > 0,
+            "no flip reached the key or digest check"
+        );
         Ok(())
     }
 }

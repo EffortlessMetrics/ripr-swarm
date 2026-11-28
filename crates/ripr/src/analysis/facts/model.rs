@@ -621,6 +621,12 @@ pub struct UnresolvedPropertyMacroFact {
     pub name: String,
     pub line: usize,
     pub mentioned_identifiers: Vec<String>,
+    /// Mentions whose every occurrence declares the property function or one
+    /// of its parameters (#10864). They name no callee, so they never bind a
+    /// failed provider verification to a same-named owner. The lexical
+    /// fallback leaves this empty, which keeps its withholding conservative.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binding_only_identifiers: Vec<String>,
 }
 
 /// Text that shares its file's `source` allocation instead of copying it
@@ -906,6 +912,8 @@ pub struct FileFacts {
     /// Opaque property blocks from the existing source parse. No expansion or
     /// executable-test authority is inferred from the macro's spelling.
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
+    /// Owner-bound Verus guard facts admitted inside `verus! { .. }` (#10747).
+    pub verus_guard_facts: Vec<crate::analysis::verus::VerusGuardFact>,
     /// Source-role provenance for this file occurrence (#3533): the ordered
     /// edge chain from the compilation unit whose declarations and include
     /// edges composed this file's roles, plus the earliest edge in the chain
@@ -930,6 +938,17 @@ pub struct FileFacts {
     /// from the lexical fallback and from hand-built facts; the scans then
     /// parse `source` as before.
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    /// Whether this file pulls documentation in from outside its own text
+    /// (`#![doc = include_str!(..)]`), answered from the producer's clean
+    /// parse (#13754). `None` from the lexical fallback and from hand-built
+    /// facts; the unseen-reach scan then parses `source` itself.
+    pub(crate) external_docs: Option<bool>,
+    /// Where this file declares `const`/`static` items (and macro calls that
+    /// may), as byte ranges of `source`, read from the producer's clean
+    /// parse (#13754). `None` from the lexical fallback and from hand-built
+    /// facts; the owner-pin constant table then parses `source` itself.
+    pub(crate) constant_syntax:
+        Option<Vec<crate::analysis::syntax::constant_items::ConstantSyntax>>,
 }
 
 impl FileFacts {
@@ -1000,6 +1019,12 @@ pub enum FunctionSourceRole {
     /// Ordinary production function: no test-defining attribute and not a
     /// member of a test-required module. The historical `is_test == false`.
     Production,
+    /// A manifest- and namespace-verified hand-written `Arbitrary` input
+    /// generator (QuickCheck, proptest, or the `arbitrary` crate). It is
+    /// stimulus support, not an executable test or production seam. Diff
+    /// analysis retains its changes as explicit uncertainty rather than
+    /// silently skipping them with ordinary test helpers (#11545).
+    TestInputGenerator,
     /// Carries an exact supported test-defining attribute (`#[test]`,
     /// `#[tokio::test]`, `#[async_std::test]`, `#[rstest]`, ...). Registers
     /// an executable `TestFact`. When the facts came from the lexical
@@ -1109,6 +1134,225 @@ pub enum FunctionContainer {
     Trait { trait_name: String },
 }
 
+/// One generation-owned backing buffer for facts shared between a function
+/// occurrence and its executable test view (#5127). Equality compares the
+/// resolved slice, not allocation identity.
+#[derive(Clone, Debug)]
+pub struct SharedFactSlice<T>(Option<Arc<Vec<T>>>);
+
+impl<T> SharedFactSlice<T> {
+    pub fn from_vec(values: Vec<T>) -> Self {
+        if values.is_empty() {
+            Self(None)
+        } else {
+            Self(Some(Arc::new(values)))
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self(None)
+    }
+
+    /// True when this slice holds no backing allocation (the empty `None` state).
+    #[cfg(test)]
+    pub(crate) fn is_unallocated(&self) -> bool {
+        self.0.is_none()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shared_storage_with(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn spare_capacity(&self) -> usize {
+        self.0
+            .as_ref()
+            .map_or(0, |values| values.capacity().saturating_sub(values.len()))
+    }
+
+    pub(crate) fn make_mut(&mut self) -> &mut Vec<T>
+    where
+        T: Clone,
+    {
+        let arc = self.0.get_or_insert_with(|| Arc::new(Vec::new()));
+        Arc::make_mut(arc)
+    }
+
+    /// Iterates mutably only when storage exists and this view owns it alone.
+    ///
+    /// Unlike [`Self::make_mut`], this never materializes an `Arc<Vec<T>>` for
+    /// the empty `None` state, and it never clones a buffer shared with a
+    /// sibling view, so finalize-time compaction stays allocation-free for
+    /// empty and shared slices.
+    pub(crate) fn iter_mut_if_unique(&mut self) -> std::slice::IterMut<'_, T>
+    where
+        T: Clone,
+    {
+        match &mut self.0 {
+            Some(arc) if Arc::strong_count(arc) == 1 => Arc::make_mut(arc).iter_mut(),
+            _ => [].iter_mut(),
+        }
+    }
+
+    pub(crate) fn is_uniquely_owned(&self) -> bool {
+        self.0
+            .as_ref()
+            .is_none_or(|arc| Arc::strong_count(arc) == 1)
+    }
+
+    pub(crate) fn shrink_capacity_if_unique(&mut self)
+    where
+        T: Clone,
+    {
+        if self.is_uniquely_owned()
+            && let Some(arc) = &mut self.0
+        {
+            Arc::make_mut(arc).shrink_to_fit();
+        }
+    }
+}
+
+impl<T> Default for SharedFactSlice<T> {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl<T> std::ops::Deref for SharedFactSlice<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().map_or(&[], |values| values.as_slice())
+    }
+}
+
+impl<'a, T> IntoIterator for &'a SharedFactSlice<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a, T: Clone> IntoIterator for &'a mut SharedFactSlice<T> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.make_mut().iter_mut()
+    }
+}
+
+impl<T> SharedFactSlice<T> {
+    pub fn push(&mut self, item: T)
+    where
+        T: Clone,
+    {
+        self.make_mut().push(item);
+    }
+
+    pub fn extend(&mut self, items: impl IntoIterator<Item = T>)
+    where
+        T: Clone,
+    {
+        self.make_mut().extend(items);
+    }
+
+    pub fn retain(&mut self, keep: impl FnMut(&T) -> bool)
+    where
+        T: Clone,
+    {
+        if let Some(arc) = &mut self.0 {
+            Arc::make_mut(arc).retain(keep);
+        }
+    }
+
+    pub fn dedup_by(&mut self, same_bucket: impl FnMut(&mut T, &mut T) -> bool)
+    where
+        T: Clone,
+    {
+        if let Some(arc) = &mut self.0 {
+            Arc::make_mut(arc).dedup_by(same_bucket);
+        }
+    }
+
+    pub fn insert(&mut self, index: usize, item: T)
+    where
+        T: Clone,
+    {
+        self.make_mut().insert(index, item);
+    }
+
+    pub fn truncate(&mut self, len: usize)
+    where
+        T: Clone,
+    {
+        if let Some(arc) = &mut self.0 {
+            Arc::make_mut(arc).truncate(len);
+        }
+    }
+
+    pub fn clear(&mut self)
+    where
+        T: Clone,
+    {
+        self.0 = None;
+    }
+}
+
+impl<T> std::ops::Index<usize> for SharedFactSlice<T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        let slice: &[T] = self;
+        &slice[index]
+    }
+}
+
+impl<T: Clone> std::ops::IndexMut<usize> for SharedFactSlice<T> {
+    fn index_mut(&mut self, index: usize) -> &mut T {
+        &mut self.make_mut()[index]
+    }
+}
+
+impl<T: Clone> FromIterator<T> for SharedFactSlice<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        Self::from_vec(iter.into_iter().collect())
+    }
+}
+
+impl<T: PartialEq> PartialEq for SharedFactSlice<T> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
+impl<T: Eq> Eq for SharedFactSlice<T> {}
+
+impl<T: Clone> From<Vec<T>> for SharedFactSlice<T> {
+    fn from(values: Vec<T>) -> Self {
+        Self::from_vec(values)
+    }
+}
+
+impl<T: Clone + serde::Serialize> serde::Serialize for SharedFactSlice<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        (**self).serialize(serializer)
+    }
+}
+
+impl<'de, T: Clone + serde::Deserialize<'de>> serde::Deserialize<'de> for SharedFactSlice<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Vec::<T>::deserialize(deserializer).map(Self::from_vec)
+    }
+}
+
 /// Parser facts about a function item's declaration (#4478).
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FunctionItemFact {
@@ -1128,16 +1372,16 @@ pub struct FunctionFact {
     pub start_line: usize,
     pub end_line: usize,
     pub body: SourceText,
-    pub calls: Vec<CallFact>,
+    pub calls: SharedFactSlice<CallFact>,
     pub returns: Vec<ReturnFact>,
-    pub literals: Vec<LiteralFact>,
+    pub literals: SharedFactSlice<LiteralFact>,
     pub source_role: FunctionSourceRole,
     /// Attribute syntax lines (e.g., `#[rstest]`, `#[case(100, 100)]`,
     /// `#[test]`) captured from the AST `attrs()` iterator. Used by
     /// `analysis/value-extraction-v2` to read rstest case parameters
     /// without re-reading the file. The lexical fallback path
     /// populates this as empty.
-    pub attrs: Vec<String>,
+    pub attrs: SharedFactSlice<String>,
     /// Attribute syntax lines on the `impl` block that encloses this
     /// function, when it is an associated function (`#[pymethods]`,
     /// `#[wasm_bindgen]`, `#[napi]`). Kept apart from `attrs` so test and
@@ -1150,14 +1394,14 @@ pub struct FunctionFact {
     /// `analysis::extract::shadow`). Parser-backed only — the lexical
     /// fallback leaves this empty. Empty on a parser-backed file is a real
     /// "no nested fn" result.
-    pub nested_fn_names: Vec<String>,
+    pub nested_fn_names: SharedFactSlice<String>,
     /// Shadow-shaped binding facts from the `let` statements in this
     /// function's body (#3727 Slice A), one entry per whole-word pattern
     /// name, sorted by (line, name). Initializer-less declarations
     /// (`let flag;`) produce no entries, mirroring the lexical scanner's
     /// `;` bound. Parser-backed only — the lexical fallback leaves this
     /// empty.
-    pub let_bindings: Vec<LetBindingFact>,
+    pub let_bindings: SharedFactSlice<LetBindingFact>,
     /// Where the item is declared (#4478). Parser-backed only; the lexical
     /// fallback leaves it `Unknown`.
     pub item: FunctionItemFact,
@@ -1203,22 +1447,48 @@ pub struct TestFact {
     pub start_line: usize,
     pub end_line: usize,
     pub body: SourceText,
-    pub calls: Vec<CallFact>,
+    pub calls: SharedFactSlice<CallFact>,
     pub assertions: Vec<OracleFact>,
-    pub literals: Vec<LiteralFact>,
+    pub literals: SharedFactSlice<LiteralFact>,
     /// Attribute syntax lines on the test fn. Mirrors
     /// `FunctionFact.attrs`. Carries `#[rstest]` and `#[case(...)]` for
     /// case-driven tests so value resolution can map case literals to
     /// test parameters.
-    pub attrs: Vec<String>,
+    pub attrs: SharedFactSlice<String>,
     /// Shadow facts for the test body, mirroring `FunctionFact`
     /// (#3727 Slice A): nested `fn` item names and `let` binding facts,
     /// both body-relative. Parser-backed only; the lexical fallback leaves
     /// them empty.
-    pub nested_fn_names: Vec<String>,
+    pub nested_fn_names: SharedFactSlice<String>,
     /// Body-relative `let` binding facts, mirroring
     /// `FunctionFact.let_bindings` (#3727 Slice A).
-    pub let_bindings: Vec<LetBindingFact>,
+    pub let_bindings: SharedFactSlice<LetBindingFact>,
+    /// `Some` only for a test produced by a `macro_rules!` expansion and
+    /// pinned to its invocation line (#12320). Authored tests are `None`, so
+    /// a consumer can tell the two apart even when they share a name and line.
+    pub generated: Option<MacroGeneratedOrigin>,
+}
+
+/// Provenance of a macro-generated test (#12320).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+)]
+pub struct MacroGeneratedOrigin {
+    /// The expanded test body declares its own `use` or item, or carries an
+    /// unrecognised attribute macro that could rewrite it (#12857), which can
+    /// rebind a callee the invocation-site scopes would resolve differently.
+    /// Such a test borrows no invocation-site scopes: wrong credit is worse
+    /// than abstaining.
+    pub body_declares_items: bool,
 }
 
 impl TestFact {
@@ -1429,6 +1699,32 @@ impl std::fmt::Display for CallText {
     }
 }
 
+impl std::borrow::Borrow<str> for CallText {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Re-shares equal call lines while one file's facts are decoded. The
+/// extractor gives every call on a line one allocation, but a cache payload
+/// decodes each copy separately, so a warm run held one line copy per call
+/// (#13703).
+#[derive(Default)]
+struct CallTextInterner(std::collections::HashSet<CallText>);
+
+impl CallTextInterner {
+    fn share(&mut self, calls: &mut [CallFact]) {
+        for call in calls {
+            match self.0.get(call.text.as_str()) {
+                Some(shared) => call.text = shared.clone(),
+                None => {
+                    self.0.insert(call.text.clone());
+                }
+            }
+        }
+    }
+}
+
 impl From<String> for CallText {
     fn from(text: String) -> Self {
         Self(text.into())
@@ -1527,19 +1823,23 @@ impl ProbeShapeKind {
     }
 }
 
+/// One parser-owned probe site. Lines and byte offsets are stored as `u32`
+/// (rust-analyzer's `TextSize` bounds every offset, and a 1-based line number
+/// never exceeds its byte offset plus one), which keeps the run-wide shape vectors about a
+/// third smaller (#13703). Read them through the `usize` accessors.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProbeShapeFact {
-    pub start_line: usize,
-    pub end_line: usize,
+    pub start_line: u32,
+    pub end_line: u32,
     /// Byte offset of the shape's start within the source file. Populated
     /// by the parser-backed summarizer; the lexical fallback emits no
     /// probe shapes at all, so this stays accurate.
-    pub start_byte: usize,
+    pub start_byte: u32,
     /// Byte offset one past the shape's parser-owned end within the source
     /// file. Unlike `text` (trimmed, `;`-stripped display snippet), this is
     /// the verbatim syntax range end, so span consumers must derive geometry
     /// from these bytes, never from `text.len()`.
-    pub end_byte: usize,
+    pub end_byte: u32,
     pub kind: ProbeShapeKind,
     pub text: SourceText,
     /// A `call_deletion` shape whose value feeds a consumer (a condition, a
@@ -1550,7 +1850,47 @@ pub struct ProbeShapeFact {
     pub value_consumed: bool,
     /// Inclusive parser-owned match-head lines, independent of the token
     /// anchor and normalized display text. Other shapes retain their bounds.
-    pub source_lines: Option<(usize, usize)>,
+    pub source_lines: Option<(u32, u32)>,
+}
+
+impl ProbeShapeFact {
+    /// First source line, 1-based.
+    pub fn start_line(&self) -> usize {
+        widen(self.start_line)
+    }
+
+    /// Last source line, 1-based and inclusive.
+    pub fn end_line(&self) -> usize {
+        widen(self.end_line)
+    }
+
+    /// Byte offset of the shape's start; see the field.
+    pub fn start_byte(&self) -> usize {
+        widen(self.start_byte)
+    }
+
+    /// Byte offset one past the shape's parser-owned end; see the field.
+    pub fn end_byte(&self) -> usize {
+        widen(self.end_byte)
+    }
+
+    /// Inclusive parser-owned match-head lines; see the field.
+    pub fn source_lines(&self) -> Option<(usize, usize)> {
+        self.source_lines
+            .map(|(start, end)| (widen(start), widen(end)))
+    }
+}
+
+/// `u32` to `usize`, lossless on every target ripr builds for.
+fn widen(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+/// A line or byte position as stored in a [`ProbeShapeFact`]. Positions come
+/// from rust-analyzer's `u32` text sizes, so saturation is unreachable for a
+/// parsed file.
+pub(crate) fn probe_shape_position(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 /// Cache payload mirrors of the fact structs. The wire carries [`WireText`]
@@ -1596,21 +1936,23 @@ pub(crate) struct TestFactWire {
     pub nested_fn_names: Vec<String>,
     #[serde(default)]
     pub let_bindings: Vec<LetBindingFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated: Option<MacroGeneratedOrigin>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ProbeShapeFactWire {
-    pub start_line: usize,
-    pub end_line: usize,
-    pub start_byte: usize,
-    pub end_byte: usize,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub start_byte: u32,
+    pub end_byte: u32,
     pub kind: ProbeShapeKind,
     pub text: WireText,
     /// Omitted when false, so payloads without it read as unconsumed (#6677).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub value_consumed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_lines: Option<(usize, usize)>,
+    pub source_lines: Option<(u32, u32)>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -1624,11 +1966,18 @@ pub(crate) struct FileFactsWire {
     pub used_lexical_fallback: bool,
     pub module_declarations: Vec<ModuleDeclarationFact>,
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
+    #[serde(default)]
+    pub verus_guard_facts: Vec<crate::analysis::verus::VerusGuardFact>,
     pub source: String,
     #[serde(default)]
     pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
     #[serde(default)]
     pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
+    #[serde(default)]
+    pub(crate) external_docs: Option<bool>,
+    #[serde(default)]
+    pub(crate) constant_syntax:
+        Option<Vec<crate::analysis::syntax::constant_items::ConstantSyntax>>,
 }
 
 impl FunctionFactWire {
@@ -1642,14 +1991,14 @@ impl FunctionFactWire {
             start_line: fact.start_line,
             end_line: fact.end_line,
             body: WireText::attached(&fact.body, parent),
-            calls: fact.calls.clone(),
+            calls: fact.calls.to_vec(),
             returns: fact.returns.clone(),
-            literals: fact.literals.clone(),
+            literals: fact.literals.to_vec(),
             source_role: fact.source_role,
-            attrs: fact.attrs.clone(),
+            attrs: fact.attrs.to_vec(),
             impl_attrs: fact.impl_attrs.clone(),
-            nested_fn_names: fact.nested_fn_names.clone(),
-            let_bindings: fact.let_bindings.clone(),
+            nested_fn_names: fact.nested_fn_names.to_vec(),
+            let_bindings: fact.let_bindings.to_vec(),
             item: fact.item.clone(),
             impl_context: fact.impl_context.clone(),
         }
@@ -1669,14 +2018,14 @@ impl FunctionFactWire {
             body: WireText::Inline {
                 text: fact.body.as_str().to_string(),
             },
-            calls: fact.calls.clone(),
+            calls: fact.calls.to_vec(),
             returns: fact.returns.clone(),
-            literals: fact.literals.clone(),
+            literals: fact.literals.to_vec(),
             source_role: fact.source_role,
-            attrs: fact.attrs.clone(),
+            attrs: fact.attrs.to_vec(),
             impl_attrs: fact.impl_attrs.clone(),
-            nested_fn_names: fact.nested_fn_names.clone(),
-            let_bindings: fact.let_bindings.clone(),
+            nested_fn_names: fact.nested_fn_names.to_vec(),
+            let_bindings: fact.let_bindings.to_vec(),
             item: fact.item.clone(),
             impl_context: fact.impl_context.clone(),
         }
@@ -1692,12 +2041,13 @@ impl TestFactWire {
             start_line: fact.start_line,
             end_line: fact.end_line,
             body: WireText::attached(&fact.body, parent),
-            calls: fact.calls.clone(),
+            calls: fact.calls.to_vec(),
             assertions: fact.assertions.clone(),
-            literals: fact.literals.clone(),
-            attrs: fact.attrs.clone(),
-            nested_fn_names: fact.nested_fn_names.clone(),
-            let_bindings: fact.let_bindings.clone(),
+            literals: fact.literals.to_vec(),
+            attrs: fact.attrs.to_vec(),
+            nested_fn_names: fact.nested_fn_names.to_vec(),
+            let_bindings: fact.let_bindings.to_vec(),
+            generated: fact.generated,
         }
     }
 
@@ -1712,12 +2062,13 @@ impl TestFactWire {
             body: WireText::Inline {
                 text: fact.body.as_str().to_string(),
             },
-            calls: fact.calls.clone(),
+            calls: fact.calls.to_vec(),
             assertions: fact.assertions.clone(),
-            literals: fact.literals.clone(),
-            attrs: fact.attrs.clone(),
-            nested_fn_names: fact.nested_fn_names.clone(),
-            let_bindings: fact.let_bindings.clone(),
+            literals: fact.literals.to_vec(),
+            attrs: fact.attrs.to_vec(),
+            nested_fn_names: fact.nested_fn_names.to_vec(),
+            let_bindings: fact.let_bindings.to_vec(),
+            generated: fact.generated,
         }
     }
 }
@@ -1782,9 +2133,12 @@ impl From<&FileFacts> for FileFactsWire {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: facts.module_declarations.clone(),
             unresolved_property_macros: facts.unresolved_property_macros.clone(),
+            verus_guard_facts: facts.verus_guard_facts.clone(),
             source: facts.source.to_string(),
             item_scopes: facts.item_scopes.clone(),
             macro_candidates: facts.macro_candidates.clone(),
+            external_docs: facts.external_docs,
+            constant_syntax: facts.constant_syntax.clone(),
         }
     }
 }
@@ -1798,14 +2152,14 @@ impl FunctionFactWire {
             start_line: self.start_line,
             end_line: self.end_line,
             body: link_wire_text(self.body, source, "function body")?,
-            calls: self.calls,
+            calls: self.calls.into(),
             returns: self.returns,
-            literals: self.literals,
+            literals: self.literals.into(),
             source_role: self.source_role,
-            attrs: self.attrs,
+            attrs: self.attrs.into(),
             impl_attrs: self.impl_attrs,
-            nested_fn_names: self.nested_fn_names,
-            let_bindings: self.let_bindings,
+            nested_fn_names: self.nested_fn_names.into(),
+            let_bindings: self.let_bindings.into(),
             item: self.item,
             impl_context: self.impl_context,
         })
@@ -1820,12 +2174,13 @@ impl TestFactWire {
             start_line: self.start_line,
             end_line: self.end_line,
             body: link_wire_text(self.body, source, "test body")?,
-            calls: self.calls,
+            calls: self.calls.into(),
             assertions: self.assertions,
-            literals: self.literals,
-            attrs: self.attrs,
-            nested_fn_names: self.nested_fn_names,
-            let_bindings: self.let_bindings,
+            literals: self.literals.into(),
+            attrs: self.attrs.into(),
+            nested_fn_names: self.nested_fn_names.into(),
+            let_bindings: self.let_bindings.into(),
+            generated: self.generated,
         })
     }
 }
@@ -1848,12 +2203,15 @@ impl ProbeShapeFactWire {
 impl FileFactsWire {
     fn link(self) -> Result<FileFacts, String> {
         let source: Arc<str> = Arc::from(self.source.as_str());
+        let mut call_texts = CallTextInterner::default();
         let mut functions = Vec::with_capacity(self.functions.len());
-        for wire in self.functions {
+        for mut wire in self.functions {
+            call_texts.share(&mut wire.calls);
             functions.push(wire.link(&source)?);
         }
         let mut tests = Vec::with_capacity(self.tests.len());
-        for wire in self.tests {
+        for mut wire in self.tests {
+            call_texts.share(&mut wire.calls);
             tests.push(wire.link(&source)?);
         }
         let mut probe_shapes = Vec::with_capacity(self.probe_shapes.len());
@@ -1870,10 +2228,13 @@ impl FileFactsWire {
             used_lexical_fallback: self.used_lexical_fallback,
             module_declarations: self.module_declarations,
             unresolved_property_macros: self.unresolved_property_macros,
+            verus_guard_facts: self.verus_guard_facts,
             role_provenance: SourceRoleProvenance::default(),
             source,
             item_scopes: self.item_scopes,
             macro_candidates: self.macro_candidates,
+            external_docs: self.external_docs,
+            constant_syntax: self.constant_syntax,
         })
     }
 }
@@ -1905,14 +2266,14 @@ impl<'de> serde::Deserialize<'de> for FunctionFact {
             start_line: wire.start_line,
             end_line: wire.end_line,
             body,
-            calls: wire.calls,
+            calls: wire.calls.into(),
             returns: wire.returns,
-            literals: wire.literals,
+            literals: wire.literals.into(),
             source_role: wire.source_role,
-            attrs: wire.attrs,
+            attrs: wire.attrs.into(),
             impl_attrs: wire.impl_attrs,
-            nested_fn_names: wire.nested_fn_names,
-            let_bindings: wire.let_bindings,
+            nested_fn_names: wire.nested_fn_names.into(),
+            let_bindings: wire.let_bindings.into(),
             item: wire.item,
             impl_context: wire.impl_context,
         })
@@ -1943,12 +2304,13 @@ impl<'de> serde::Deserialize<'de> for TestFact {
             start_line: wire.start_line,
             end_line: wire.end_line,
             body,
-            calls: wire.calls,
+            calls: wire.calls.into(),
             assertions: wire.assertions,
-            literals: wire.literals,
-            attrs: wire.attrs,
-            nested_fn_names: wire.nested_fn_names,
-            let_bindings: wire.let_bindings,
+            literals: wire.literals.into(),
+            attrs: wire.attrs.into(),
+            nested_fn_names: wire.nested_fn_names.into(),
+            let_bindings: wire.let_bindings.into(),
+            generated: wire.generated,
         })
     }
 }
@@ -2028,20 +2390,22 @@ struct TestFactWireRef<'a> {
     attrs: &'a [String],
     nested_fn_names: &'a [String],
     let_bindings: &'a [LetBindingFact],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    generated: Option<MacroGeneratedOrigin>,
 }
 
 #[derive(serde::Serialize)]
 struct ProbeShapeFactWireRef<'a> {
-    start_line: usize,
-    end_line: usize,
-    start_byte: usize,
-    end_byte: usize,
+    start_line: u32,
+    end_line: u32,
+    start_byte: u32,
+    end_byte: u32,
     kind: ProbeShapeKind,
     text: WireTextRef<'a>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     value_consumed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    source_lines: Option<(usize, usize)>,
+    source_lines: Option<(u32, u32)>,
 }
 
 #[derive(serde::Serialize)]
@@ -2055,9 +2419,13 @@ struct FileFactsWireRef<'a> {
     used_lexical_fallback: bool,
     module_declarations: &'a [ModuleDeclarationFact],
     unresolved_property_macros: &'a [UnresolvedPropertyMacroFact],
+    #[serde(default)]
+    verus_guard_facts: &'a [crate::analysis::verus::VerusGuardFact],
     source: &'a str,
     item_scopes: Option<&'a ModuleItemScopes>,
     macro_candidates: Option<&'a MacroBindingCandidates>,
+    external_docs: Option<bool>,
+    constant_syntax: Option<&'a [crate::analysis::syntax::constant_items::ConstantSyntax]>,
 }
 
 impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
@@ -2101,6 +2469,7 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
                     attrs: &fact.attrs,
                     nested_fn_names: &fact.nested_fn_names,
                     let_bindings: &fact.let_bindings,
+                    generated: fact.generated,
                 })
                 .collect(),
             returns: &facts.returns,
@@ -2122,9 +2491,12 @@ impl<'a> From<&'a FileFacts> for FileFactsWireRef<'a> {
             used_lexical_fallback: facts.used_lexical_fallback,
             module_declarations: &facts.module_declarations,
             unresolved_property_macros: &facts.unresolved_property_macros,
+            verus_guard_facts: &facts.verus_guard_facts,
             source: &facts.source,
             item_scopes: facts.item_scopes.as_deref(),
             macro_candidates: facts.macro_candidates.as_deref(),
+            external_docs: facts.external_docs,
+            constant_syntax: facts.constant_syntax.as_deref(),
         }
     }
 }
@@ -2328,14 +2700,14 @@ mod tests {
                 start_line: 1,
                 end_line: 1,
                 body: SourceText::shared_or_owned(&source, 0, "fn a() {}"),
-                calls: Vec::new(),
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
                 returns: Vec::new(),
-                literals: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
                 source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 item: FunctionItemFact::default(),
                 impl_context: FunctionImplContext::Unknown,
             }],
@@ -2355,10 +2727,13 @@ mod tests {
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         };
         // The wire carries spans, not copied bodies.
         let wire = serde_json::to_value(&facts)?;
@@ -2392,6 +2767,70 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn decoded_call_facts_share_one_allocation_per_line_text() -> Result<(), String> {
+        let call = |line: usize, name: &str, text: &str| CallFact {
+            line,
+            name: name.to_string(),
+            // A fresh allocation per call, as a cache payload decodes them.
+            text: CallText::from(text.to_string()),
+        };
+        let function = |name: &str, calls: Vec<CallFact>| FunctionFact {
+            id: SymbolId(format!("src/lib.rs::{name}")),
+            name: name.to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 2,
+            body: SourceText::owned(String::new()),
+            calls: calls.into(),
+            returns: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
+            source_role: FunctionSourceRole::Production,
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+            item: FunctionItemFact::default(),
+            impl_context: FunctionImplContext::Unknown,
+        };
+        let line = "    a(); b();";
+        let facts = FileFacts {
+            path: PathBuf::from("src/lib.rs"),
+            functions: vec![
+                function("f", vec![call(2, "a", line), call(2, "b", line)]),
+                function("g", vec![call(2, "a", line), call(3, "c", "    c();")]),
+            ],
+            tests: vec![TestFact {
+                name: "t".to_string(),
+                file: PathBuf::from("src/lib.rs"),
+                start_line: 5,
+                end_line: 6,
+                body: SourceText::owned(String::new()),
+                calls: vec![call(6, "a", line)].into(),
+                assertions: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+                generated: None,
+            }],
+            source: Arc::from(""),
+            ..FileFacts::default()
+        };
+        let wire = serde_json::to_value(&facts).map_err(|e| e.to_string())?;
+        let decoded: FileFacts = serde_json::from_value(wire).map_err(|e| e.to_string())?;
+        assert_eq!(decoded, facts);
+        let f = &decoded.functions[0].calls;
+        let g = &decoded.functions[1].calls;
+        assert!(f[0].text.shares_allocation(&f[1].text));
+        assert!(f[0].text.shares_allocation(&g[0].text));
+        // Tests share with functions in the same file.
+        assert!(f[0].text.shares_allocation(&decoded.tests[0].calls[0].text));
+        assert!(!f[0].text.shares_allocation(&g[1].text));
+        assert_eq!(g[1].text, "    c();");
+        Ok(())
+    }
+
     fn wire_probe_flag_absent(facts: &FileFacts) -> Result<bool, serde_json::Error> {
         Ok(serde_json::to_value(facts)?["probe_shapes"][0]
             .get("value_consumed")
@@ -2418,14 +2857,14 @@ mod tests {
                 start_line: 1,
                 end_line: 3,
                 body: SourceText::shared_or_owned(&source, 0, "fn a() {\n    helper();\n}"),
-                calls: vec![call],
+                calls: vec![call].into(),
                 returns: Vec::new(),
-                literals: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
                 source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 item: FunctionItemFact::default(),
                 impl_context: FunctionImplContext::Unknown,
             }],
@@ -2436,10 +2875,13 @@ mod tests {
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&source),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         };
         let wire = serde_json::to_value(&facts)?;
         assert!(
@@ -2627,14 +3069,14 @@ fn checks_helper() {
                 start_line: 1,
                 end_line: 1,
                 body: SourceText::shared_or_owned(&home, 0, "fn a() {}"),
-                calls: Vec::new(),
+                calls: crate::analysis::facts::SharedFactSlice::empty(),
                 returns: Vec::new(),
-                literals: Vec::new(),
+                literals: crate::analysis::facts::SharedFactSlice::empty(),
                 source_role: FunctionSourceRole::Production,
-                attrs: Vec::new(),
+                attrs: crate::analysis::facts::SharedFactSlice::empty(),
                 impl_attrs: Vec::new(),
-                nested_fn_names: Vec::new(),
-                let_bindings: Vec::new(),
+                nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+                let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
                 item: FunctionItemFact::default(),
                 impl_context: FunctionImplContext::Unknown,
             }],
@@ -2645,10 +3087,13 @@ fn checks_helper() {
             used_lexical_fallback: false,
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
+            verus_guard_facts: Vec::new(),
             role_provenance: SourceRoleProvenance::default(),
             source: Arc::clone(&home),
             item_scopes: None,
             macro_candidates: None,
+            external_docs: None,
+            constant_syntax: None,
         };
         // Paired children span.
         let wire = serde_json::to_value(&facts)?;
@@ -2730,6 +3175,25 @@ fn checks_helper() {
             with_probe_shapes > 0,
             "no source reached the probe-shape branches"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn file_facts_wire_ref_roundtrips_verus_guard_facts() -> Result<(), serde_json::Error> {
+        let source = "verus! {\nfn inc(x: u32) -> (r: u32)\n    ensures r == x,\n{ x }\n}\n";
+        let mut facts = crate::analysis::rust_index::summarize_file(
+            PathBuf::from("src/lib.rs"),
+            source.to_string(),
+        );
+        facts.verus_guard_facts = crate::analysis::verus::verus_guard_facts(source);
+        assert_eq!(facts.verus_guard_facts.len(), 1);
+        let wire = serde_json::to_string(&FileFactsWireRef::from(&facts))?;
+        assert!(
+            wire.contains("\"verus_guard_facts\""),
+            "borrowed wire must serialize guard facts"
+        );
+        let decoded: FileFacts = serde_json::from_str(&wire)?;
+        assert_eq!(decoded.verus_guard_facts, facts.verus_guard_facts);
         Ok(())
     }
 

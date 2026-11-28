@@ -1,0 +1,23 @@
+{
+  "id": "python_loop_selector_integer_pin_no_exposed_credit",
+  "language": "python",
+  "tier": "pure",
+  "source_fixture": "fixtures/python_loop_selector_integer_pin_no_exposed_credit",
+  "vector": "integer_pin_on_loop_selector_must_not_credit_equality_boundary",
+  "assertions": [
+    {
+      "type": "expected_finding_count",
+      "count": 1
+    },
+    {
+      "type": "expected_class",
+      "class": "infection_unknown"
+    },
+    {
+      "type": "must_not_promote"
+    },
+    {
+      "type": "must_not_report_clean"
+    }
+  ]
+}

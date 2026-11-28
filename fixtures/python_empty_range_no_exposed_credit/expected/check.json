@@ -1,0 +1,102 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_empty_range_no_exposed_credit/input",
+  "config_path": "<cwd>/fixtures/python_empty_range_no_exposed_credit/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":1,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:f2b7184471221a0aceaa5b7ee13e67a3c47d6a2c4be8d5be7eed578a5ac84515","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.py:python_preview:31bd0ad3",
+      "classification": "static_unknown",
+      "severity": "note",
+      "confidence": 0.20,
+      "confidence_basis": [
+        {"code": "preview_stages_not_modeled", "summary": "preview adapter: infection/propagation not modeled (Python)"},
+        {"code": "syntax_first_no_type_resolution", "summary": "syntax-first, no type or import resolution"},
+        {"code": "discriminator_not_established", "summary": "whether a test checks this behavior is not established"}
+      ],
+      "confidence_why_capped": "Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.",
+      "probe": {
+        "id": "probe:src_lib.py:python_preview:31bd0ad3",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/lib.py",
+        "line": 3,
+        "expression": "    for i in range(1, n):",
+        "owner": "python:src/lib.py::sum_to"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `sum_to`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Static limit `unsupported_syntax` prevents a safe Python infection claim."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"Static limit `unsupported_syntax` prevents a safe Python propagation claim."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"unknown","confidence":"low","summary":"Static limit `unsupported_syntax` prevents a safe Python discriminator claim."}
+       },
+      "evidence_stages": [
+        {"stage":"reach","state":"yes","confidence":"low"},
+        {"stage":"infect","state":"unknown","confidence":"low"},
+        {"stage":"propagate","state":"unknown","confidence":"low"},
+        {"stage":"observe","state":"yes","confidence":"low"},
+        {"stage":"discriminate","state":"unknown","confidence":"low","basis":[{"code":"discriminator_not_established","summary":"whether a test checks this behavior is not established"}]}
+      ],
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `sum_to`", "infection unknown: Static limit `unsupported_syntax` prevents a safe Python infection claim.", "propagation unknown: Static limit `unsupported_syntax` prevents a safe Python propagation claim.", "observation yes: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator unknown: Static limit `unsupported_syntax` prevents a safe Python discriminator claim.", "related test tests/test_lib.py:4 test_sum uses strong exact value oracle: assert sum_to(0) == 0"],
+      "flow_sinks": [
+      ],
+      "evidence": ["owner: sum_to", "owner_kind: function", "static_limit unsupported_syntax: changed range has no established differing accumulator result", "test_framework: pytest (test_sum)", "test_verify_command: python -m pytest tests/test_lib.py::test_sum (test_sum)", "related_test_relation: syntactic_call (test_sum)", "test_oracle: exact_value strong (test_sum)"],
+      "missing": ["Static limit `unsupported_syntax`: no strong related Python call establishes different old and new returned range sums. Both ranges may be empty or sum to the same value for the pinned input; other loop bodies, unreadable bounds, rebound names and unavailable source remain unresolved. Check an input that changes the iterations with a runtime test."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_sum",
+          "file": "tests/test_lib.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert sum_to(0) == 0"
+        }
+      ],
+      "stop_reasons": ["static_probe_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "static_limit_kind": "unsupported_syntax",
+      "changed_sink": "range",
+      "oracle_alignment": "unknown",
+      "alignment_reason": "no_strong_oracle",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/lib.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/lib.py","digest":"sha256:3a0bedbbf3d1652912147b38481a96e9a547235d02026e01a548f1d504aef4f1"}]}
+}

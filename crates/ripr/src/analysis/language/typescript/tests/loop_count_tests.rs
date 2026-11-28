@@ -15,6 +15,19 @@ fn run(
     added: &str,
     test: &str,
 ) -> Result<Finding, String> {
+    // Most controls describe the pre-edit fixture. Match a complete line so
+    // an already-edited header with an extra statement is never edited twice.
+    let source = source.replacen(&format!("{removed}\n"), &format!("{added}\n"), 1);
+    run_with_source(label, &source, removed, added, test)
+}
+
+fn run_with_source(
+    label: &str,
+    source: &str,
+    removed: &str,
+    added: &str,
+    test: &str,
+) -> Result<Finding, String> {
     let root = ts_unique_tempdir(label)?;
     ts_write_file(&root.join("src/retry.ts"), source)?;
     ts_write_file(&root.join("test/retry.test.ts"), test)?;
@@ -53,7 +66,11 @@ const COUNTED: &str = "  const fn = mock.fn(async () => { throw new Error(\"down
 
 #[test]
 fn a_call_count_over_a_changed_loop_bound_is_unknown() -> Result<(), String> {
-    let finding = run("loop-count", RETRY, OLD, NEW, &retry_test(COUNTED))?;
+    let uncertain = COUNTED.replace(
+        "throw new Error(\"down\");",
+        "if (Math.random()) throw new Error(\"down\");",
+    );
+    let finding = run("loop-count", RETRY, OLD, NEW, &retry_test(&uncertain))?;
     assert_eq!(
         finding.class,
         ExposureClass::StaticUnknown,
@@ -683,5 +700,404 @@ fn calling_or_configuring_an_unrelated_mock_stays_a_gap() -> Result<(), String> 
         );
         assert_stays_a_gap(label, &body)?;
     }
+    Ok(())
+}
+
+#[test]
+fn rejecting_callback_count_discriminates_exact_loop_bound() -> Result<(), String> {
+    let finding = run(
+        "loop-count-credit",
+        &RETRY.replace(OLD, NEW),
+        OLD,
+        NEW,
+        &retry_test(COUNTED),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    assert!(
+        finding
+            .ripr
+            .reveal
+            .discriminate
+            .summary
+            .contains("modeled rejecting path")
+    );
+    assert!(
+        finding
+            .missing
+            .iter()
+            .any(|item| item.contains("modeled rejecting path"))
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|item| item.contains("typescript_loop_count_witness:")
+                && item.contains("retry.test.ts:8")
+                && item.contains("old 2, new 1")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn renamed_counter_and_increased_bound_are_credited() -> Result<(), String> {
+    let source = RETRY
+        .replace("lastError", "failure")
+        .replace("let i = 0", "let j = 0")
+        .replace("i < attempts", "j < attempts")
+        .replace("i++", "j++");
+    let old = "  for (let j = 0; j < attempts; j++) {";
+    let new = "  for (let j = 0; j < attempts + 1; j++) {";
+    let finding = run(
+        "loop-count-increase",
+        &source.replace(old, new),
+        old,
+        new,
+        &retry_test(COUNTED),
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|item| item.contains("old 2, new 3")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn loop_count_credit_refuses_unproven_paths_and_targets() -> Result<(), String> {
+    let controls = [
+        (
+            "non-decimal-input",
+            RETRY.to_string(),
+            COUNTED.replace("withRetry(fn, 2)", "withRetry(fn, 2.0)"),
+        ),
+        (
+            "oversized-source",
+            format!("{RETRY}\n/*{}*/\n", "x".repeat(65_536)),
+            COUNTED.to_string(),
+        ),
+        (
+            "counter-shadows-callback",
+            RETRY
+                .replace("fn: () => Promise<T>", "i: () => Promise<T>")
+                .replace("return await fn();", "return await i();"),
+            COUNTED.to_string(),
+        ),
+        (
+            "counter-shadows-error-state",
+            RETRY
+                .replace("let lastError: unknown;", "let i: unknown;")
+                .replace("lastError = error;", "i = error;")
+                .replace("throw lastError;", "throw i;"),
+            COUNTED.to_string(),
+        ),
+        (
+            "not-a-declaration",
+            RETRY.replace("let lastError: unknown;", "letlastError: unknown;"),
+            COUNTED.to_string(),
+        ),
+        (
+            "module-side-effect",
+            format!("{RETRY}\nunknownSetup();\n"),
+            COUNTED.to_string(),
+        ),
+        (
+            "unexported-owner",
+            RETRY.replacen("export ", "", 1),
+            COUNTED.to_string(),
+        ),
+        (
+            "mock-shadows-owner",
+            RETRY.to_string(),
+            COUNTED
+                .replace("const fn =", "const withRetry =")
+                .replace("withRetry(fn, 2)", "withRetry(withRetry, 2)")
+                .replace("fn.mock.callCount()", "withRetry.mock.callCount()"),
+        ),
+        (
+            "extra-header-statement",
+            RETRY.replace(OLD, "  for (let i = 0; i < attempts; i++) { break;"),
+            COUNTED.to_string(),
+        ),
+        (
+            "conditional-rejection",
+            RETRY.to_string(),
+            COUNTED.replace(
+                "throw new Error(\"down\");",
+                "if (Math.random()) throw new Error(\"down\");",
+            ),
+        ),
+        (
+            "early-success",
+            RETRY.to_string(),
+            COUNTED.replace("throw new Error(\"down\");", "return \"ok\";"),
+        ),
+        (
+            "break",
+            RETRY.replace("    try {", "    break;\n    try {"),
+            COUNTED.to_string(),
+        ),
+        (
+            "continue",
+            RETRY.replace("    try {", "    continue;\n    try {"),
+            COUNTED.to_string(),
+        ),
+        (
+            "break-after-rejection",
+            RETRY.replace("lastError = error;", "lastError = error;\n      break;"),
+            COUNTED.replace("callCount(), 2", "callCount(), 1"),
+        ),
+        (
+            "conditional",
+            RETRY.replace("    try {", "    if (Math.random()) continue;\n    try {"),
+            COUNTED.to_string(),
+        ),
+        (
+            "wrong-count",
+            RETRY.to_string(),
+            COUNTED.replace("callCount(), 2", "callCount(), 1"),
+        ),
+        (
+            "dynamic-count",
+            RETRY.to_string(),
+            COUNTED.replace("callCount(), 2", "callCount(), expected"),
+        ),
+        (
+            "wrong-mock",
+            RETRY.to_string(),
+            COUNTED.replace(
+                "  assert.equal(fn.mock",
+                "  const other = mock.fn();\n  assert.equal(other.mock",
+            ),
+        ),
+        (
+            "conditional-call",
+            RETRY.to_string(),
+            COUNTED.replace(
+                "  await assert.rejects",
+                "  if (Math.random()) await assert.rejects",
+            ),
+        ),
+        (
+            "dynamic-bound",
+            RETRY.to_string(),
+            COUNTED.replace("withRetry(fn, 2)", "withRetry(fn, attempts)"),
+        ),
+        (
+            "wrong-target",
+            RETRY.to_string(),
+            COUNTED.replace("withRetry(fn, 2)", "other.withRetry(fn, 2)"),
+        ),
+    ];
+    for (label, source, body) in controls {
+        let source = source.replace(OLD, NEW);
+        let finding = run(label, &source, OLD, NEW, &retry_test(&body))?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+        if [
+            "early-success",
+            "conditional-rejection",
+            "break",
+            "continue",
+            "conditional",
+            "break-after-rejection",
+            "wrong-count",
+            "dynamic-count",
+            "conditional-call",
+            "dynamic-bound",
+        ]
+        .contains(&label)
+        {
+            assert_abstains(label, &finding);
+        }
+    }
+    for (label, extra) in [
+        (
+            "missing-owner-export",
+            "import { missing } from \"../src/retry\";",
+        ),
+        (
+            "missing-runner-export",
+            "import { missing } from \"node:test\";",
+        ),
+    ] {
+        let test = format!("{extra}\n{}", retry_test(COUNTED));
+        let finding = run(label, &RETRY.replace(OLD, NEW), OLD, NEW, &test)?;
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+    let test_body = retry_test(COUNTED);
+    let callback = test_body.strip_prefix(HEAD).ok_or("missing test header")?;
+    let exclusive = format!("{HEAD}\nit.only(\"other\", () => {{}});\n{callback}");
+    let finding = run(
+        "exclusive-other",
+        &RETRY.replace(OLD, NEW),
+        OLD,
+        NEW,
+        &exclusive,
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "exclusive-other: {:?}",
+        finding.missing
+    );
+    let dormant = format!("{HEAD}\nfunction register() {{\n{callback}\n}}");
+    let finding = run("dormant", &RETRY.replace(OLD, NEW), OLD, NEW, &dormant)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "dormant: {:?}",
+        finding.missing
+    );
+    let stale = run_with_source("stale-source", RETRY, OLD, NEW, &retry_test(COUNTED))?;
+    assert_abstains("stale-source", &stale);
+    let split_old = "  for (let i = 0; i < at tempts; i++) {";
+    let finding = run(
+        "invalid-split-identifier",
+        &RETRY.replace(OLD, NEW),
+        split_old,
+        NEW,
+        &retry_test(COUNTED),
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "invalid-split-identifier: {:?}",
+        finding.missing
+    );
+    let malformed_old = "  for (let i = 0; i < attempts + 01; i++) {";
+    let finding = run(
+        "invalid-old-number",
+        &RETRY.replace(OLD, NEW),
+        malformed_old,
+        NEW,
+        &retry_test(COUNTED),
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "invalid-old-number: {:?}",
+        finding.missing
+    );
+    let added_with_break = "  for (let i = 0; i < attempts - 1; i++) { break;";
+    let source_with_break = RETRY.replace(OLD, added_with_break);
+    let finding = run(
+        "same-line-break",
+        &source_with_break,
+        OLD,
+        added_with_break,
+        &retry_test(COUNTED),
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "same-line-break: {:?}",
+        finding.missing
+    );
+    let skipped = format!("{HEAD}\nit(\"x\", async (t) => {{\n  t.skip();\n{COUNTED}\n}});\n");
+    let finding = run("skip", &RETRY.replace(OLD, NEW), OLD, NEW, &skipped)?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "skip: {:?}",
+        finding.missing
+    );
+    let finding = run(
+        "same-count",
+        &RETRY.replace(OLD, "  for (let i = 0; i < attempts - 0; i++) {"),
+        OLD,
+        "  for (let i = 0; i < attempts - 0; i++) {",
+        &retry_test(COUNTED),
+    )?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "same-count: {:?}",
+        finding.missing
+    );
+    Ok(())
+}
+
+#[test]
+fn wrong_changed_coordinate_does_not_establish_the_loop_header() -> Result<(), String> {
+    let root = ts_unique_tempdir("loop-wrong-coordinate")?;
+    ts_write_file(&root.join("src/retry.ts"), &RETRY.replace(OLD, NEW))?;
+    ts_write_file(&root.join("test/retry.test.ts"), &retry_test(COUNTED))?;
+    let line = |text: &str| crate::analysis::diff::ChangedLine {
+        line: 4,
+        text: text.to_owned(),
+        new_side_line: 4,
+    };
+    let changed = ChangedFile {
+        path: PathBuf::from("src/retry.ts"),
+        added_lines: vec![line(NEW)],
+        removed_lines: vec![line(OLD)],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == 4)
+        .ok_or("missing wrong-coordinate finding")?;
+    assert_abstains("wrong changed coordinate", &finding);
+    Ok(())
+}
+
+#[test]
+fn multiple_changed_lines_do_not_establish_the_old_loop_body() -> Result<(), String> {
+    let root = ts_unique_tempdir("loop-multi-line")?;
+    ts_write_file(&root.join("src/retry.ts"), &RETRY.replace(OLD, NEW))?;
+    ts_write_file(&root.join("test/retry.test.ts"), &retry_test(COUNTED))?;
+    let line = |number, text: &str| crate::analysis::diff::ChangedLine {
+        line: number,
+        text: text.to_owned(),
+        new_side_line: number,
+    };
+    let changed = ChangedFile {
+        path: PathBuf::from("src/retry.ts"),
+        added_lines: vec![line(3, NEW), line(5, "      return await fn();")],
+        removed_lines: vec![line(3, OLD), line(5, "      return await other();")],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == 3)
+        .ok_or("missing loop finding")?;
+    assert_abstains("multiple changed lines", &finding);
     Ok(())
 }

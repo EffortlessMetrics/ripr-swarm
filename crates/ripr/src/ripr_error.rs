@@ -18,15 +18,29 @@ use crate::core_error::{CheckFailureKind, CoreError};
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RiprErrorCategory {
+    /// `ripr.toml`, or the candidate tree's configuration, failed to load or
+    /// parse.
     Configuration,
+    /// The repository root is unusable or a base revision does not resolve.
     RepositoryOrGit,
+    /// The diff or another named input is in a form `ripr` does not accept.
     DiffOrInput,
+    /// The analysis itself refused or failed, including a selector that
+    /// matched no finding and any failure not yet given a typed family.
     Analysis,
+    /// Rendering or schema validation of an output failed.
     OutputOrSchema,
+    /// A policy file is invalid, or policy withholds the requested subject.
     PolicyOrGate,
+    /// A check artifact, gap ledger, or receipt could not be read or used.
     ReceiptOrArtifact,
+    /// The request names something static analysis cannot act on. This is a
+    /// stated limitation, not a defect.
     UnsupportedOrLimited,
+    /// The run was cancelled, superseded, or ran out of its time budget. It
+    /// produced no findings, so it is never a clean result.
     CancelledOrTimedOut,
+    /// An internal expectation did not hold. Worth reporting as a bug.
     InternalInvariant,
 }
 
@@ -49,27 +63,65 @@ impl RiprErrorCategory {
 }
 
 /// Public library error for the first migrated check vertical (#1986).
+///
+/// Returned by [`try_check_workspace`](crate::try_check_workspace) and
+/// [`try_check_workspace_with_config`](crate::try_check_workspace_with_config).
+/// Branch on [`RiprError::category`] or [`RiprError::code`] rather than on the
+/// `Display` text, which is human diagnostic prose and may be reworded.
+///
+/// `Debug` output redacts the `detail` of a configuration failure, so config
+/// file contents do not reach logs through `{:?}`.
+///
+/// ```
+/// use ripr::{RiprError, RiprErrorCategory};
+///
+/// fn should_retry(error: &RiprError) -> bool {
+///     error.category() == RiprErrorCategory::CancelledOrTimedOut
+/// }
+/// # let _ = should_retry;
+/// ```
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq)]
 pub enum RiprError {
+    /// A git invocation was given a zero deadline, or exceeded its deadline
+    /// and was terminated.
     GitInvocationTimeout {
+        /// The git operation that was being run.
         operation: String,
+        /// The deadline that applied, in milliseconds.
         timeout_ms: u128,
+        /// Whether the git process had been started before the deadline
+        /// applied.
         spawned: bool,
     },
+    /// The analysis stopped at a cooperative cancellation checkpoint.
     AnalysisCancelled {
+        /// Why it stopped: `"Superseded"`, `"Cancelled"`, or
+        /// `"DeadlineExceeded"`.
         abort: &'static str,
     },
+    /// A named `check` failure family.
     CheckFailure {
+        /// The high-level category, also returned by [`RiprError::category`].
         category: RiprErrorCategory,
+        /// The stable machine code, also returned by [`RiprError::code`].
         code: &'static str,
+        /// The human diagnostic, the same text the CLI prints on stderr.
         detail: String,
     },
+    /// A failure that has not yet been given a typed family. It reports
+    /// [`RiprErrorCategory::Analysis`].
     Unclassified {
+        /// The human diagnostic.
         detail: String,
     },
+    /// Another error with added human context. Category, code, and the
+    /// predicate methods read through to `source`.
     Context {
+        /// What was being attempted when `source` occurred.
         context: String,
+        /// The underlying error, also returned by
+        /// [`Error::source`](std::error::Error::source).
         source: Box<RiprError>,
     },
 }

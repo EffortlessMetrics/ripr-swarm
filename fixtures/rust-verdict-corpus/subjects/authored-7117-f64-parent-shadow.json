@@ -1,0 +1,13 @@
+{
+  "subject_id": "authored-7117-f64-parent-shadow",
+  "origin": "authored",
+  "version_label": "authored 2026-11-02; #7117 f64 Render trait-shadow production-path corpus",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {"path": "Cargo.toml", "sha256": "1962319892c6a3f904c27675d4abef7cee02ded29501ef4fa73a80671070c6a2"},
+    {"path": "src/lib.rs", "sha256": "5c7b3ce525c7c32bdc756945bdc7f5f73bc90cdfb4216c77eb2dbf3a79c57c34"},
+    {"path": "src/helpers.rs", "sha256": "fcccdbe32d63d800b2fc12536db73c3edd4d56c0e5438c775a6053d640ecad62"},
+    {"path": "src/helpers/render_tests.rs", "sha256": "3d14e2a942b1769d37863d50acdb301e0a1d6dc6258ed12063b3d75f11034cb9"}
+  ]
+}

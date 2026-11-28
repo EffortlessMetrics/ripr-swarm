@@ -1,0 +1,26 @@
+# #15303: intentional restarts reset an open crash circuit; a folder removal that leaves one root re-resolves; Show Top Limitation names a stopped or disabled server.
+[[extend]]
+id = "RIPR-SPEC-0049"
+tests = [
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::a configuration-style coordinated restart resets an open crash circuit",
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::an active-editor root switch resets an open crash circuit",
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::a workspace trust grant resets an open crash circuit",
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::removing a non-session folder re-resolves an ambiguous window to the remaining folder",
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::removing a folder while still ambiguous starts nothing",
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::removing an unrelated folder never restarts a running server onto the active folder",
+]
+code = [
+  "editors/vscode/src/extension.ts",
+]
+
+[[extend]]
+id = "RIPR-SPEC-0078"
+tests = [
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::Show Top Limitation with no running server names the stopped server, not a pending analysis",
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::Show Top Limitation treats a bound but stopped client as a stopped server",
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::Show Top Limitation while disabled names the enable step before the restart",
+  "editors/vscode/test/suite/workspace_root_binding.test.ts::Show Top Limitation humanizes snake_case status tokens",
+]
+code = [
+  "editors/vscode/src/client.ts",
+]

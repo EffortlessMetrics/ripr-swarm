@@ -15,8 +15,9 @@
 //! clean.
 //!
 //! Root identity is compared in producer encoding: the expected checkout
-//! unifies `\\` to `/` and encodes each `%` as `%25`, then matches the
-//! producer root after the same separator unification. Decoding `%25` on
+//! unifies `\\` to `/`, folds Windows verbatim prefixes on Windows, and
+//! encodes each `%` as `%25`, then matches the normalized producer root.
+//! Decoding `%25` on
 //! both sides would reject a checkout whose name contains literal `%25`
 //! (producer `%2525`). That is a local compare, not a copy of ripr's
 //! private `stable_path_text`. Head is checked only when the producer
@@ -50,7 +51,11 @@ const INCOMPLETE_KINDS: [&str; 3] = [
 ];
 /// The only typed outcome limitations a complete kind may carry
 /// (`validate_outcome` in `crates/ripr/src/analysis_outcome.rs`).
-const COMPLETE_KIND_ALLOWED_LIMITATIONS: [&str; 2] = ["eol_only_churn", "verification_only_change"];
+const COMPLETE_KIND_ALLOWED_LIMITATIONS: [&str; 3] = [
+    "eol_only_churn",
+    "verification_only_change",
+    "requested_scope_excluded",
+];
 
 /// Identity the measured child was asked to analyze.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,12 +137,16 @@ impl CheckAdmission {
     }
 }
 
-/// The typed outcome limitation that makes an analysis stop at a declared
-/// static limit. A finding carrying the static limit alone does not show it
-/// is why the analysis is partial.
+/// The typed outcome limitation that makes an analysis partial for a declared
+/// expectation. A static limit (`typescript_workspace_discovery_truncated`)
+/// maps to the limitation that causes it, and a finding carrying the static
+/// limit alone does not show it is why the analysis is partial. A typed
+/// limitation kind (`language_scope_unsupported`) names itself: the pinned
+/// diff is partial because of that limitation, with no static-limit finding.
 pub(crate) fn typed_cause_of_static_limit(limit: &str) -> Option<&'static str> {
     match limit {
         "typescript_workspace_discovery_truncated" => Some("diff_scope_oversized"),
+        "language_scope_unsupported" => Some("language_scope_unsupported"),
         _ => None,
     }
 }
@@ -310,12 +319,14 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
 }
 
 /// A row that declares an expected partial outcome passes only when the
-/// analysis is the typed `partial_with_limitations` outcome, the typed
-/// limitation that causes the declared static limit is present, and a finding
-/// names that static limit. A complete result means the pinned diff no longer
-/// reproduces the refusal; another limit or kind is a different failure.
-/// Counts get the same consistency checks as a complete document. The result
-/// is `ExpectedPartial`, never `Complete` (#12052).
+/// analysis is the typed `partial_with_limitations` outcome and every
+/// limitation is of the declared kind (the single-cause rule). The declared
+/// value is either a typed limitation kind such as `language_scope_unsupported`,
+/// or a static limit, which also needs the typed limitation that causes it and
+/// a finding that names the limit. A complete result means the pinned diff no
+/// longer reproduces the partial; another limitation or kind is a different
+/// failure. Counts get the same consistency checks as a complete document. The
+/// result is `ExpectedPartial`, never `Complete` (#12052).
 fn admit_expected_partial(
     envelope: &Value,
     outcome: &serde_json::Map<String, Value>,
@@ -356,12 +367,15 @@ fn admit_expected_partial(
             extra.unwrap_or("unnamed")
         ));
     }
-    let names_limit = object
-        .get("findings")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .any(|finding| finding.get("static_limit_kind").and_then(Value::as_str) == Some(limit));
+    // A typed limitation kind is its own cause; only a static limit also
+    // needs a finding that carries it.
+    let names_limit = limit == cause
+        || object
+            .get("findings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|finding| finding.get("static_limit_kind").and_then(Value::as_str) == Some(limit));
     if !names_limit {
         return rejected(&format!(
             "partial outcome carries no finding with static limit `{limit}`"
@@ -477,7 +491,7 @@ pub(crate) fn findings_rendering_truncated(check: &Value) -> bool {
 
 fn field_matches(field: &str, actual: &str, expected: &str) -> bool {
     if field == "root" {
-        encode_expected_root(expected) == unify_root_separators(actual)
+        encode_expected_root(expected) == plain_root_text(actual)
     } else {
         actual == expected
     }
@@ -487,15 +501,41 @@ fn unify_root_separators(value: &str) -> String {
     value.replace('\\', "/")
 }
 
-/// Encode a checkout root the way the producer writes it: `/` separators
-/// and `%` → `%25`. Applied only to the expected harness root. Not a copy
-/// of private `stable_path_text` (no invalid-byte codec).
-fn encode_expected_root(value: &str) -> String {
-    unify_root_separators(value).replace('%', "%25")
+/// Reduce a root to the plain form the producer writes: `/` separators and
+/// no Windows verbatim prefix. The harness root comes from
+/// `fs::canonicalize`, which yields `\\?\H:\...` / `\\?\UNC\server\...`
+/// on Windows, while the producer reports the plain drive / UNC forms;
+/// without this reduction every Windows warm sample is rejected.
+fn plain_root_text(value: &str) -> String {
+    let unified = unify_root_separators(value);
+    if !cfg!(windows) {
+        return unified;
+    }
+    if let Some(rest) = unified.strip_prefix("//?/") {
+        let bytes = rest.as_bytes();
+        if bytes.first().is_some_and(u8::is_ascii_alphabetic) && bytes.get(1) == Some(&b':') {
+            return rest.to_string();
+        }
+        if rest
+            .get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("UNC/"))
+            && let Some(tail) = rest.get(4..).filter(|tail| !tail.is_empty())
+        {
+            return format!("//{tail}");
+        }
+    }
+    unified
 }
 
-/// Complete kinds may disclose only `eol_only_churn` and
-/// `verification_only_change`. A missing, non-array,
+/// Encode a checkout root the way the producer writes it: plain `/`
+/// separators and `%` → `%25`. Applied only to the expected harness root.
+/// Not a copy of private `stable_path_text` (no invalid-byte codec).
+fn encode_expected_root(value: &str) -> String {
+    plain_root_text(value).replace('%', "%25")
+}
+
+/// Complete kinds may disclose only `eol_only_churn`,
+/// `verification_only_change` and `requested_scope_excluded`. A missing, non-array,
 /// or kind-less `limitations` value is not an empty allowlist (#7276).
 fn complete_kind_has_incomplete_limitation(
     outcome: &serde_json::Map<String, Value>,
@@ -749,6 +789,58 @@ mod tests {
             .ok_or_else(|| format!("fixture for removing `{field}` is not an object"))?;
         object.remove(field);
         Ok(doc)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn verbatim_harness_root_admits_plain_producer_root() -> Result<(), String> {
+        let drive = ["H:", "corpus%25-a"].join(r"\");
+        let unc = ["server", "share", "corpus%25-a"].join(r"\");
+        for (root, producer) in [
+            (format!(r"\\?\{drive}"), drive.replace('\\', "/")),
+            (
+                format!(r"\\?\UNC\{unc}"),
+                format!("//{}", unc.replace('\\', "/")),
+            ),
+            (
+                format!(r"\\?\unc\{unc}"),
+                format!("//{}", unc.replace('\\', "/")),
+            ),
+        ] {
+            let mut expected = subject();
+            expected.root = root;
+            let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+            *doc.get_mut("root").ok_or("fixture root missing")? =
+                json!(producer.replace('%', "%25"));
+            if !admit_check_sample(false, true, &doc.to_string(), &expected).is_complete() {
+                return Err(format!(
+                    "plain producer root did not admit against {}",
+                    expected.root
+                ));
+            }
+            *doc.get_mut("root").ok_or("fixture root missing")? =
+                json!(["H:", "elsewhere"].join("/"));
+            if admit_check_sample(false, true, &doc.to_string(), &expected).is_complete() {
+                return Err("different producer root admitted".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn root_normalization_preserves_unrecognized_prefixes() -> Result<(), String> {
+        for root in ["//?/device/corpus", "//?/UNC/", "//?/💻/corpus"] {
+            if plain_root_text(root) != root {
+                return Err(format!("unrecognized root prefix changed: {root}"));
+            }
+        }
+        if !cfg!(windows) {
+            let root = "//?/H:/corpus";
+            if plain_root_text(root) != root {
+                return Err("Windows-looking root changed on a non-Windows host".to_string());
+            }
+        }
+        Ok(())
     }
 
     #[test]
@@ -1468,6 +1560,51 @@ mod tests {
         assert!(
             admission.reason().contains("no typed cause"),
             "{admission:?}"
+        );
+    }
+
+    /// The pinned `typescript-compiler` diff no longer reaches the walk cap:
+    /// it is partial because of typed `language_scope_unsupported`
+    /// limitations (skipped generated baseline, unindexed test shapes, a
+    /// parse error) and no finding carries a static limit (#12052).
+    #[test]
+    fn a_typed_limitation_kind_can_be_the_expected_partial() {
+        let kind = "language_scope_unsupported";
+        let subject = CheckSubject {
+            expected_partial: Some(kind.to_string()),
+            ..self::subject()
+        };
+        let mut doc = partial_document(None);
+        doc["analysis_outcome"]["outcome"]["limitations"] = json!([
+            { "kind": kind },
+            { "kind": kind },
+            { "kind": kind }
+        ]);
+        let admission = admit_check_document(&doc, &subject);
+        assert!(admission.is_admitted(), "{admission:?}");
+        assert!(!admission.is_complete(), "{admission:?}");
+        // A different limitation beside it is a degraded run.
+        let mut extra = doc.clone();
+        extra["analysis_outcome"]["outcome"]["limitations"] =
+            json!([{ "kind": kind }, { "kind": "diff_scope_oversized" }]);
+        let admission = admit_check_document(&extra, &subject);
+        assert!(!admission.is_admitted(), "{admission:?}");
+        assert!(
+            admission.reason().contains("diff_scope_oversized"),
+            "{admission:?}"
+        );
+        // Only that kind of limitation is missing: not the expected partial.
+        let mut other = doc.clone();
+        other["analysis_outcome"]["outcome"]["limitations"] =
+            json!([{ "kind": "diff_scope_oversized" }]);
+        assert!(!admit_check_document(&other, &subject).is_admitted());
+        // A complete outcome means the pin no longer reproduces the partial.
+        assert!(
+            !admit_check_document(
+                &complete_document("complete_with_findings", vec![]),
+                &subject
+            )
+            .is_admitted()
         );
     }
 

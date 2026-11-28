@@ -20,7 +20,7 @@
         },
         "static_limit_kind": "missing_import_graph"
       },
-      "message": "python preview evidence (syntax-first, advisory): Python preview: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value. Static limit: missing_import_graph.",
+      "message": "Python preview (advisory): changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value. Static limit: missing_import_graph.",
       "range": {
         "end": {
           "character": 54,

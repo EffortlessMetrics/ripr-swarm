@@ -1,0 +1,22 @@
+[[behavior]]
+id = "RIPR-SPEC-0405"
+name = "Julia preview package, dispatch, Test, numerical, array, and native boundaries"
+spec = "docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md"
+tests = []
+fixtures = [
+  "fixtures/rust-verdict-corpus/spec-scopes/RIPR-SPEC-0405.toml",
+  "fixtures/python-verdict-corpus/spec-scopes/RIPR-SPEC-0405.toml",
+  "fixtures/typescript-verdict-corpus/spec-scopes/RIPR-SPEC-0405.toml",
+  "fixtures/perl-verdict-corpus/spec-scopes/RIPR-SPEC-0405.toml",
+]
+code = []
+outputs = [
+  "docs/specs/RIPR-SPEC-0405-julia-preview-package-dispatch-test-numerical-array-native-boundaries.md",
+  "docs/spec-index.d/RIPR-SPEC-0405.md",
+  "docs/CAPABILITY_MATRIX.md",
+  "metrics/capabilities.toml",
+  "policy/doc-artifacts.d/RIPR-SPEC-0405.toml",
+]
+metrics = [
+  "language_adapter_julia_spec_registered",
+]

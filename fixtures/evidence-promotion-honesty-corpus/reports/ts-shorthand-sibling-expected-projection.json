@@ -1,0 +1,9 @@
+{
+  "summary": { "findings": 1 },
+  "findings": [
+    {
+      "classification": "weakly_exposed",
+      "probe": { "family": "field_construction" }
+    }
+  ]
+}

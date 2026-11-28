@@ -734,3 +734,88 @@ fn after_terminated_at_receipt_publication_stays_unknown() -> Result<(), String>
 fn after_terminated_at_terminal_retention_stays_unknown() -> Result<(), String> {
     interrupt_at(Boundary::Retention, "interrupt-retention")
 }
+
+/// A gap-bound attempt is Python or TypeScript, and `--test-result` accepts
+/// Rust libtest results for a Rust test file only. The result is therefore
+/// refused up front, before the receipt, verify or gap snapshot are published
+/// (a late refusal inside terminal retention would strand them), and the
+/// attempt still finishes with exactly its three gap roles and no focused role.
+/// This guards the up-front refusal. The manifest rule that accepts one
+/// optional `focused_test_result` role beside the three gap roles is covered by
+/// the `a_gap_attempt_accepts_one_optional_focused_result_but_no_other_extra_role`
+/// unit test, because no CLI route reaches it for a gap-bound attempt.
+#[test]
+fn a_gap_bound_attempt_refuses_a_rust_test_result_before_publishing_anything() -> Result<(), String>
+{
+    let attempt = GapAttempt::start("gap-test-result")?;
+    attempt.commit_closing_test()?;
+    let head = fixture_git_output(&attempt.root, &["rev-parse", "HEAD"])?
+        .trim()
+        .to_string();
+    let result = attempt.decoy.join("focused-result.json");
+    let document = serde_json::json!({
+        "schema_version": "0.1",
+        "kind": "focused_test_result",
+        "attempt_id": attempt.attempt_id,
+        "head": head,
+        "test_file": "test/pricing.test.ts",
+        "libtest_events": [
+            {"type": "test", "event": "ok", "name": "discounts_exactly_at_the_threshold"}
+        ],
+    });
+    std::fs::write(&result, document.to_string()).map_err(|error| error.to_string())?;
+    let (ok, text) = ripr(
+        &attempt.decoy,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &attempt.root_arg,
+            "--phase",
+            "after",
+            "--attempt",
+            &attempt.attempt_id,
+            "--test-result",
+            &result.to_string_lossy(),
+        ],
+    )?;
+    expect_exit(ok, false, &format!("gap-bound with a Rust result: {text}"))?;
+    need(&text, "focused test result", "refusal names the result")?;
+    let manifest = attempt.manifest_for_only_attempt()?;
+    if !manifest["terminal_artifacts"]
+        .as_array()
+        .is_none_or(|rows| rows.is_empty())
+        || attempt
+            .root
+            .join("target/ripr/reports/agent-receipt.json")
+            .exists()
+    {
+        return Err(format!("a refused result published evidence: {manifest}"));
+    }
+    let (ok, finished) = ripr(
+        &attempt.decoy,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &attempt.root_arg,
+            "--phase",
+            "after",
+            "--attempt",
+            &attempt.attempt_id,
+        ],
+    )?;
+    expect_exit(ok, true, &format!("plain gap-bound after: {finished}"))?;
+    let manifest = attempt.manifest_for_only_attempt()?;
+    let mut roles: Vec<&str> = manifest["terminal_artifacts"]
+        .as_array()
+        .ok_or("no terminal artifacts")?
+        .iter()
+        .filter_map(|row| row["role"].as_str())
+        .collect();
+    roles.sort_unstable();
+    if roles != ["after_check_findings", "agent_receipt", "agent_verify"] {
+        return Err(format!("unexpected terminal roles: {roles:?}"));
+    }
+    Ok(())
+}

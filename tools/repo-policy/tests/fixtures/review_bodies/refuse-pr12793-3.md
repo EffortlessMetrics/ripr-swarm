@@ -1,0 +1,5 @@
+REVIEW_INCOMPLETE — affected feedback recheck complete on unchanged head `9ccb697d3a25a8f93f9355cc55711a0dacecbc2e`.
+
+Run 41651583173 stopped in admission before Rust qualification because review thread 4455842720 arrived after the handoff. The source-backed reply 4455888094 is read back and its thread is now resolved. `matched_count=2` is the native selected-harness count; imported=1 and missing=1 for PARTIAL. Both retained export and existing independent native parser test establish this. The proposed change to 1 is incorrect; no source edit was made.
+
+The exact head/tree and observed merge subject remain unchanged, and prior source/fixture/consumer review carries forward. The source result remains expected-green, not natively qualified. Ready and one refreshed label request may now obtain the missing native proof; final REVIEW_READY is still withheld.

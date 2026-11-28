@@ -32,6 +32,21 @@ pub(crate) fn single_line(text: &str) -> String {
     if changed { out } else { text.to_string() }
 }
 
+/// Spell a path for one line of human prose (#16455): a line break or tab in
+/// a tracked file name renders as `\r`, `\n` or `\t`, so the name's tail
+/// cannot print as its own line that reads like `ripr` output or a command.
+/// Every other character, including `\` on Unix, is kept, so an ordinary path
+/// renders byte for byte. Machine formats keep the raw value. Renderers reach
+/// it through `crate::output::path::prose_path_text`.
+pub(crate) fn prose_path_text(path: &str) -> String {
+    if !path.contains(['\r', '\n', '\t']) {
+        return path.to_string();
+    }
+    path.replace('\r', "\\r")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t")
+}
+
 pub(crate) fn terminal_safe(text: String) -> String {
     if !text.chars().any(needs_terminal_escape) {
         return text;

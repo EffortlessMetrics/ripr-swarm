@@ -115,3 +115,63 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_mock_count_computed (10)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_computed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — typescript_mock_count_computed (11)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_computed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — typescript_mock_count_computed (12)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_computed --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — typescript_mock_count_computed (13)
+
+Reason:
+human-full: one blank line, not two, separates the last finding from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_computed --reason "..."`
+
+Updated:
+- `expected/human-full.txt`
+
+## Pending — typescript_mock_count_computed (14)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless typescript_mock_count_computed --reason "..."`
+
+Updated:
+- `expected/human.txt`
+- `expected/human-full.txt`

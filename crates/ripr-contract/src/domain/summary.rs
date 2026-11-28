@@ -1,0 +1,212 @@
+//! Run-level finding counts and per-language changed-file counts.
+
+use crate::domain::ExposureClass;
+
+/// Changed-file count for one language: the count an adapter that returned a
+/// result reported, or the path-routed count for a changed language whose
+/// adapter produced none (not enabled, not compiled in, or errored; #10719).
+/// In repository mode the count is the adapter's production-file total
+/// instead, so it is nonzero even on a clean checkout.
+///
+/// `language` is the stable wire string from `LanguageId::as_str`
+/// (`"rust"`, `"typescript"`, `"javascript"`, `"python"`, `"perl"`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LanguageFileCount {
+    /// Stable language wire string, such as `"rust"`.
+    pub language: String,
+    /// Files counted for this language: changed files in diff mode,
+    /// production files in repository mode.
+    pub files: usize,
+}
+
+/// Run-level counts for one analysis result: files counted, findings, and
+/// findings per exposure class. In diff mode the file counts are changed
+/// files; in repository mode they are the production files the adapters
+/// analyzed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Summary {
+    /// Files attributed to the Rust adapter only (#2103): changed files in
+    /// diff mode, production files in repository mode. Preview
+    /// language adapters report their own counts in
+    /// `changed_files_by_language`; they must never inflate this field.
+    pub changed_rust_files: usize,
+    /// Per-language changed-file counts: one entry per adapter that returned a
+    /// result (its own count, possibly zero) plus one entry per routed language
+    /// whose adapter produced none (#10719). Sorted by language wire string for
+    /// deterministic serialization.
+    pub changed_files_by_language: Vec<LanguageFileCount>,
+    /// Probe count. The analysis sets it from the finding list, one finding
+    /// per probe, so it starts equal to `findings`.
+    pub probes: usize,
+    /// Findings in the result, including suppressed and withheld ones.
+    pub findings: usize,
+    /// Findings classed `exposed`, not counting suppressed or withheld ones.
+    pub exposed: usize,
+    /// Findings classed `weakly_exposed`, not counting suppressed or withheld ones.
+    pub weakly_exposed: usize,
+    /// Findings classed `reachable_unrevealed`, not counting suppressed or withheld ones.
+    pub reachable_unrevealed: usize,
+    /// Findings classed `no_static_path`, not counting suppressed or withheld ones.
+    pub no_static_path: usize,
+    /// Findings classed `infection_unknown`, not counting suppressed or withheld ones.
+    pub infection_unknown: usize,
+    /// Findings classed `propagation_unknown`, not counting suppressed or withheld ones.
+    pub propagation_unknown: usize,
+    /// Findings classed `static_unknown`, not counting suppressed or withheld ones.
+    pub static_unknown: usize,
+    /// Distinct analysed (file, line, expression) keys that carry unsuppressed
+    /// findings of more than one class (#11554): changed expressions in diff
+    /// mode, repository seams' expressions in repo mode. Raw `findings` and the class buckets still count
+    /// every probe; this says how many expressions received conflicting
+    /// verdicts from different probe families. Zero is not rendered.
+    pub conflicting_expressions: usize,
+    /// Findings whose only reaching code is a proof harness ripr does not
+    /// evaluate (#12921, RIPR-SPEC-0367). A subset of `no_static_path`: the
+    /// class is unchanged and the proof earns no test credit; this separates
+    /// "covered only by an unevaluated proof" from "no guard found". Zero is
+    /// not rendered.
+    pub proof_harness_only: usize,
+}
+
+impl Summary {
+    /// Record `files` changed files for `language`, merging into an existing
+    /// entry when the adapter already reported one. Entries stay sorted by
+    /// language wire string so JSON output order is deterministic.
+    pub fn record_changed_files_by_language(&mut self, language: &str, files: usize) {
+        match self
+            .changed_files_by_language
+            .iter_mut()
+            .find(|count| count.language == language)
+        {
+            Some(count) => count.files += files,
+            None => {
+                self.changed_files_by_language.push(LanguageFileCount {
+                    language: language.to_string(),
+                    files,
+                });
+                self.changed_files_by_language
+                    .sort_by(|a, b| a.language.cmp(&b.language));
+            }
+        }
+    }
+
+    /// Adds one finding of `class` to its per-class bucket.
+    pub fn increment_exposure_class(&mut self, class: &ExposureClass) {
+        match class {
+            ExposureClass::Exposed => self.exposed += 1,
+            ExposureClass::WeaklyExposed => self.weakly_exposed += 1,
+            ExposureClass::ReachableUnrevealed => self.reachable_unrevealed += 1,
+            ExposureClass::NoStaticPath => self.no_static_path += 1,
+            ExposureClass::InfectionUnknown => self.infection_unknown += 1,
+            ExposureClass::PropagationUnknown => self.propagation_unknown += 1,
+            ExposureClass::StaticUnknown => self.static_unknown += 1,
+        }
+    }
+
+    /// Removes one finding of `class` from its per-class bucket. Used when a
+    /// `--suppression-policy` suppresses a finding (#1441): the per-class
+    /// buckets count unsuppressed findings only, while `findings` stays the
+    /// total rendered count. Saturating so a policy bug can never underflow.
+    pub fn decrement_exposure_class(&mut self, class: &ExposureClass) {
+        let bucket = match class {
+            ExposureClass::Exposed => &mut self.exposed,
+            ExposureClass::WeaklyExposed => &mut self.weakly_exposed,
+            ExposureClass::ReachableUnrevealed => &mut self.reachable_unrevealed,
+            ExposureClass::NoStaticPath => &mut self.no_static_path,
+            ExposureClass::InfectionUnknown => &mut self.infection_unknown,
+            ExposureClass::PropagationUnknown => &mut self.propagation_unknown,
+            ExposureClass::StaticUnknown => &mut self.static_unknown,
+        };
+        *bucket = bucket.saturating_sub(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Summary;
+    use crate::domain::ExposureClass;
+
+    #[test]
+    fn default_summary_starts_with_zero_counts() {
+        let summary = Summary::default();
+
+        assert_eq!(summary.changed_rust_files, 0);
+        assert!(summary.changed_files_by_language.is_empty());
+        assert_eq!(summary.probes, 0);
+        assert_eq!(summary.findings, 0);
+        assert_eq!(summary.exposed, 0);
+        assert_eq!(summary.weakly_exposed, 0);
+        assert_eq!(summary.reachable_unrevealed, 0);
+        assert_eq!(summary.no_static_path, 0);
+        assert_eq!(summary.infection_unknown, 0);
+        assert_eq!(summary.propagation_unknown, 0);
+        assert_eq!(summary.static_unknown, 0);
+    }
+
+    #[test]
+    fn record_changed_files_by_language_merges_and_stays_sorted() {
+        let mut summary = Summary::default();
+
+        summary.record_changed_files_by_language("rust", 2);
+        summary.record_changed_files_by_language("python", 5);
+        summary.record_changed_files_by_language("rust", 1);
+
+        let entries: Vec<(&str, usize)> = summary
+            .changed_files_by_language
+            .iter()
+            .map(|count| (count.language.as_str(), count.files))
+            .collect();
+        assert_eq!(entries, vec![("python", 5), ("rust", 3)]);
+    }
+
+    #[test]
+    fn increment_exposure_class_counts_each_class() {
+        let mut summary = Summary::default();
+
+        let classes = [
+            ExposureClass::Exposed,
+            ExposureClass::WeaklyExposed,
+            ExposureClass::ReachableUnrevealed,
+            ExposureClass::NoStaticPath,
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ];
+
+        for class in classes {
+            summary.increment_exposure_class(&class);
+        }
+
+        assert_eq!(summary.exposed, 1);
+        assert_eq!(summary.weakly_exposed, 1);
+        assert_eq!(summary.reachable_unrevealed, 1);
+        assert_eq!(summary.no_static_path, 1);
+        assert_eq!(summary.infection_unknown, 1);
+        assert_eq!(summary.propagation_unknown, 1);
+        assert_eq!(summary.static_unknown, 1);
+    }
+
+    #[test]
+    fn decrement_exposure_class_reverses_increment_and_saturates_at_zero() {
+        let mut summary = Summary::default();
+
+        summary.increment_exposure_class(&ExposureClass::WeaklyExposed);
+        summary.decrement_exposure_class(&ExposureClass::WeaklyExposed);
+        assert_eq!(summary.weakly_exposed, 0);
+
+        // Saturating: a policy bug must never underflow a bucket.
+        summary.decrement_exposure_class(&ExposureClass::WeaklyExposed);
+        assert_eq!(summary.weakly_exposed, 0);
+    }
+
+    #[test]
+    fn increment_exposure_class_accumulates_repeated_classes() {
+        let mut summary = Summary::default();
+
+        summary.increment_exposure_class(&ExposureClass::NoStaticPath);
+        summary.increment_exposure_class(&ExposureClass::NoStaticPath);
+        summary.increment_exposure_class(&ExposureClass::NoStaticPath);
+
+        assert_eq!(summary.no_static_path, 3);
+    }
+}

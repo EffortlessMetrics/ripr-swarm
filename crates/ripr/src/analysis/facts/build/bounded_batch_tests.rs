@@ -90,6 +90,29 @@ impl BatchFixture {
             .collect()
     }
 
+    /// Fail with a diff and a strict cache inventory when stored paths do not
+    /// match, so a one-off CI failure names missing files or corrupt entries
+    /// (#6746).
+    fn assert_stored_paths(&self, expected: &BTreeSet<PathBuf>, context: &str) -> TestResult<()> {
+        let actual = self.stored_paths();
+        if actual == *expected {
+            return Ok(());
+        }
+        let missing: Vec<_> = expected.difference(&actual).collect();
+        let extra: Vec<_> = actual.difference(expected).collect();
+        let inventory = self
+            .cache
+            .test_inventory_report()
+            .err()
+            .unwrap_or_else(|| "cache inventory: all entries decode".to_string());
+        Err(format!(
+            "{context}: stored path mismatch\n  expected ({}): {expected:?}\n  actual ({}): {actual:?}\n  missing: {missing:?}\n  extra: {extra:?}\n{inventory}",
+            expected.len(),
+            actual.len(),
+        )
+        .into())
+    }
+
     /// Build through the production cached builder and return the result,
     /// the uninserted-facts high-water mark, and the inventory read count.
     fn build(
@@ -348,7 +371,10 @@ fn late_batch_parse_failure_returns_first_input_order_error_and_no_index() -> Te
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    assert_eq!(fixture.stored_paths(), expected);
+    fixture.assert_stored_paths(
+        &expected,
+        "late batch parse failure must not store failing batch",
+    )?;
     Ok(())
 }
 
@@ -382,7 +408,11 @@ fn cancellation_in_a_later_batch_returns_no_index_but_keeps_the_finished_parses(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    assert_eq!(fixture.stored_paths(), expected);
+    // #6746: name missing or corrupt cache entries instead of a bare set diff.
+    fixture.assert_stored_paths(
+        &expected,
+        "cancellation must store every file parsed before the abort",
+    )?;
 
     // The retry converges: it hits everything the aborted run stored and
     // parses only the rest, and the result equals an uncached build.
@@ -418,12 +448,10 @@ fn an_ordinary_failure_does_not_flush_the_failing_batch() -> TestResult<()> {
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    assert_eq!(fixture.stored_paths(), expected);
-    Ok(())
-}
-
-#[test]
-fn an_ordinary_worker_failure_is_not_hidden_by_a_sibling_abort() -> TestResult<()> {
+    fixture.assert_stored_paths(
+        &expected,
+        "ordinary failure must not store the failing batch",
+    )?;
     failure_wins_over_sibling_abort(true)
 }
 
@@ -485,7 +513,7 @@ fn failure_wins_over_sibling_abort(cached: bool) -> TestResult<()> {
             .iter()
             .cloned()
             .collect::<BTreeSet<_>>();
-        assert_eq!(fixture.stored_paths(), expected);
+        fixture.assert_stored_paths(&expected, "cached ordinary failure over abort")?;
     }
     Ok(())
 }

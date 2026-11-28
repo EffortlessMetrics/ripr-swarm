@@ -9,6 +9,8 @@ fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
     let Ok(value) = std::str::from_utf8(bytes) else {
         return bytes.to_vec();
     };
+    let without_routes = strip_finding_routes_member(value);
+    let value = without_routes.as_str();
     const MARKER: &str = "\n  \"canonical_next_action\": ";
     let Some(start) = value.rfind(MARKER) else {
         return bytes.to_vec();
@@ -22,7 +24,42 @@ fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
         stripped.pop();
     }
     stripped.push_str(&rest[end..]);
-    strip_language_completeness_member(&stripped).into_bytes()
+    strip_evidence_stages_member(&strip_language_completeness_member(&stripped)).into_bytes()
+}
+
+/// The per-finding staged-evidence rows (RIPR-SPEC-0429) are additive to these
+/// historical captures: one `evidence_stages` array per finding, emitted beside
+/// the `ripr` object with a trailing comma. Dedicated unit, schema and golden
+/// tests own that field; here it projects out so the historical bytes stay exact.
+fn strip_evidence_stages_member(value: &str) -> String {
+    const OPEN: &str = "\n      \"evidence_stages\": [\n";
+    const CLOSE: &str = "\n      ],";
+    let mut out = value.to_string();
+    while let Some(start) = out.find(OPEN) {
+        let Some(close_at) = out[start + OPEN.len()..].find(CLOSE) else {
+            break;
+        };
+        let end = start + OPEN.len() + close_at + CLOSE.len();
+        out.replace_range(start..end, "");
+    }
+    out
+}
+
+/// The per-finding `finding_routes` projection (#11976) is additive and
+/// provenance-bound (its explain commands embed the run root), so these
+/// historical captures do not pin it. It is one compact line that precedes the
+/// canonical next action; keep the separator that follows it, if any.
+fn strip_finding_routes_member(value: &str) -> String {
+    const MARKER: &str = ",\n  \"finding_routes\": ";
+    let Some(start) = value.find(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let Some(end) = rest.find('\n') else {
+        return value.to_string();
+    };
+    let keep = if rest[..end].ends_with(',') { "," } else { "" };
+    format!("{}{}{}", &value[..start], keep, &rest[end..])
 }
 
 /// The per-language completeness projection (#11272) is also additive to these
@@ -51,7 +88,8 @@ const BOUNDED_EVIDENCE_LEGEND: &str = concat!(
     "    States: yes = evidence found; weak = partial evidence; no = evidence not found; unknown/opaque = analysis limited;\n",
     "      missing = a needed test input or assertion is absent; not established = assertion unconfirmed; not applicable = stage unused\n",
     "    Summary terms: changed behavior = one change point ripr checked; appear noticed by tests = a test appears to notice the change;\n",
-    "      partly noticed = tests appear to notice it only partly; reached but not noticed = tests reach it but nothing appears to notice;\n",
+    "      partly noticed = tests appear to notice it only partly; reached but not noticed = linked to a test, but nothing appears to notice;\n",
+    "      both can rest on a test link ripr could not confirm; the reach stage says which;\n",
     "      no test path = no test path found; unclear = analysis limited, not a verdict;\n",
     "      found = listed for review; suppressed by your settings = hidden by your suppression policy;\n",
     "      base-side = evidence from the old code, not an edit target; candidate line = changed line ripr considers\n",
@@ -139,6 +177,32 @@ fn bounded_legend_capture_projection_is_exact_and_preserves_evidence() -> Result
     Ok(())
 }
 
+/// #15313 added two plain-Summary spellings that carry no new count: an
+/// " on N candidate line(s)" clause after `checked`, and `No test gap: N
+/// listed` for `N found` on an all-clear run. Fold both back so the positional
+/// count parse below reads the same numbers.
+fn plain_summary_without_15313_wording(body: &str) -> String {
+    let mut out = body.to_string();
+    if let Some(start) = out.find(" checked on ")
+        && let Some(colon) = out[start..].find(':')
+    {
+        let clause = &out[start + " checked".len()..start + colon];
+        if clause.ends_with(" candidate line") || clause.ends_with(" candidate lines") {
+            out.replace_range(start + " checked".len()..start + colon, "");
+        }
+    }
+    if let Some(start) = out.find("No test gap: ")
+        && let Some(end) = out[start..].find(" listed")
+    {
+        let count = out[start + "No test gap: ".len()..start + end].to_string();
+        out.replace_range(
+            start..start + end + " listed".len(),
+            &format!("{count} found"),
+        );
+    }
+    out
+}
+
 /// Project a Summary line, in the historical or the plain-language spelling,
 /// onto one canonical form that still carries every count: changed behaviors,
 /// the five class buckets, and the reported / total findings. A count
@@ -155,7 +219,8 @@ fn canonical_summary(line: &str) -> String {
             "Summary: behaviors={behaviors} buckets={buckets:?} reported={reported} total={total}\n"
         )
     };
-    let body = line.trim_end_matches('\n');
+    let body = plain_summary_without_15313_wording(line.trim_end_matches('\n'));
+    let body = body.as_str();
     // Historical human-full / current human-full: tokens unchanged.
     if body.contains("reachable_unrevealed") {
         let head =

@@ -156,3 +156,124 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_alias (13)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_alias (14)
+
+Reason:
+RIPR-SPEC-0197: assertion_not_credited splits into assertion_inert / assertion_admission_unproven (#5446, PR #12647); only the miss label and its wording change
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_alias (15)
+
+Reason:
+RIPR-SPEC-0122: the full human report keeps the assertion-not-credited evidence line the standard report shows (#14038)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_alias (16)
+
+Reason:
+RIPR-SPEC-0122: the full report collapses the multi-line not-credited note onto one line (#14038)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_alias (17)
+
+Reason:
+RIPR-SPEC-0122: the check digest states each fact once (no Why hint the Analyzer limit line repeats; no stage detail that repeats the missing-evidence line)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_alias (18)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_nested_use_dependency_alias (19)
+
+Reason:
+RIPR-SPEC-0369: a foreign glob cannot rebind a core prelude macro (rustc E0659, #16060); glob-dependent fixtures now call vec!
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — rust_nested_use_dependency_alias (20)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_nested_use_dependency_alias (21)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — rust_nested_use_dependency_alias (22)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless rust_nested_use_dependency_alias --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -1,5 +1,7 @@
-pub(crate) mod cancellation;
+pub(crate) use ripr_contract::analysis::cancellation;
 pub(crate) mod canonical_gap;
+#[cfg(test)]
+mod classification_properties;
 mod classifier;
 mod classify;
 pub(crate) mod committed_source;
@@ -7,8 +9,11 @@ pub(crate) mod consumed_source;
 pub(crate) mod diagnostic_origin;
 mod diff;
 mod diff_scope_filter;
+mod executable_tests;
 mod extract;
 mod facts;
+#[cfg(all(test, feature = "lang-rust"))]
+pub(crate) use facts::index_build_probe;
 mod generated_rust_corpus;
 pub(crate) use generated_rust_corpus::{
     absent_changed_rust_file_limitations, generated_rust_recovery,
@@ -27,16 +32,31 @@ pub(crate) use input_facts::{
 pub(crate) mod language;
 pub(crate) mod language_outcome;
 pub(crate) mod new_test_target;
+pub(crate) mod owner_opt_out;
 pub(crate) mod path_glob;
 mod pipeline;
+pub(crate) mod python_env;
 pub(crate) use extract::{mask_comments_and_strings, rust_identity_spans};
 // Source-role recognition stays with the cfg-predicate authority (#3530/#3534);
 // consumers outside `analysis` ask it instead of matching attribute text.
-pub(crate) use facts::cfg_predicates::attribute_is_plain_test_gate;
-pub(crate) use pipeline::NON_TEXT_ONLY_DETAIL;
+pub(crate) use facts::cfg_predicates::{attribute_is_plain_test_gate, outer_attribute_end};
+// A long-lived server keeps unchanged files' parse facts in memory across
+// refreshes; one-shot commands leave this off.
+pub(crate) use facts::enable_process_fact_memo;
+pub(crate) use pipeline::capture_disclosures;
+pub(crate) use pipeline::is_excluded_from_diff_and_workspace_index;
+pub(crate) use pipeline::is_rust_excluded_by_config_detail;
+pub(crate) use pipeline::names_parsed_file_limitation;
 pub(crate) use pipeline::{
     DIFF_CHANGED_PYTHON_LINE_LIMIT_ENV, DIFF_CHANGED_TYPESCRIPT_LINE_LIMIT_ENV,
+    diff_changed_python_line_limit, diff_changed_typescript_line_limit,
 };
+mod diff_intake_disclosure;
+/// Honest seam-count reports for repo-scope inventory progress (#8643).
+/// Installed by the app progress owner for the duration of one walk; the
+/// evidence pass reports `processed`/`total` here instead of inventing a
+/// second stage vocabulary.
+pub(crate) mod inventory_progress;
 mod probe_read_trace;
 mod probes;
 pub(crate) mod repair_route;
@@ -46,6 +66,8 @@ pub(crate) mod repair_route;
 /// here, so a new phase cannot invent a parallel spelling.
 pub(crate) mod resource_cost;
 mod rust_index;
+pub(crate) mod rust_snapshot_files;
+pub(crate) mod scip;
 pub(crate) mod seam_cache;
 mod seam_classification;
 mod seam_inventory;
@@ -53,15 +75,18 @@ pub(crate) mod seams;
 mod sort;
 #[cfg(test)]
 mod source_role_corpus;
+pub(crate) mod stale_raised_type_pin;
 pub(crate) mod summary;
 mod sync_memo;
 mod syntax;
 mod test_changes;
 mod trybuild_fixtures;
+pub(crate) mod verus;
 pub(crate) use test_changes::{DiffTestChanges, diff_test_changes};
 pub(crate) mod test_grip_evidence;
 pub(crate) mod test_stub;
 mod value_resolution;
+pub(crate) mod verification_plan;
 mod witness;
 mod workspace;
 
@@ -74,10 +99,13 @@ pub use diff_scope_filter::DiffScopeFilter;
 /// analysis tree and name the type through inference.
 #[cfg(test)]
 pub(crate) use diff::LoadedDiff;
+pub(crate) use diff::bare_repository_message;
 /// Shared pinned PR-evidence diff assembly (#3930, #4004): the one named
 /// owner for packet diff presentation, consumed by the product route and the
 /// xtask route alike. Neither route may rebuild its argv inline.
 pub use diff::load_pr_evidence_diff_range;
+// The `ci-packet` capture through the same assembly (#9365).
+pub(crate) use diff::load_ci_packet_diff_bytes;
 #[cfg(test)]
 pub(crate) use diff::not_a_work_tree_message;
 /// Shared NUL-delimited Git path-record authority (#4006), consumed by the
@@ -87,14 +115,15 @@ pub use diff::records::{
 };
 pub(crate) use diff::{
     AnalyzedRevisions, ChangedFile, HeadRefState, another_base_candidate,
-    artifact_root_gitignore_entry, artifact_root_pathspec, is_shallow_repository, load_diff,
-    load_diff_core, load_diff_range_with_deadline_and_git_stdout_limit_core,
-    load_diff_with_effective_base_core, load_worktree_diff,
-    load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
-    probe_head_ref_state, probe_working_tree_tracked_changes_within, resolve_base_commit,
-    resolve_effective_base, resolve_effective_base_core, ripr_artifact_roots,
-    untrack_artifacts_command, working_tree_has_tracked_changes,
-    working_tree_has_uncommitted_changes,
+    artifact_root_gitignore_entry, artifact_root_pathspec, base_is_checked_out_head,
+    base_is_checked_out_head_with_parent, default_base_unresolved_message, doctor_base_history,
+    git_operation_advisory, is_shallow_repository, load_diff, load_diff_core,
+    load_diff_range_with_deadline_and_git_stdout_limit_core, load_diff_with_effective_base_core,
+    load_worktree_diff, load_worktree_diff_with_effective_base_core, names_shallow_no_merge_base,
+    no_merge_base_diagnosis, origin_lacks_head_pointer, parse_unified_diff, probe_head_ref_state,
+    probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
+    resolve_effective_base_core, ripr_artifact_roots, untrack_artifacts_command,
+    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -106,9 +135,9 @@ pub(crate) use facts::cfg_predicates;
 pub(crate) use facts::validated_file_wide_harness_targets;
 pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payload_size};
 pub(crate) use language::{
-    DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
-    TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    is_ts_js_source_extension, route, ts_js_source_kind,
+    DIFF_CHANGED_RUST_LINE_LIMIT_ENV, DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS,
+    TYPESCRIPT_SOURCE_EXTENSIONS, TsJsSourceKind, is_diff_scope_oversized,
+    is_generated_rust_file_with_patterns, is_ts_js_source_extension, route, ts_js_source_kind,
 };
 #[cfg(all(test, feature = "lang-perl"))]
 pub(crate) use language::{
@@ -116,18 +145,24 @@ pub(crate) use language::{
     with_concrete_discriminator,
 };
 pub use language::{
-    PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
-    PartialDiffStopReason,
+    OverLimitFile, PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION,
+    PartialDiffScope, PartialDiffStopReason,
 };
 #[cfg(all(test, feature = "lang-python"))]
-pub(crate) use language::{python_direct_and_advisory_finding, python_miss_matrix_findings};
-pub(crate) use probes::{
-    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_expression,
-    normalize_rust_expression, sanitize_path,
+pub(crate) use language::{
+    python_direct_and_advisory_finding, python_miss_matrix_findings,
+    python_module_fstring_reader_finding, python_module_reader_assertion_parses,
+    python_module_string_reader_finding, python_module_value_without_import_identity,
 };
-pub(crate) use rust_index::DeclinedRustFile;
+#[cfg(feature = "lang-typescript")]
+pub(crate) use probes::normalize_expression;
+pub(crate) use probes::{before_is_whole_line_over_condition, old_condition_of_whole_line};
+pub(crate) use probes::{
+    fingerprint_probe_id, legacy_whole_line_diff_probe_id, normalize_rust_expression, sanitize_path,
+};
+pub(crate) use rust_index::{DeclinedRustFile, IndexDisclosureRun, RustIndex};
 #[cfg(test)]
-pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustIndex, RustSyntaxAdapter};
+pub(crate) use rust_index::{FileFacts, RaRustSyntaxAdapter, RustSyntaxAdapter};
 /// Parser-backed related-test retention fixture for consumer tests (#9175);
 /// a narrow cfg(test) entry so output tests need no analysis internals.
 #[cfg(test)]
@@ -138,6 +173,7 @@ pub(crate) fn retention_fixture_finding(
 ) -> crate::domain::Finding {
     classifier::tests::retention_finding(docs, demoted_call, demoted_asserts)
 }
+pub(crate) use rust_index::SecondaryPassGuard;
 pub use seam_cache::cache_layer_names;
 pub(crate) use seam_classification::ClassifiedSeam;
 #[cfg(test)]
@@ -146,7 +182,12 @@ pub(crate) use seam_classification::SeamGripClassCounts;
 pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
+#[cfg(test)]
+pub(crate) use seam_inventory::evaluation_probe;
 pub(crate) use seam_inventory::file_fact_store_failure_rows;
+#[cfg(test)]
+pub(crate) use seam_inventory::hold_seam_limit_mutators;
+#[cfg(test)]
 #[cfg(test)]
 pub(crate) use seam_inventory::inventory_seams_from_index;
 pub(crate) use seam_inventory::{
@@ -154,7 +195,8 @@ pub(crate) use seam_inventory::{
     DiffScopedCacheStatsAttribution, FileSeamIndex, PilotInventoryDefault,
     PreparedDiffScopedClassifiedWorkspace, PreparedDiffScopedEvaluationInput,
     REPO_EXPOSURE_SEAM_LIMIT_ENV, ScopedClassifiedSeamInventory, ScopedEvidenceConsumer,
-    SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError, apply_pilot_seam_budget,
+    SeamLimitInfo, SeamLimitSource, SecondStageScope, TargetedTestInventoryError,
+    announce_seam_facts_cache_misses, apply_pilot_seam_budget,
     classify_seams_in_file_with_shared_index, classify_seams_in_files_at_with_config,
     diff_only_rust_files, evaluate_diff_scoped_classified_seams_from_prepared,
     inventory_changed_test_classified_seams_at_with_config_node,
@@ -162,19 +204,31 @@ pub(crate) use seam_inventory::{
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_bound_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
-    inventory_diff_scoped_streamed_seams_at_with_config,
-    inventory_pilot_seams_report_at_with_config, inventory_seams_at_with_config,
-    prepare_diff_scoped_classified_workspace, probe_family_for_seam_kind, repo_exposure_seam_limit,
-    scoped_file_seams, seam_kind_for_probe_family,
-    workspace_cache_key_and_production_files_at_with_config, workspace_cache_key_at_with_config,
+    inventory_diff_scoped_seam_at_with_config, inventory_diff_scoped_streamed_seams_at_with_config,
+    inventory_diff_scoped_streamed_seams_with_optional_prepared,
+    inventory_file_guidance_at_with_config, inventory_pilot_seams_report_at_with_config,
+    inventory_repair_seams_report, inventory_seams_at_with_config, inventory_stub_choices,
+    locate_seam_file_at_with_config, prepare_diff_scoped_classified_workspace,
+    probe_family_for_seam_kind, repo_exposure_seam_limit, scoped_file_seams,
+    seam_kind_for_probe_family, workspace_cache_key_and_production_files_at_with_config,
+    workspace_cache_key_at_with_config,
 };
 pub(crate) use seam_inventory::{PILOT_PACKET_BUDGET_ENV, pilot_packet_budget};
-pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
+#[cfg(test)]
+pub(crate) use seam_inventory::{
+    SEAM_FILE_LOCATIONS, WORKSPACE_CLASSIFIED_INVENTORIES, WORKSPACE_SEAMS_CLASSIFIED,
+};
+pub(crate) use seam_inventory::{file_fact_cache_receipt, file_fact_store_failure_summary};
+pub(crate) use seams::{RepoSeam, RequiredDiscriminator, match_arm_seam_result};
 pub(crate) use syntax::fn_signature::{
     owner_call_shape_at_line, owner_fn_line_span, rust_source_parses_cleanly,
 };
 pub(crate) use syntax::governed_cfg_test_modules;
 pub(crate) use syntax::parse_clean_source_file;
+
+pub(crate) use executable_tests::{
+    executable_test_function_bodies, executable_test_function_names,
+};
 pub(crate) use workspace::DiffOnlySource;
 pub(crate) use workspace::PathDependencyAdjacency;
 pub(crate) use workspace::SourceRoleContext;
@@ -182,6 +236,8 @@ pub(crate) use workspace::apply_module_graph_evidence;
 pub(crate) use workspace::changed_source_files_absent_from_worktree;
 pub(crate) use workspace::classify_with;
 pub(crate) use workspace::context_for_files;
+pub(crate) use workspace::is_declared_cargo_test_surface;
+pub(crate) use workspace::is_test_surface;
 pub(crate) use workspace::is_test_surface_path;
 pub(crate) use workspace::path_enters_ignored_dir;
 pub(crate) use workspace::seeds_diff_probes;
@@ -223,8 +279,21 @@ pub(crate) fn root_has_no_inspectable_workspace(root: &Path) -> bool {
 
 /// Re-export workspace Rust file discovery for the output layer so it can
 /// check whether a workspace has any Rust source.
+///
+/// An unreadable subdirectory or file is skipped, not turned into an empty
+/// set: use [`workspace_has_rust_source`] for a "no Rust here" verdict.
 pub(crate) fn workspace_rust_files(root: &Path) -> Vec<PathBuf> {
-    workspace::discover_rust_files(root).unwrap_or_default()
+    workspace::discover_readable_rust_files(root, &Default::default())
+        .map(|(files, _)| files)
+        .unwrap_or_default()
+}
+
+/// Whether the root holds any Rust source, counting a path the walk could not
+/// read: an unreadable directory may hold Rust, so it never reads as "no Rust
+/// files" (an unreadable root still does, as before).
+pub(crate) fn workspace_has_rust_source(root: &Path) -> bool {
+    workspace::discover_readable_rust_files(root, &Default::default())
+        .is_ok_and(|(files, unreadable)| !files.is_empty() || !unreadable.is_empty())
 }
 
 /// Why a ledger-supplied rerun anchor is not strictly root-relative, or `None`
@@ -555,7 +624,9 @@ fn top_typescript_readiness_blocker(
 use crate::config::OraclePolicy;
 use crate::core_error::CoreError;
 use crate::domain::{Finding, Summary};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
+#[cfg(feature = "lang-typescript")]
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 /// #11398: whether `seam` is a field write in a method (`self.count += 1`)
@@ -594,8 +665,53 @@ pub(crate) fn field_write_read(seam: &seams::RepoSeam) -> Option<FieldWriteRead>
 
 /// Render a path for textual identity without collapsing distinct Unix byte
 /// paths through U+FFFD. Valid paths retain their usual spelling except that
-/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8.
+/// `%` is escaped, reserving `%XX` for bytes that are not valid UTF-8, and
+/// that a literal Unix backslash is spelled `%5C` (#15908): it is a file-name
+/// byte there, so folding it to `/` gave `src/a\b.rs` the path and gap id of
+/// `src/a/b.rs`. On Windows a backslash is a separator and renders as `/`.
 pub(crate) fn stable_path_text(path: &Path) -> String {
+    stable_source_path_text(path)
+}
+
+/// Reader-facing slash spelling of a path: [`stable_path_text`] with every
+/// backslash shown as `/` on every host, so prose and reports about a path
+/// that was recorded with Windows separators read the same everywhere. It is
+/// for prose only and never an identity or a path in a machine artifact: on
+/// Unix it shows `src/a\b.rs` and `src/a/b.rs` alike.
+pub(crate) fn stable_display_path_text(path: &Path) -> String {
+    stable_native_path_text(path).replace('\\', "/")
+}
+
+/// [`stable_path_text`] with the separator rule taken from `windows` instead
+/// of the host, for renderers whose platform flag makes Windows behavior
+/// testable on every host. With `windows` set a backslash is a separator and
+/// renders as `/`; otherwise this is the host encoder (on Unix a literal
+/// backslash stays `%5C`, #15908).
+pub(crate) fn stable_path_text_on(path: &Path, windows: bool) -> String {
+    if windows {
+        stable_display_path_text(path)
+    } else {
+        stable_path_text(path)
+    }
+}
+
+/// Retain native source identity before display normalization. On Unix a
+/// backslash is a literal filename byte, so reserve `%5C` for it; a literal
+/// percent spelling has already been escaped by the shared native encoder.
+/// On Windows backslashes remain native separators and render as slashes.
+pub(crate) fn stable_source_path_text(path: &Path) -> String {
+    let encoded = stable_native_path_text(path);
+    #[cfg(unix)]
+    {
+        encoded.replace('\\', "%5C")
+    }
+    #[cfg(not(unix))]
+    {
+        encoded.replace('\\', "/")
+    }
+}
+
+fn stable_native_path_text(path: &Path) -> String {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -622,14 +738,14 @@ pub(crate) fn stable_path_text(path: &Path) -> String {
                 }
             }
         }
-        output.replace('\\', "/")
+        output
     }
 
     #[cfg(not(unix))]
     {
         let mut output = String::new();
         push_stable_path_text(&mut output, &path.to_string_lossy());
-        output.replace('\\', "/")
+        output
     }
 }
 
@@ -690,26 +806,37 @@ fn uppercase_hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-/// The one renderer for a finding's file location across every surface
-/// (#5996): workspace-relative with the CLI `./` prefix when the location
+/// The shared renderer for a finding's file location (#5996):
+/// workspace-relative with the CLI `./` prefix when the location
 /// lives inside the analyzed root, its plain spelling otherwise — never the
 /// Windows verbatim `//?/` drive form, which external consumers cannot join
 /// against a workspace. A remainder containing `..` resolves outside the
 /// root, so it keeps the plain spelling too. A relative location passes
 /// through with stable separators, so a producer that already names the
-/// workspace (the CLI's `./src/main.rs`) keeps its exact rendering on every
-/// surface.
+/// workspace (the CLI's `./src/main.rs`) keeps its exact rendering.
 pub(crate) fn finding_location_text(root: &Path, file: &Path) -> String {
     finding_location_text_with_platform(root, file, cfg!(windows))
 }
 
-/// The pure core of [`finding_location_text`]: the platform flag stands in
-/// for `cfg!(windows)` so the verbatim-prefix behavior is testable on every
-/// host, the same pure-over-platform pattern the human path renderer uses.
+/// The MCP gap spelling for matched locations, with the shared fallback.
+pub(crate) fn finding_location_text_bare(root: &Path, file: &Path) -> String {
+    render_finding_location_text(root, file, cfg!(windows), "")
+}
+
+/// The platform flag makes verbatim-prefix behavior testable on every host.
 pub(crate) fn finding_location_text_with_platform(
     root: &Path,
     file: &Path,
     windows: bool,
+) -> String {
+    render_finding_location_text(root, file, windows, "./")
+}
+
+fn render_finding_location_text(
+    root: &Path,
+    file: &Path,
+    windows: bool,
+    relative_prefix: &str,
 ) -> String {
     let file = plain_drive_verbatim_path(file, windows);
     let root = plain_drive_verbatim_path(root, windows);
@@ -726,8 +853,11 @@ pub(crate) fn finding_location_text_with_platform(
                 .any(|component| matches!(component, Component::ParentDir))
         });
     match relative {
-        Some(relative) => format!("./{}", stable_path_text(relative)),
-        None => stable_path_text(&file),
+        Some(relative) => format!(
+            "{relative_prefix}{}",
+            stable_path_text_on(relative, windows)
+        ),
+        None => stable_path_text_on(&file, windows),
     }
 }
 
@@ -875,6 +1005,11 @@ pub struct PreviewLanguageAdvisory {
     /// `false` means the preview-language files were detected in scope but not
     /// analyzed because the adapter is not enabled in `ripr.toml`.
     pub enabled: bool,
+    /// Root-relative (forward-slash) Python package roots below an analysis
+    /// root that has no Python markers of its own, so a not-enabled Python
+    /// note can suggest `--root <package>` (#13618). Empty for every other
+    /// language and when the root is already a Python, Rust or TS/JS project.
+    pub nested_packages: Vec<String>,
 }
 
 /// Prose names `(adapter, files)` for a preview language (#4908). The
@@ -993,65 +1128,7 @@ impl PreviewLanguageAdvisory {
     }
 }
 
-/// Per-language run status for one language adapter invocation.
-///
-/// A `LanguageRun` is recorded for every language that was *attempted* but
-/// did not complete successfully. Languages that ran to completion are
-/// omitted (their findings speak for themselves). This keeps the field
-/// conditional on non-success so the common single-language-success case
-/// stays silent and no golden re-bless is needed.
-///
-/// This is the non-abort contract (Campaign 31 PR 10, ripr-swarm#1403): a
-/// single language's failure (e.g. a Perl preview adapter that returns
-/// `Err`, or a packet-ingestion rejection) must not abort the whole report.
-/// Instead the failed language is recorded here and the other languages'
-/// findings still emit.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LanguageRun {
-    /// Stable language wire string (e.g. `"rust"`, `"perl"`).
-    pub language: String,
-    /// Outcome of the run.
-    pub status: LanguageRunStatus,
-    /// Human-readable reason for a non-ok status (absent for `Ok`).
-    pub reason: Option<String>,
-}
-
-/// Outcome of one language adapter invocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LanguageRunStatus {
-    /// The adapter completed (findings, if any, are in `result.findings`).
-    /// Recorded only when the caller explicitly asks for full accounting;
-    /// the pipeline omits `Ok` runs by default to keep the field conditional.
-    Ok,
-    /// The adapter was invoked but returned a named limitation (e.g. a Perl
-    /// preview adapter that is scaffold-only and returns `Err`).
-    Unavailable,
-    /// The adapter ran but produced a partial result (e.g. a packet was
-    /// rejected by ingestion checks; some findings may still be present).
-    Partial,
-    /// The adapter could not run at all (e.g. required Cargo feature is off,
-    /// or the producer binary is missing).
-    Invalid,
-    /// A *configured* managed fact producer was invoked and failed (spawn
-    /// error, timeout, or non-zero exit). Distinct from `Unavailable`
-    /// (nothing configured) so the typed limitation and `language_runs`
-    /// reason carry the real exporter failure instead of re-advising a
-    /// configuration the user already made (#6828).
-    Failed,
-}
-
-impl LanguageRunStatus {
-    /// Stable wire string for JSON / human output.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ok => "ok",
-            Self::Unavailable => "unavailable",
-            Self::Partial => "partial",
-            Self::Invalid => "invalid",
-            Self::Failed => "failed",
-        }
-    }
-}
+pub use ripr_contract::analysis::language_run::{LanguageRun, LanguageRunStatus};
 
 #[derive(Clone, Debug)]
 pub struct AnalysisResult {
@@ -1117,10 +1194,18 @@ pub struct AnalysisResult {
     pub(crate) rust_diagnostic_origins: crate::analysis::diagnostic_origin::RustDiagnosticOrigins,
     /// Raw per-path Rust producer observations, separate from decoded geometry.
     pub(crate) rust_consumed_sources: crate::analysis::consumed_source::ConsumedRustSources,
+    /// Findings whose changed owner opted out (#13819). The app layer
+    /// withholds them from actionable output and discloses the withholding;
+    /// empty when no owner opted out.
+    pub(crate) owner_opt_outs: Vec<owner_opt_out::OwnerOptOut>,
     /// Crate-private mixed-language completeness view of this run's sealed
     /// aggregate (#6475). A sidecar for in-process consumers (the editor);
     /// never serialized and not part of the public output contract.
     pub(crate) language_view: Option<language_outcome::LanguageCompletenessView>,
+    /// The diff's changed new-side lines per file (#15039), for the
+    /// location-miss diagnosis. `None` for repo-scope runs, which have no
+    /// diff. Never serialized.
+    pub(crate) changed_lines: Option<crate::analysis_outcome::ChangedLineIndex>,
     /// Per-language persistent fact-cache admissions for this run (#10725),
     /// collected from each adapter's `LanguageDiffResult`. Rendered into the
     /// verbose disclosure line by `app::check`; empty when no adapter did
@@ -1249,11 +1334,16 @@ pub(crate) fn owner_symbols_for_lines(
 /// every function whose span contains a changed line, so a consumer can tell
 /// whether an outer owner's span overlaps the diff even when attribution named
 /// a nested function. A line outside every function span has no entry in
-/// either list.
+/// either list. `edited_function_headers` holds the `(file, start_line)` of
+/// each of those enclosing functions and of each indexed test (including a
+/// macro-generated one, pinned to its invocation) whose span contains a
+/// changed line, sorted and deduplicated, so a consumer can tell whether a
+/// test, identified by its header line, was edited.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChangedLineOwnership {
     pub(crate) owners: Vec<ChangedLineOwner>,
     pub(crate) enclosing_owners: Vec<ChangedLineOwner>,
+    pub(crate) edited_function_headers: Vec<(PathBuf, usize)>,
 }
 
 pub(crate) fn changed_line_ownership_for_lines(
@@ -1290,10 +1380,210 @@ pub(crate) fn changed_line_ownership_for_lines(
             })
         })
         .collect::<Vec<_>>();
+    // A test produced by a `macro_rules!` expansion is pinned to its
+    // invocation span and has no function fact, so read test spans too.
+    let edited_function_headers = lines
+        .iter()
+        .flat_map(|(file, line)| {
+            let functions = rust_index::find_enclosing_functions(&index, file, *line)
+                .map(|function| (file.clone(), function.start_line));
+            let tests = index
+                .tests()
+                .iter()
+                .filter(|test| {
+                    test.file == *file && test.start_line <= *line && *line <= test.end_line
+                })
+                .map(|test| (file.clone(), test.start_line))
+                .collect::<Vec<_>>();
+            functions
+                .chain(tests)
+                .chain(attribute_edited_headers(&index, file, *line))
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     Ok(ChangedLineOwnership {
         owners: sorted_owners(owners),
         enclosing_owners: sorted_owners(enclosing_owners),
+        edited_function_headers,
     })
+}
+
+/// Longest attribute/comment prefix above a `fn` token that is walked before
+/// the edit is treated as unattributable.
+const MAX_ATTRIBUTE_PREFIX_LINES: usize = 256;
+
+/// Headers of functions and tests whose attribute prefix holds `line`: an
+/// indexed start line is the `fn` token, so editing `#[test]` (or any
+/// attribute, including an argument line of a multi-line attribute) above an
+/// existing function edits that test without touching its span (#12940
+/// review). The prefix is walked upward from the next item's `fn` line,
+/// tracking `[`/`]` depth, across blank lines, comments, and attributes.
+///
+/// When the walk cannot decide (unbalanced brackets, a raw string, or a prefix longer
+/// than [`MAX_ATTRIBUTE_PREFIX_LINES`]), or the edit is an inner attribute
+/// or an attribute of a `mod` item, every test header in the file is
+/// returned, so an unattributable edit reads as "possibly edited" rather
+/// than "not edited" and second-stage pruning stays conservative.
+fn attribute_edited_headers(index: &RustIndex, file: &Path, line: usize) -> Vec<(PathBuf, usize)> {
+    let Some(facts) = rust_index::find_file_facts(index, file) else {
+        return Vec::new();
+    };
+    let starts = facts
+        .functions
+        .iter()
+        .map(|function| function.start_line)
+        .chain(facts.tests.iter().map(|test| test.start_line))
+        .collect::<BTreeSet<_>>();
+    let Some(next_start) = starts.range(line + 1..).next().copied() else {
+        return Vec::new();
+    };
+    let source_lines = facts.source.lines().collect::<Vec<_>>();
+    let every_test_header = || {
+        facts
+            .tests
+            .iter()
+            .map(|test| (file.to_path_buf(), test.start_line))
+            .collect::<Vec<_>>()
+    };
+    if gates_a_module(&source_lines, line) {
+        return every_test_header();
+    }
+    if next_start - line > MAX_ATTRIBUTE_PREFIX_LINES {
+        // Walk only the bounded prefix; still inside it at the cap means the
+        // edit cannot be placed, so stay conservative.
+        let mut depth: i64 = 0;
+        for number in (next_start - MAX_ATTRIBUTE_PREFIX_LINES..next_start).rev() {
+            let trimmed = source_lines.get(number - 1).map_or("", |text| text.trim());
+            if depth == 0 && !attribute_prefix_line(trimmed) {
+                return Vec::new();
+            }
+            let Some(balance) = bracket_balance(trimmed) else {
+                return every_test_header();
+            };
+            depth += balance;
+        }
+        return every_test_header();
+    }
+    let mut depth: i64 = 0;
+    for number in (line..next_start).rev() {
+        let Some(text) = number
+            .checked_sub(1)
+            .and_then(|position| source_lines.get(position))
+        else {
+            return every_test_header();
+        };
+        let trimmed = text.trim();
+        if depth == 0 && !attribute_prefix_line(trimmed) {
+            // `line` sits above the item's attribute prefix.
+            return Vec::new();
+        }
+        let Some(balance) = bracket_balance(trimmed) else {
+            return every_test_header();
+        };
+        depth += balance;
+        if depth < 0 {
+            return every_test_header();
+        }
+    }
+    if depth != 0 {
+        // `line` is inside an attribute whose opening line lies above it.
+        let mut probe_depth = depth;
+        for number in (1..line).rev().take(MAX_ATTRIBUTE_PREFIX_LINES) {
+            let Some(text) = source_lines.get(number - 1) else {
+                break;
+            };
+            let trimmed = text.trim();
+            let Some(balance) = bracket_balance(trimmed) else {
+                break;
+            };
+            probe_depth += balance;
+            if probe_depth == 0 && trimmed.starts_with("#[") {
+                return vec![(file.to_path_buf(), next_start)];
+            }
+            if probe_depth < 0 {
+                break;
+            }
+        }
+        return every_test_header();
+    }
+    vec![(file.to_path_buf(), next_start)]
+}
+
+/// A line that can sit, at bracket depth zero, in an item's attribute
+/// prefix: blank, a line or block comment, an attribute opener, or a line
+/// closing a bracket (an attribute closer, possibly with a trailing comment).
+/// Reading a non-attribute line with `]` as prefix only over-credits a test
+/// as edited, which keeps pruning conservative.
+fn attribute_prefix_line(trimmed: &str) -> bool {
+    trimmed.is_empty()
+        || trimmed.starts_with("//")
+        || trimmed.starts_with("/*")
+        || trimmed.starts_with('*')
+        || trimmed.ends_with("*/")
+        || trimmed.starts_with("#[")
+        || trimmed.contains(']')
+}
+
+/// `]` minus `[` on one line, read upward. Brackets inside a string literal
+/// or after a `//` comment marker do not count, so `doc = "see [docs"` or a
+/// trailing `// see [1` cannot close an attribute early. `None` when the line
+/// opens a raw string (`r"`, `r#"`), whose end this line scan cannot find.
+fn bracket_balance(trimmed: &str) -> Option<i64> {
+    let mut balance: i64 = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut previous = ' ';
+    for character in trimmed.chars() {
+        if in_string {
+            match (escaped, character) {
+                (true, _) => escaped = false,
+                (false, '\\') => escaped = true,
+                (false, '"') => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match character {
+            '/' if previous == '/' => break,
+            '"' if previous == 'r' || previous == '#' => return None,
+            '"' => in_string = true,
+            ']' => balance += 1,
+            '[' => balance -= 1,
+            _ => {}
+        }
+        previous = character;
+    }
+    Some(balance)
+}
+
+/// True when `line` is an inner attribute (`#![...]`) or an attribute of a
+/// `mod` item: such an edit can gate every test in the file (for example
+/// `#[cfg(test)]` above `mod tests {`), so it is not placed on one test.
+fn gates_a_module(source_lines: &[&str], line: usize) -> bool {
+    let text_at = |number: usize| {
+        number
+            .checked_sub(1)
+            .and_then(|position| source_lines.get(position))
+            .map_or("", |text| text.trim())
+    };
+    let changed = text_at(line);
+    if changed.starts_with("#![") {
+        return true;
+    }
+    if !changed.starts_with("#[") {
+        return false;
+    }
+    (line + 1..=line + MAX_ATTRIBUTE_PREFIX_LINES)
+        .map(text_at)
+        .find(|text| !text.is_empty() && !text.starts_with("#[") && !text.starts_with("//"))
+        .is_some_and(|text| {
+            text.trim_start_matches("pub(crate) ")
+                .trim_start_matches("pub(super) ")
+                .trim_start_matches("pub ")
+                .starts_with("mod ")
+        })
 }
 
 /// #11400: the returned expressions a changed `const` reaches, as
@@ -1387,6 +1677,43 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn stable_source_path_text_preserves_literal_backslashes_before_display() {
+        for (native, encoded) in [
+            ("src/odd\\receipt.rs", "src/odd%5Creceipt.rs"),
+            ("src/odd/receipt.rs", "src/odd/receipt.rs"),
+            ("src/odd%5Creceipt.rs", "src/odd%255Creceipt.rs"),
+        ] {
+            assert_eq!(stable_source_path_text(Path::new(native)), encoded);
+            assert_eq!(decode_stable_path_text(encoded), PathBuf::from(native));
+        }
+        assert_ne!(
+            stable_source_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_source_path_text(Path::new("src/odd/receipt.rs"))
+        );
+        // #15908: the identity encoder is the same lossless encoder, so a
+        // finding in `src/odd\receipt.rs` never borrows the path and gap id
+        // of `src/odd/receipt.rs`.
+        assert_eq!(
+            stable_path_text(Path::new(r"src/odd\receipt.rs")),
+            "src/odd%5Creceipt.rs"
+        );
+        assert_ne!(
+            stable_path_text(Path::new(r"src/odd\receipt.rs")),
+            stable_path_text(Path::new("src/odd/receipt.rs"))
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stable_source_path_text_normalizes_native_separators_on_windows() {
+        assert_eq!(
+            stable_source_path_text(Path::new(r"tests\receipt.rs")),
+            "tests/receipt.rs"
+        );
+    }
+
     /// The decoder inverts the encoder's `%` layer on every platform: a
     /// literal `%` round-trips, while lowercase hex and stray `%` — spellings
     /// the encoder never emits — stay literal instead of manufacturing bytes
@@ -1425,6 +1752,121 @@ mod tests {
             decode_stable_path_text("pricing_%25FF.rs"),
             decode_stable_path_text("pricing_%FF.rs")
         );
+    }
+
+    fn path_text_config() -> proptest::test_runner::Config {
+        proptest::test_runner::Config {
+            cases: std::env::var("PROPTEST_CASES")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(256),
+            failure_persistence: None,
+            ..proptest::test_runner::Config::default()
+        }
+    }
+
+    #[cfg(unix)]
+    fn native_path(bytes: Vec<u8>) -> PathBuf {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(bytes))
+    }
+
+    /// #13949: every `%` the encoder emits starts a `%XX` spelling with
+    /// uppercase hex, the only spelling the decoder reads back.
+    fn percent_spellings_are_canonical(encoded: &str) -> bool {
+        let upper_hex = |byte: &u8| matches!(byte, b'0'..=b'9' | b'A'..=b'F');
+        let bytes = encoded.as_bytes();
+        bytes.iter().enumerate().all(|(at, byte)| {
+            *byte != b'%'
+                || matches!(
+                    bytes.get(at + 1..at + 3),
+                    Some([high, low]) if upper_hex(high) && upper_hex(low)
+                )
+        })
+    }
+
+    /// A small alphabet that keeps the percent layer's hazards in play: `%`,
+    /// hex digits of both cases, separators, a backslash, invalid and
+    /// multi-byte UTF-8 lead bytes, and plain text.
+    #[cfg(unix)]
+    fn hazard_bytes() -> impl proptest::strategy::Strategy<Value = Vec<u8>> {
+        proptest::collection::vec(
+            proptest::sample::select(vec![
+                b'%', b'5', b'C', b'2', b'A', b'F', b'f', b'c', b'8', b'0', b'\\', b'/', b'a',
+                0x80, 0xC3, 0xA9, 0xFF,
+            ]),
+            0..16,
+        )
+    }
+
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: the display form round-trips every path without a
+        /// backslash (which display normalization folds into `/` by design,
+        /// see `stable_source_path_text_preserves_literal_backslashes_before_display`),
+        /// whatever percent signs, hex digits, spaces or non-ASCII text it
+        /// carries. The comparison is on the exact OS string, so a decoder
+        /// that normalized repeated or trailing separators would fail.
+        #[test]
+        fn proptest_stable_path_text_round_trips_paths_without_backslashes(
+            text in "[%0-9A-Fa-f/ a-z\u{e9}]{0,24}"
+        ) {
+            let path = PathBuf::from(&text);
+            let encoded = stable_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
+        }
+    }
+
+    #[cfg(unix)]
+    proptest::proptest! {
+        #![proptest_config(path_text_config())]
+
+        /// #13949: on Unix the source-identity encoding round-trips native
+        /// bytes exactly over a small hazard alphabet (see `hazard_bytes`):
+        /// invalid UTF-8, valid multi-byte sequences, backslashes and literal
+        /// `%XX` spellings that resemble the encoder's own escapes. It does
+        /// not sample the whole byte range.
+        #[test]
+        fn proptest_stable_source_path_text_round_trips_hazard_bytes(
+            bytes in hazard_bytes()
+        ) {
+            let path = native_path(bytes);
+            let encoded = stable_source_path_text(&path);
+            proptest::prop_assert!(percent_spellings_are_canonical(&encoded));
+            let decoded = decode_stable_path_text(&encoded);
+            proptest::prop_assert_eq!(decoded.as_os_str(), path.as_os_str());
+        }
+
+        /// #13949: distinct native paths never share a source-identity
+        /// spelling, so a literal `%80` or `%5C` cannot merge with an invalid
+        /// byte or a backslash. The second path is a one-edit mutation of the
+        /// first, so near-collisions are the common case.
+        #[test]
+        fn proptest_stable_source_path_text_is_injective(
+            left in hazard_bytes(),
+            edit in proptest::sample::select(vec![0u8, 1, 2]),
+            at in 0usize..16,
+            replacement in proptest::sample::select(vec![b'%', b'5', b'C', b'8', b'0', b'\\', 0x80, 0xFF]),
+        ) {
+            let mut right = left.clone();
+            let at = at.min(right.len());
+            match edit {
+                0 if at < right.len() => right[at] = replacement,
+                1 => right.insert(at, replacement),
+                _ if at < right.len() => {
+                    right.remove(at);
+                }
+                _ => {}
+            }
+            proptest::prop_assume!(left != right);
+            proptest::prop_assert_ne!(
+                stable_source_path_text(&native_path(left)),
+                stable_source_path_text(&native_path(right))
+            );
+        }
     }
 
     /// #5996: one finding, one location string. The verbatim-root MCP form
@@ -1484,7 +1926,13 @@ mod tests {
                 Path::new(r"\\?\F:\repo\src\main.rs"),
                 false
             ),
-            r"//?/F:/repo/src/main.rs"
+            // On Unix the backslashes are file-name bytes, spelled `%5C`
+            // (#15908); a Windows host still reads them as separators.
+            if cfg!(unix) {
+                r"%5C%5C?%5CF:%5Crepo%5Csrc%5Cmain.rs"
+            } else {
+                r"//?/F:/repo/src/main.rs"
+            }
         );
     }
 
@@ -1874,6 +2322,195 @@ pub fn unrelated() -> i32 {
         {
             return Err(format!("expected unrelated owner, got {owners:?}"));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_name_a_test_whose_attribute_line_was_added() -> Result<(), String> {
+        // #12940 review (Devin): adding `#[test]` above an existing function
+        // edits that test although its indexed span starts at `fn`. An
+        // attribute above a different, untouched test stays unattributed.
+        let root = temp_dir("edited_attribute_headers");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    // registers the check\n    fn checks_one() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn neighbor() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+        fs::write(root.join("src/lib.rs"), source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        // Line 9 is the added `#[test]`; `fn checks_one` is on line 11.
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), 9)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        let ownership = ownership?;
+        assert_eq!(
+            ownership.edited_function_headers,
+            vec![(PathBuf::from("src/lib.rs"), 11)],
+            "only the test under the added attribute is edited"
+        );
+        Ok(())
+    }
+
+    fn edited_headers_for(
+        label: &str,
+        source: &str,
+        line: usize,
+    ) -> Result<Vec<(PathBuf, usize)>, String> {
+        let root = temp_dir(label);
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        fs::write(root.join("src/lib.rs"), source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), line)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        Ok(ownership?.edited_function_headers)
+    }
+
+    const MULTILINE_ATTRIBUTE_TESTS: &str = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[cfg(all(\n        unix,\n        feature = \"x\"\n    ))] // gated\n    #[test]\n    fn gated() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn neighbor() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+
+    #[test]
+    fn edited_headers_name_a_test_whose_multiline_attribute_argument_changed() -> Result<(), String>
+    {
+        // #12940 review: editing only `feature = "x"` inside a multi-line
+        // `#[cfg(all(...))]` above `#[test] fn gated` (line 14) edits that
+        // test; the untouched neighbor (line 19) stays unattributed.
+        for line in [9, 11, 12, 13] {
+            let headers = edited_headers_for(
+                "edited_multiline_attribute",
+                MULTILINE_ATTRIBUTE_TESTS,
+                line,
+            )?;
+            assert_eq!(
+                headers,
+                vec![(PathBuf::from("src/lib.rs"), 14)],
+                "line {line} of the attribute prefix edits only `gated`"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_follow_an_attribute_prefix_longer_than_sixteen_lines() -> Result<(), String> {
+        let mut source = String::from("pub fn one() -> i32 {\n    1\n}\n\n");
+        // Lines 5..=24: twenty attribute lines, then `#[test]` on 25 and the
+        // `fn` token on 26.
+        for index in 0..20 {
+            source.push_str(&format!("#[doc = \"line {index}\"]\n"));
+        }
+        source.push_str("#[test]\nfn long_prefix() {\n    assert_eq!(one(), 1);\n}\n");
+        let headers = edited_headers_for("edited_long_attribute_prefix", &source, 5)?;
+        assert_eq!(headers, vec![(PathBuf::from("src/lib.rs"), 26)]);
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_credit_every_test_when_the_attribute_cannot_be_placed() -> Result<(), String>
+    {
+        // An edited, unbalanced `]]` (line 10) above `#[test] fn second`
+        // (line 12) cannot be matched to an opener, so the edit stays
+        // "possibly any test in this file" instead of "none".
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[test]\nfn first() {\n    assert_eq!(one(), 1);\n}\n\n]]\n#[test]\nfn second() {\n    assert_eq!(one(), 1);\n}\n";
+        let headers = edited_headers_for("edited_unplaceable_attribute", source, 10)?;
+        assert_eq!(
+            headers,
+            vec![
+                (PathBuf::from("src/lib.rs"), 6),
+                (PathBuf::from("src/lib.rs"), 12)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_ignore_brackets_in_strings_and_cross_block_comments() -> Result<(), String> {
+        // #12940 review: an unbalanced `[` inside a string or a trailing
+        // comment must not close a multi-line attribute early, and a block
+        // comment sits in the prefix like a line comment.
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg_attr(\n    feature = \"x\", // see [1\n    doc = \"see [docs\"\n)]\n#[test]\n/* reason */\nfn t() {\n    assert_eq!(one(), 1);\n}\n";
+        // `fn t` is on line 11.
+        for line in [5, 6, 7, 8, 9, 10] {
+            let headers = edited_headers_for("edited_string_bracket_attribute", source, line)?;
+            assert_eq!(
+                headers,
+                vec![(PathBuf::from("src/lib.rs"), 11)],
+                "line {line} of the prefix edits `t`"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_credit_every_test_across_a_raw_string_attribute() -> Result<(), String> {
+        // A raw string can hold `"` and `[`, which a line scan cannot place,
+        // so an edit in its prefix stays "possibly any test in this file".
+        let source = "#[test]\nfn first() {\n    assert!(true);\n}\n\n#[doc = r#\"a \" [ b\"#]\n#[test]\nfn second() {\n    assert!(true);\n}\n";
+        let headers = edited_headers_for("edited_raw_string_attribute", source, 6)?;
+        assert_eq!(
+            headers,
+            vec![
+                (PathBuf::from("src/lib.rs"), 2),
+                (PathBuf::from("src/lib.rs"), 8)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_credit_every_test_for_a_module_gate_edit() -> Result<(), String> {
+        // Editing `#[cfg(test)]` above `mod tests {` can gate every test in
+        // it, so the edit is not placed on one test.
+        let source = "pub fn one() -> i32 {\n    1\n}\n\n#[cfg(all(test, feature = \"slow\"))]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn a() {\n        assert_eq!(one(), 1);\n    }\n\n    #[test]\n    fn b() {\n        assert_eq!(one(), 1);\n    }\n}\n";
+        let headers = edited_headers_for("edited_module_gate", source, 5)?;
+        assert_eq!(
+            headers,
+            vec![
+                (PathBuf::from("src/lib.rs"), 10),
+                (PathBuf::from("src/lib.rs"), 15)
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_do_not_credit_a_test_below_module_code() -> Result<(), String> {
+        // A changed `const` above `#[test] fn` is module code, not the test's
+        // attribute prefix.
+        let source =
+            "pub const LIMIT: usize = 3;\n#[test]\nfn below() {\n    assert_eq!(LIMIT, 3);\n}\n";
+        let headers = edited_headers_for("edited_module_code_above_test", source, 1)?;
+        assert!(headers.is_empty(), "module code edits no test: {headers:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn edited_headers_name_a_macro_generated_test_edited_past_its_header() -> Result<(), String> {
+        // #12940 review: a `macro_rules!` test has no function fact; it is
+        // pinned to its invocation span, so an edit deep inside that span
+        // must still mark it edited (by the invocation's start line).
+        let root = temp_dir("edited_macro_test_headers");
+        fs::create_dir_all(root.join("src"))
+            .map_err(|e| format!("failed to create src dir: {e}"))?;
+        let source = "pub fn one() -> i32 {\n    1\n}\n\nmacro_rules! suite {\n    ($($t:tt)*) => { $($t)* };\n}\n\nsuite! {\n    #[test]\n    fn made() {\n        let v0 = 0;\n        let v1 = 1;\n        let v2 = 2;\n        let v3 = 3;\n        let v4 = 4;\n        let v5 = 5;\n        let v6 = 6;\n        let v7 = 7;\n        let v8 = 8;\n        let v9 = 9;\n        let v10 = 10;\n        let v11 = 11;\n        let v12 = 12;\n        let v13 = 13;\n        assert_eq!(one(), 1);\n    }\n}\n".to_string();
+        fs::write(root.join("src/lib.rs"), &source)
+            .map_err(|e| format!("failed to write src/lib.rs: {e}"))?;
+        // Line 9 is `suite! {`; line 25 is past the 12-line window.
+        let ownership =
+            changed_line_ownership_for_lines(&root, &[(PathBuf::from("src/lib.rs"), 25)]);
+        fs::remove_dir_all(&root).map_err(|e| format!("failed to remove temp dir: {e}"))?;
+        let ownership = ownership?;
+        assert!(
+            ownership
+                .edited_function_headers
+                .contains(&(PathBuf::from("src/lib.rs"), 9)),
+            "macro test edited past its header must be named: {:?}",
+            ownership.edited_function_headers
+        );
+        assert!(
+            !ownership
+                .edited_function_headers
+                .contains(&(PathBuf::from("src/lib.rs"), 1)),
+            "an untouched function is not edited: {:?}",
+            ownership.edited_function_headers
+        );
         Ok(())
     }
 

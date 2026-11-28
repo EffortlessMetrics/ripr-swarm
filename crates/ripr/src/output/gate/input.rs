@@ -4,7 +4,6 @@ use crate::output::gap_decision_ledger::{self, GapRecord};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Digests of the exact bytes each decision-affecting reader parsed, keyed
@@ -21,6 +20,7 @@ pub(super) struct ConsumedInputHashes {
     pub(super) mutation_calibration: Option<String>,
     pub(super) baseline: Option<String>,
     pub(super) exception_policy: Option<String>,
+    pub(super) acknowledgements: Option<String>,
 }
 
 impl ConsumedInputHashes {
@@ -32,7 +32,7 @@ impl ConsumedInputHashes {
         resolved: &Path,
         display: &Path,
     ) -> Result<(Value, String), String> {
-        let bytes = fs::read(resolved).map_err(|err| {
+        let bytes = crate::bounded_input::read(resolved).map_err(|err| {
             if err.kind() == std::io::ErrorKind::NotFound {
                 format!("read {} failed: not found", display_path(display))
             } else {
@@ -40,7 +40,13 @@ impl ConsumedInputHashes {
             }
         })?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
-        let value = serde_json::from_slice(&bytes)
+        let text = crate::bounded_input::decode_artifact_text(&bytes).map_err(|err| {
+            format!(
+                "read {} failed: {err}; save the file as UTF-8, then rerun",
+                display_path(display)
+            )
+        })?;
+        let value = serde_json::from_str(&text)
             .map_err(|err| format!("parse {} failed: {err}; fix the JSON, or regenerate the input if a command wrote it (never regenerate a reviewed baseline), then rerun", display_path(display)))?;
         Ok((value, digest))
     }
@@ -52,12 +58,20 @@ impl ConsumedInputHashes {
         &self,
         resolved: &Path,
         display: &str,
+        flag: &str,
     ) -> Result<(String, String), String> {
-        let bytes = fs::read(resolved)
-            .map_err(|err| format!("failed to read exception policy `{display}`: {err}; check that the path exists and is readable, then rerun"))?;
+        let bytes = crate::bounded_input::read(resolved).map_err(|err| {
+            format!(
+                "failed to read {flag} `{display}`: {}",
+                crate::bounded_input::unreadable_input_phrase(
+                    &err,
+                    "check that the path exists and is a readable TOML file, then rerun"
+                )
+            )
+        })?;
         let digest = format!("sha256:{:x}", Sha256::digest(&bytes));
         let text = String::from_utf8(bytes)
-            .map_err(|err| format!("exception policy `{display}` is not valid UTF-8: {err}; save the policy file as UTF-8, then rerun"))?;
+            .map_err(|err| format!("{flag} `{display}` is not valid UTF-8: {err}; save the policy file as UTF-8, then rerun"))?;
         Ok((text, digest))
     }
 }
@@ -114,13 +128,14 @@ pub(super) fn read_gap_ledger_impl(
     consumed: &mut ConsumedInputHashes,
     coverage: &mut Option<Value>,
     refusal: &mut Vec<String>,
+    owner_opt_outs: &mut Option<Value>,
 ) -> Option<Vec<GapRecord>> {
     let path = input.gap_ledger.as_ref()?;
     let resolved = resolve_root_path(&input.root, path);
     // Read once: the subject hash is computed from exactly the bytes parsed
     // here, so the receipt cannot bind the decision to other contents
     // (review round 1, #5263).
-    let bytes = match fs::read(&resolved) {
+    let bytes = match crate::bounded_input::read(&resolved) {
         Ok(bytes) => bytes,
         Err(error) => {
             config_errors.push(format!(
@@ -132,11 +147,11 @@ pub(super) fn read_gap_ledger_impl(
     };
     let consumed_hash = format!("sha256:{:x}", Sha256::digest(&bytes));
     consumed.gap_ledger = Some(consumed_hash);
-    let text = match String::from_utf8(bytes) {
+    let text = match crate::bounded_input::decode_artifact_text(&bytes) {
         Ok(text) => text,
         Err(error) => {
             config_errors.push(format!(
-                "required gap decision ledger input {} is invalid: not valid UTF-8: {error}",
+                "required gap decision ledger input {} is invalid: {error}",
                 display_path(path)
             ));
             return Some(Vec::new());
@@ -201,6 +216,10 @@ pub(super) fn read_gap_ledger_impl(
             // #9599: a producer coverage disclosure counts only while it still
             // describes exactly this record set.
             if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                // #14898: seams the source withheld by an owner opt-out are
+                // absent from the records; the disclosure travels with them
+                // so a baseline consumer never reads them as resolved.
+                *owner_opt_outs = value.get("owner_opt_outs").cloned();
                 match gap_decision_ledger::verified_analysis_coverage(&value, &records) {
                     Some(verified) => {
                         let mismatched = ledger_coverage_mismatches(&input.root, &verified);
@@ -234,10 +253,14 @@ pub(super) fn read_gap_ledger_impl(
 /// Names the way forward for a mode that needs a baseline the run does not
 /// have (#11206): start non-blocking, then create the baseline from a real
 /// gate decision.
-const BASELINE_START_HINT: &str = "To start without blocking, use --mode visible-only \
-     (RIPR_GATE_MODE=visible-only). To adopt baseline-check, create a baseline from a \
-     gate decision with `ripr baseline create --from target/ripr/reports/gate-decision.json`, \
-     commit it, and pass it with --baseline (see docs/BASELINE_LEDGER_WORKFLOW.md)";
+fn baseline_start_hint(mode: &str) -> String {
+    format!(
+        "To start without blocking, use --mode visible-only \
+         (RIPR_GATE_MODE=visible-only). To adopt {mode}, create a baseline from a \
+         gate decision with `ripr baseline create --from target/ripr/reports/gate-decision.json`, \
+         commit it, and pass it with --baseline (see docs/BASELINE_LEDGER_WORKFLOW.md)"
+    )
+}
 
 /// A `--gap-ledger` that is not a gap decision ledger usually is the
 /// repo-exposure report or another full-repo document. Say which input the
@@ -409,8 +432,9 @@ pub(super) fn read_baseline_impl(
     if input.mode.requires_baseline() && input.baseline.is_none() {
         config_errors.push(format!(
             "{} mode requires an explicit --baseline artifact (RIPR_GATE_BASELINE in the \
-             generated workflow). {BASELINE_START_HINT}",
-            input.mode.as_str()
+             generated workflow). {}",
+            input.mode.as_str(),
+            baseline_start_hint(input.mode.as_str())
         ));
         return BaselineIndex::default();
     }
@@ -471,8 +495,9 @@ pub(super) fn read_baseline_impl(
         }
         Err(error) if input.mode.requires_baseline() => {
             config_errors.push(format!(
-                "required baseline {} is invalid: {error}. {BASELINE_START_HINT}",
-                display_path(path)
+                "required baseline {} is invalid: {error}. {}",
+                display_path(path),
+                baseline_start_hint(input.mode.as_str())
             ));
             BaselineIndex::default()
         }

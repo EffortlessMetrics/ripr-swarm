@@ -332,10 +332,18 @@ rejected alternative. Any can be reversed later without touching the rest.
      an outside crate's macro or a module in a directory the index skips
      (`src/fixtures/`) may otherwise declare a local `u32`. An outside
      procedural macro's output is not read; a derive or attribute macro that
-     declares a type named after a primitive is outside this decision, as is
-     an owner or element type that ends the process before the assertion
-     (`std::process::exit` in the owner or in a `Drop`), which no owner pin
-     models yet (#8084);
+     declares a type named after a primitive is outside this decision;
+   - for the indexed pin above, a sibling element's matching field built from
+     anything other than a literal or plain path refuses the pin (blocks,
+     calls and non-plain arithmetic), and an owner or element type that ends
+     the process before the assertion (`std::process::exit` in the owner or
+     in a `Drop`) is outside the pin (#8084);
+   - separately, a `return_value` probe on the same owner shape demotes from
+     `exposed` to `weakly_exposed` when any struct field initializer or
+     non-record array element may exit during array construction (blocks,
+     calls, macros and similar exit-capable shapes). Ordinary arithmetic on
+     literals and paths does not demote (#8084,
+     `crates/ripr/src/analysis/classifier/evidence.rs::a_sibling_field_that_may_exit_keeps_return_value_weakly`);
 
    - the owner's name is the name of no other indexed function, because the
      owner call is matched by name and a nested module's `super::rows` or a
@@ -421,6 +429,21 @@ rejected alternative. Any can be reversed later without touching the rest.
    decoy. Verdict-corpus case `spec0231-oracle-any-field-eq-literal`
    (RIPR-SPEC-0231 example 28's membership on a returned array) moves from
    gap to credited.
+
+10. **Associated constructors (2026-11-19, #15345).** Decision 4 kept the
+    whole-value field pin off associated functions (`T::new()`), leaving
+    `assert_eq!(Cfg::new(), Cfg { retries: 3, .. })` a gap while the same
+    line's return value read `exposed`. Adopted: an inherent associated
+    function's field pins through RIPR-SPEC-0172's `T::name(..)` call
+    identity, the one its return value already uses, so the test must name
+    the owner's own type through a direct import; a bare `name(..)`, another
+    type's `U::name(..)` and a glob import stay refused, and every
+    owner-side gate above is unchanged. The closed-owner check that refuses
+    a literal neither version computes reads the admitted `T::name(..)` call
+    as the `name(..)` it resolves to, so
+    `assert_eq!(Cfg::fresh(3), Cfg { retries: 7, .. })` against
+    `retries: n + 1` (was `n + 2`) stays `weakly_exposed`. Rejected: a
+    separate parser for associated-call literals beside the owner pin.
 
 ## Required Evidence
 
@@ -524,6 +547,10 @@ The diff changes `retries: n + 2` to `retries: n + 1` in `build`; `Config` deriv
   open-world memberships and a decoy struct declaration keep the gap)
   and the unit tests in
   `crates/ripr/src/analysis/classify/element_field_pin.rs`.
+- Decision 10: `an_associated_constructor_pins_its_whole_value_field` in
+  `crates/ripr/src/analysis/classify/owner_pin/tests.rs`, the fixture
+  `fixtures/rust_whole_value_associated_constructor_field` and its control
+  `fixtures/rust_whole_value_associated_constructor_unpinned_field`.
 - Planned: oracle classifier unit tests for braces outside struct-literal
   operands.
 

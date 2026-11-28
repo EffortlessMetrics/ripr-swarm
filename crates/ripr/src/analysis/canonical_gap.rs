@@ -6,7 +6,7 @@
 //! discriminate, while leaving line numbers as locators.
 
 use super::ClassifiedSeam;
-use super::language::producer_gap_names_seam_shape;
+use super::language::{producer_gap_names_seam_shape, rust_gap_id_for_seam_shape};
 use super::seams::{RequiredDiscriminator, SeamId, SeamKind};
 use std::collections::BTreeMap;
 
@@ -195,6 +195,56 @@ pub(crate) fn probe_id_names_seam(
     }
 }
 
+/// Whether a bare (no collision ordinal) `probe:` / `repo-probe:` check
+/// finding ID names this seam, by the seam-side re-mint alone (#13895).
+///
+/// Unlike [`probe_id_names_seam`] this does not look at the rest of the
+/// inventory: the caller supplies the uniqueness decision over the seams it
+/// holds. An ID carrying an ordinal (`.2`) is refused here because an
+/// ordinal cannot be bound to one seam without the full inventory, so a
+/// policy keyed on it fails closed.
+pub(crate) fn bare_probe_id_names_seam(item: &str, entry: &ClassifiedSeam) -> bool {
+    let prefix = if item.starts_with("probe:") {
+        "probe"
+    } else if item.starts_with("repo-probe:") {
+        "repo-probe"
+    } else {
+        return false;
+    };
+    let has_ordinal = item
+        .rsplit_once(':')
+        .is_some_and(|(_, fingerprint)| fingerprint.contains('.'));
+    !has_ordinal && reminted_probe_id(entry, prefix, 1).as_deref() == Some(item)
+}
+
+/// Every bare check-finding id that names this seam: the `probe:` and
+/// `repo-probe:` re-mints and the readable producer gap id (#13895). A caller
+/// that counts these over a whole diff-scoped inventory learns which ids are
+/// shared by several seams, which a selected or capped subset cannot show.
+pub(crate) fn seam_nameable_ids(entry: &ClassifiedSeam) -> Vec<String> {
+    let mut ids = Vec::new();
+    for prefix in ["probe", "repo-probe"] {
+        ids.extend(reminted_probe_id(entry, prefix, 1));
+    }
+    let file = crate::analysis::stable_path_text(entry.seam.file());
+    ids.extend(rust_gap_id_for_seam_shape(
+        &file,
+        entry.seam.owner(),
+        entry.seam.kind(),
+        entry.seam.expression(),
+    ));
+    ids
+}
+
+/// True for a `probe:` / `repo-probe:` id carrying a collision ordinal
+/// (`...:fingerprint.2`), which cannot be bound to one seam.
+pub(crate) fn probe_id_carries_ordinal(item: &str) -> bool {
+    (item.starts_with("probe:") || item.starts_with("repo-probe:"))
+        && item
+            .rsplit_once(':')
+            .is_some_and(|(_, fingerprint)| fingerprint.contains('.'))
+}
+
 /// Re-mint the probe ID for one seam at `ordinal`, or `None` when the
 /// seam's kind names no probe family.
 fn reminted_probe_id(entry: &ClassifiedSeam, prefix: &str, ordinal: u32) -> Option<String> {
@@ -301,7 +351,9 @@ mod tests {
     use super::*;
     use crate::analysis::seams::{ExpectedSink, RepoSeam, SeamGripClass};
     use crate::analysis::test_grip_evidence::TestGripEvidence;
-    use crate::domain::{Confidence, MissingDiscriminatorFact, StageEvidence, StageState};
+    use crate::domain::{
+        Confidence, DiscriminatorShape, MissingDiscriminatorFact, StageEvidence, StageState,
+    };
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
@@ -338,11 +390,11 @@ mod tests {
             observe: stage(StageState::Yes),
             discriminate: stage(StageState::Weak),
             observed_values: Vec::new(),
-            missing_discriminators: vec![MissingDiscriminatorFact {
-                value: missing.to_string(),
-                reason: "missing equality boundary".to_string(),
-                flow_sink: None,
-            }],
+            missing_discriminators: vec![MissingDiscriminatorFact::equality_spelled(
+                missing.to_string(),
+                "missing equality boundary".to_string(),
+                None,
+            )],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
         };
@@ -447,11 +499,15 @@ mod tests {
                 value: "exact discount payload".to_string(),
                 reason: "missing payload".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "amount == threshold".to_string(),
                 reason: "missing equality boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             },
         ];
         let mut second = classified_gap("pricing::discounted_total", 118, "amount == threshold");
@@ -460,11 +516,15 @@ mod tests {
                 value: "amount == threshold".to_string(),
                 reason: "missing equality boundary".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "exact discount payload".to_string(),
                 reason: "missing payload".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
         ];
 

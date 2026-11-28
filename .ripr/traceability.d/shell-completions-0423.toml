@@ -1,0 +1,31 @@
+# `ripr completions` shell completion scripts (#7438).
+[[behavior]]
+id = "RIPR-SPEC-0423"
+name = "Shell completions"
+spec = "docs/specs/RIPR-SPEC-0423-shell-completions.md"
+tests = [
+  "crates/ripr/src/cli/commands/completions.rs::tests::tree_keeps_only_public_canonical_rows_in_sorted_order",
+  "crates/ripr/src/cli/commands/completions.rs::tests::bash_output_is_exact_for_a_synthetic_catalog",
+  "crates/ripr/src/cli/commands/completions.rs::tests::zsh_output_is_exact_for_a_synthetic_catalog",
+  "crates/ripr/src/cli/commands/completions.rs::tests::fish_output_is_exact_for_a_synthetic_catalog",
+  "crates/ripr/src/cli/commands/completions.rs::tests::powershell_output_is_exact_for_a_synthetic_catalog",
+  "crates/ripr/src/cli/commands/completions.rs::tests::no_shell_completes_an_alias_or_a_non_public_row",
+  "crates/ripr/src/cli/commands/completions.rs::tests::real_catalog_scripts_name_real_commands_and_leave_out_aliases",
+  "crates/ripr/src/cli/commands/completions.rs::tests::arguments_are_checked",
+  "crates/ripr/tests/completions_command.rs::each_shell_prints_a_script_and_exits_zero",
+  "crates/ripr/tests/completions_command.rs::missing_shell_is_refused_with_the_accepted_names",
+  "crates/ripr/tests/completions_command.rs::unknown_shell_is_refused_with_a_suggestion",
+  "crates/ripr/tests/completions_command.rs::scripts_load_in_the_installed_shells",
+  "crates/ripr/tests/completions_command.rs::bash_offers_the_second_word_only_in_second_position",
+  "crates/ripr/tests/completions_command.rs::fish_offers_the_second_word_only_in_second_position",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/cli/commands/completions.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0423-shell-completions.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

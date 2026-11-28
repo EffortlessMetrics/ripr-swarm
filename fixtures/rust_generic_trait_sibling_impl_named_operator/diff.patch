@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,6 +14,6 @@
+ impl Add<Meters> for Meters {
+     type Output = Meters;
+     fn add(self, rhs: Meters) -> Meters {
+-        Meters(self.0 + rhs.0)
++        Meters(self.0 + rhs.0 + 1)
+     }
+ }

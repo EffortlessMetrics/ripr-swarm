@@ -2,7 +2,7 @@
 //! conftest `collect_ignore`, and the pytest options that select files,
 //! classes and functions. Anything the pass cannot evaluate withholds credit.
 
-use super::collection_config::apply_collection_config;
+use super::collection_config::{COLLECT_IGNORE, apply_collection_config};
 use super::source_facts::extract_source_facts;
 use super::test_activation::activation_control;
 use super::*;
@@ -81,6 +81,9 @@ fn control_names(file: &str, source: &str) -> Vec<String> {
 }
 
 const SWITCH: &str = "pytest.collection(__test__ = False)";
+/// A binding that is not provably `True` or `False`: collection is
+/// uncertain, so the control withholds credit without claiming a gap.
+const UNRESOLVED_SWITCH: &str = "pytest.collection(__test__ unresolved)";
 
 #[test]
 fn class_test_switch_false_withholds_credit() {
@@ -121,7 +124,7 @@ fn computed_or_branch_bound_test_switch_withholds_credit() {
         );
         assert_eq!(
             control_names("tests/test_calc.py", &source),
-            [SWITCH],
+            [UNRESOLVED_SWITCH],
             "{binding}"
         );
     }
@@ -138,7 +141,7 @@ fn match_arm_destructured_and_bare_annotation_test_switch_bindings() {
         let source = format!("{binding}\n\n{TEST_BODY}");
         assert_eq!(
             control_names("tests/test_calc.py", &source),
-            [SWITCH],
+            [UNRESOLVED_SWITCH],
             "{binding}"
         );
         let class_source = format!(
@@ -147,7 +150,7 @@ fn match_arm_destructured_and_bare_annotation_test_switch_bindings() {
         );
         assert_eq!(
             control_names("tests/test_calc.py", &class_source),
-            [SWITCH],
+            [UNRESOLVED_SWITCH],
             "{binding}"
         );
     }
@@ -261,8 +264,30 @@ fn unevaluable_conftest_collection_forms_withhold_credit() -> Result<(), String>
     for (label, conftest) in [
         ("computed", "collect_ignore = [name for name in NAMES]\n"),
         (
-            "conditional",
-            "if SLOW:\n    collect_ignore = ['test_calc.py']\n",
+            "conditional-computed",
+            "if SLOW:\n    collect_ignore = [name for name in NAMES]\n",
+        ),
+        (
+            "conditional-hook",
+            "if SLOW:\n    def pytest_ignore_collect(collection_path):\n        return True\n",
+        ),
+        (
+            "conditional-decorated-hook",
+            "import sys\nimport pytest\n\nif sys.platform == 'linux':\n    @pytest.hookimpl(specname='pytest_ignore_collect')\n    def platform_skip(collection_path, config):\n        return True\n",
+        ),
+        (
+            "decorated-hook",
+            "import pytest\n\n\n@pytest.hookimpl(specname='pytest_ignore_collect')\ndef platform_skip(collection_path, config):\n    return True\n",
+        ),
+        ("name-in-guard", "if collect_ignore:\n    pass\n"),
+        (
+            "branch-remove",
+            "collect_ignore = ['x.py']\nif SLOW:\n    collect_ignore.remove('x.py')\n",
+        ),
+        ("branch-del", "if SLOW:\n    del collect_ignore[:]\n"),
+        (
+            "nested-computed",
+            "if SLOW:\n    if FAST:\n        collect_ignore = [name for name in NAMES]\n",
         ),
         ("class-set", "collect_ignore_glob = ['[a-z]*.py']\n"),
         ("parent", "collect_ignore = ['../x.py']\n"),
@@ -280,6 +305,65 @@ fn unevaluable_conftest_collection_forms_withhold_credit() -> Result<(), String>
             ],
             "pytest.collection(unevaluated conftest)",
         )?;
+    }
+    Ok(())
+}
+
+const GUARDED_IGNORE: &str = "import sys\n\ncollect_ignore = []\nif sys.version_info < (3, 14):\n    collect_ignore.extend([\"test_other.py\"])\nelse:\n    collect_ignore_glob = [\"legacy_*.py\"]\n";
+
+/// A guarded `collect_ignore` withholds only the paths either branch could
+/// ignore (#15631): a test elsewhere in the directory keeps credit.
+#[test]
+fn guarded_collect_ignore_withholds_only_the_paths_it_could_ignore() -> Result<(), String> {
+    let files = [
+        ("tests/conftest.py", GUARDED_IGNORE),
+        ("tests/test_calc.py", TEST_BODY),
+        ("tests/test_other.py", TEST_BODY),
+        ("tests/legacy_calc.py", TEST_BODY),
+    ];
+    assert_credited("guarded-other-file", &files)?;
+    for ignored in ["tests/test_other.py", "tests/legacy_calc.py"] {
+        let got = controls_of("guarded-ignored", &files, ignored)?;
+        if !got
+            .iter()
+            .any(|name| name == "pytest.collection(collect_ignore)")
+        {
+            return Err(format!("{ignored}: expected collect_ignore, got {got:?}"));
+        }
+    }
+    Ok(())
+}
+
+/// Every branch of an `elif` chain adds to the union, and a branch that
+/// resets the list does not drop entries another path keeps; a later
+/// top-level assignment runs on every path and replaces them (#15631).
+#[test]
+fn guarded_collect_ignore_keeps_the_union_across_branches() -> Result<(), String> {
+    let chain = "collect_ignore = ['test_other.py']\nif SLOW:\n    collect_ignore.append('test_a.py')\nelif NIGHTLY:\n    collect_ignore.append('test_b.py')\nelse:\n    collect_ignore = []\n";
+    let files = [
+        ("tests/conftest.py", chain),
+        ("tests/test_calc.py", TEST_BODY),
+        ("tests/test_other.py", TEST_BODY),
+        ("tests/test_a.py", TEST_BODY),
+        ("tests/test_b.py", TEST_BODY),
+    ];
+    assert_credited("chain-other-file", &files)?;
+    for ignored in ["tests/test_other.py", "tests/test_a.py", "tests/test_b.py"] {
+        let got = controls_of("chain-ignored", &files, ignored)?;
+        if !got.iter().any(|name| name == COLLECT_IGNORE) {
+            return Err(format!("{ignored}: expected collect_ignore, got {got:?}"));
+        }
+    }
+    let replaced = "if SLOW:\n    collect_ignore = ['test_other.py']\ncollect_ignore = []\n";
+    let files = [
+        ("tests/conftest.py", replaced),
+        ("tests/test_other.py", TEST_BODY),
+    ];
+    let got = controls_of("top-level-replace", &files, "tests/test_other.py")?;
+    if !got.is_empty() {
+        return Err(format!(
+            "top-level-replace: expected no control, got {got:?}"
+        ));
     }
     Ok(())
 }
@@ -428,6 +512,125 @@ fn testpaths_and_ignore_options_withhold_credit() -> Result<(), String> {
             (
                 "pytest.ini",
                 "[pytest]\naddopts = -ra -q --strict-markers -W error::UserWarning\nminversion = 7\ntestpaths = tests\n",
+            ),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+    )
+}
+
+#[test]
+fn norecursedirs_trailing_slash_names_the_directory() -> Result<(), String> {
+    let ini = "[pytest]\nnorecursedirs = .git build .env/ env/ .pyenv/ .tmp/ .eggs/ venv/\n";
+    // The python-semver spelling no longer disables the whole configuration.
+    assert_credited(
+        "semver-spelling",
+        &[("pytest.ini", ini), ("tests/test_calc.py", TEST_BODY)],
+    )?;
+    // Conservative reading, not a claim about pytest: `env/` is read as the
+    // basename pattern `env`, so a test under `env/` is withheld.
+    let got = controls_of(
+        "env-slash",
+        &[
+            ("pytest.ini", "[pytest]\nnorecursedirs = env/\n"),
+            ("env/test_calc.py", TEST_BODY),
+        ],
+        "env/test_calc.py",
+    )?;
+    if got != ["pytest.collection(norecursedirs)"] {
+        return Err(format!("env/ should exclude env/test_calc.py: {got:?}"));
+    }
+    // A different directory is not excluded.
+    assert_credited(
+        "other-dir",
+        &[
+            ("pytest.ini", "[pytest]\nnorecursedirs = env/\n"),
+            ("tests/test_calc.py", TEST_BODY),
+        ],
+    )?;
+    // Any other separator-bearing entry stays unevaluated.
+    for (label, entry) in [
+        ("nested", "a/b/"),
+        ("slash-only", "/"),
+        ("double", "env//"),
+        ("leading", "/env/"),
+        ("glob-star", "tests/*_cases"),
+        ("glob-question", "tests/mypy_test_case?"),
+        ("glob-class", "tests/[a]"),
+        ("dot-segment", "tests/./mypy_test_cases"),
+        ("parent-segment", "tests/../mypy_test_cases"),
+    ] {
+        assert_withheld(
+            label,
+            &[
+                (
+                    "pytest.ini",
+                    &format!("[pytest]\nnorecursedirs = {entry}\n"),
+                ),
+                ("tests/test_calc.py", TEST_BODY),
+            ],
+            "pytest.collection(unevaluated config)",
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn norecursedirs_plain_interior_slash_path_is_evaluated() -> Result<(), String> {
+    let ini = "[pytest]\nnorecursedirs = .git docs tests/mypy_test_cases\n";
+    // Tests outside the named directory keep their credit.
+    assert_credited(
+        "outside",
+        &[("pytest.ini", ini), ("tests/test_calc.py", TEST_BODY)],
+    )?;
+    // A sibling whose name merely starts like the entry is not excluded.
+    let sibling = "tests/mypy_test_cases_extra/test_calc.py";
+    let got = controls_of(
+        "sibling-prefix",
+        &[("pytest.ini", ini), (sibling, TEST_BODY)],
+        sibling,
+    )?;
+    if !got.is_empty() {
+        return Err(format!("{sibling} should keep credit: {got:?}"));
+    }
+    // Tests inside it, at any depth, are excluded by norecursedirs.
+    for file in [
+        "tests/mypy_test_cases/test_calc.py",
+        "tests/mypy_test_cases/deep/test_calc.py",
+        // pytest's `*/tests/mypy_test_cases` also matches below a prefix.
+        "pkg/tests/mypy_test_cases/test_calc.py",
+    ] {
+        let got = controls_of("inside", &[("pytest.ini", ini), (file, TEST_BODY)], file)?;
+        if got != ["pytest.collection(norecursedirs)"] {
+            return Err(format!("{file} should be excluded: {got:?}"));
+        }
+    }
+    // A config below the entry's first segment: pytest's `*/tests/mypy_test_cases`
+    // still matches the absolute path, so the config-relative tail
+    // `mypy_test_cases` is excluded too.
+    let nested = "tests/mypy_test_cases/test_calc.py";
+    let got = controls_of(
+        "config-below-entry",
+        &[
+            (
+                "tests/pytest.ini",
+                "[pytest]\nnorecursedirs = tests/mypy_test_cases\n",
+            ),
+            (nested, TEST_BODY),
+        ],
+        nested,
+    )?;
+    if got != ["pytest.collection(norecursedirs)"] {
+        return Err(format!(
+            "{nested} under tests/pytest.ini should be excluded: {got:?}"
+        ));
+    }
+    // The pyproject spelling from marshmallow.
+    assert_credited(
+        "pyproject",
+        &[
+            (
+                "pyproject.toml",
+                "[tool.pytest.ini_options]\nnorecursedirs = [\"tests/mypy_test_cases\"]\n",
             ),
             ("tests/test_calc.py", TEST_BODY),
         ],

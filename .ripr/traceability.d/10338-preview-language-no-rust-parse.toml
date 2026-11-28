@@ -1,0 +1,9 @@
+# Registers the runner-independent Python/TS-only no-Rust parse guard (#10338 item 2)
+# under RIPR-SPEC-0171. Lives in a fragment so it does not edit the shared
+# `.ripr/traceability.toml` arrays or the docs-only test file owned by #12556.
+[[extend]]
+id = "RIPR-SPEC-0171"
+tests = [
+  "crates/ripr/tests/preview_language_diff_reads_no_rust.rs::preview_language_only_diff_does_not_scan_workspace_rust",
+  "crates/ripr/tests/preview_language_diff_reads_no_rust.rs::rust_diff_on_mixed_preview_fixture_still_reaches_the_sentinel",
+]

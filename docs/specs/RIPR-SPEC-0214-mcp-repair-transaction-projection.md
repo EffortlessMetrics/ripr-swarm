@@ -61,7 +61,10 @@ documents without a breaking change.
 
 `ripr_list_repair_attempts` discovers the default durable CLI store before or
 after refresh through the shared canonical inventory authority. A missing store
-is empty and remains absent. Session transactions are explicitly excluded.
+is empty and remains absent. A workspace root that no longer exists (deleted
+after the server started) refuses with `workspace_unavailable` and restart
+recovery, not `attempt_invalid` (#15321). Session transactions are explicitly
+excluded.
 Only manifest-bearing directories are inventoried; unpublished reservations are
 excluded. Unrepresentable UTF-8 directory identity refuses the canonical store
 inventory and projects typed `attempt_invalid`, without lossy or partial rows.
@@ -103,7 +106,13 @@ read-only and without execution authority (ADR 0022):
   discriminator is accepted only on a `weakly_exposed` finding, where the
   named value is the repair target), and an established fix site (a strong-oracle,
   high-confidence directly-related test on a shared edit-cage test-surface
-  path). The first failing gate is the typed reason (`not_candidate_actionable`,
+  path; for a `weakly_exposed` finding that names its missing discriminator the
+  fix site is instead the high-confidence directly-related test of graded
+  non-strong oracle strength that the repair extends, exactly the "test to
+  extend" `ripr repair` names, because a strong direct test would make the item
+  exposed; an ungraded oracle, a lower-confidence relation or an off-surface
+  path stays refused, and the packet's `fix_site.oracle_strength` and
+  `established_by` say so). The first failing gate is the typed reason (`not_candidate_actionable`,
   `missing_discriminator`,
   `discriminator_not_populated_for_language`, `static_limitation`,
   `fix_site_not_established`,
@@ -115,7 +124,7 @@ read-only and without execution authority (ADR 0022):
   `must_not_change`) using the same wording as the CLI before phase, and
   MCP-ready never exceeds `ripr repair`. A producer that names its missing
   discriminators (activation `missing_discriminators`, or a
-  `Missing discriminator value:` entry in `missing`) on any class other
+  `Missing check value:` entry in `missing`) on any class other
   than `weakly_exposed` refuses as `missing_discriminator`; on a
   `weakly_exposed` finding with a populated canonical gap the named value
   is the discriminator the repair adds to the existing weak test, so the
@@ -159,6 +168,11 @@ read-only and without execution authority (ADR 0022):
   failing gate except that `seam_inventory_truncated` outranks it. MCP never reads readiness from finding facts alone and keeps
   no parallel validator: `ripr_prepare_repair` cannot return a ready packet
   or an `awaiting_edit` attempt for an item `ripr repair` refuses.
+- When the resolved seam and its bound candidate-current finding both
+  report no static test path, preparation also requires the producer to
+  establish that its owner is unreferenced in the workspace (#4668).
+  The refusal remains `seam_gate_refused` through list, detail, and
+  prepare. The RepairCard can still show the proposed target for inspection.
 - When every gate is established, the tool creates one session repair
   transaction with a deterministic, root-bound `repair-attempt-` identity
   (the first 24 hex digits of a SHA-256 over schema version, snapshot id,
@@ -169,8 +183,28 @@ read-only and without execution authority (ADR 0022):
   concrete `CommandSpec` routes are published only by the durable CLI
   before phase), the shared non-claims, and resource links. Repeating the
   call for the same current snapshot, item, and root returns the identical
-  document and never creates a second transaction. The transaction is
+  document and never creates a second transaction, except that a live
+  durable attempt that appeared since (below) turns the replay into the
+  durable-attempt refusal. The transaction is
   in-memory like the snapshot: a restart drops it.
+- Single attempt per seam (#15244): when the shared CLI rule
+  (`reusable_awaiting_attempt`: an ordinary durable attempt for the item's
+  seam, awaiting its edit at the current HEAD) finds a live durable attempt,
+  the tool refuses to create a rival session transaction. It returns the
+  refusal shape with `ineligibility.reason` `durable_attempt_awaiting`,
+  `attempt: null`, an additive `existing_attempt` (`attempt_id`, state,
+  `origin: durable_cli`) with `links.repair_attempt`/`links.receipt`, and
+  `next` routing to `ripr_get_repair_attempt`. Without a live durable attempt
+  the session route above is unchanged. MCP has no attempt authority of its
+  own, so it fails closed: a ready item with no seam binding, or an
+  unreadable HEAD or attempt store, returns a typed failure
+  (`no_snapshot`, `seam_not_found`, `analysis_failed`) and creates no session
+  transaction. A store holding a manifest the inventory cannot read refuses
+  the same way (`analysis_failed`, naming the unreadable manifests), since its
+  seam cannot be told. The store is read without holding the session lock,
+  and a snapshot replaced meanwhile refuses with `stale_snapshot` (carrying
+  `current_snapshot_id`) before anything is created. MCP still creates and
+  edits nothing durable.
 - When a gate is not established, the tool returns an
   `isError: false` document with `repair_packet_ready: false`, the typed
   `ineligibility.reason`, and `attempt: null` — never a failure envelope,
@@ -234,8 +268,11 @@ read-only and without execution authority (ADR 0022):
   attempt the tools report `analysis_in_flight`. An unknown item fails with
   `item_not_found`. The supported stdio transport admits one request through
   its reply flush, so a refresh queued behind a durable read cannot begin
-  during that read. The session guard is evaluated at read admission; this
-  slice adds no concurrent public transport or response-time lease. An
+  during that read, and a read written during a refresh is held until the
+  refresh reply is flushed, unless that refresh was cancelled, after which
+  the read reports `analysis_in_flight` (#15983). The session guard is evaluated at read
+  admission; this slice adds no concurrent public transport or response-time
+  lease. An
   unknown attempt or receipt identity fails with
   `attempt_not_found`; a durable manifest that fails canonical validation
   fails with `attempt_invalid`; a session transaction bound to a snapshot

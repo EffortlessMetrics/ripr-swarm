@@ -7,8 +7,9 @@ use super::owners_tests::collect_imports_from_statements;
 use super::probe_shape::classify_probe_shape;
 use super::related_tests::TestLookup;
 use super::related_tests::{
-    oracle_operand_calls, oracle_operand_names, oracle_operand_protocol_entry,
-    owner_method_bound_locals, owner_module_callees, owner_result_locals, setup_bound_receivers,
+    exception_body_calls, exception_body_observes_token, oracle_operand_calls,
+    oracle_operand_names, oracle_operand_protocol_entry, owner_method_bound_locals,
+    owner_module_callees, owner_result_locals, setup_bound_receivers,
 };
 use super::source_facts::parse_module_result;
 use super::wrapped_call::owner_call_only_inside_opaque_wrapper;
@@ -25,6 +26,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
+
+mod route_json;
+use route_json::{json_equivalent_keys, reads_response_json};
 /// The visible read-out of the sink-alignment decision. `ripr`'s value over
 /// coverage is that a strong oracle credits `exposed` only when it *observes the
 /// changed sink*, not merely reaches the owner. This carries which token
@@ -52,6 +56,30 @@ pub(super) struct CreditedAssertion {
     pub(super) test_file: std::path::PathBuf,
     pub(super) text: String,
     pub(super) kind: OracleKind,
+}
+
+/// Per-related-test sink observation state for row-level miss attribution (#5574).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::analysis::language::python) enum PythonRowSinkAlignmentState {
+    /// The family-selected assertion affirmatively observes the changed sink.
+    ConfirmedChangedSink,
+    /// The assertion observes a distinct sibling sink, not merely lacks proof.
+    AffirmativelyOtherSink,
+    /// A strong assertion exists but sink alignment is not established.
+    Unresolved,
+    /// No family-relevant strong assertion applies to this row.
+    NotApplicable,
+}
+
+/// Row-scoped sink alignment read-out (#5574). Finding-wide [`SinkAlignment`]
+/// reduces from a slice of these without changing aggregate semantics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::analysis::language::python) struct PythonRowSinkAlignment {
+    pub(in crate::analysis::language::python) state: PythonRowSinkAlignmentState,
+    pub(in crate::analysis::language::python) observed_sink: Option<String>,
+    pub(in crate::analysis::language::python) category: Option<&'static str>,
+    pub(in crate::analysis::language::python) reason: &'static str,
+    pub(in crate::analysis::language::python) credited: Option<CreditedAssertion>,
 }
 
 impl SinkAlignment {
@@ -790,6 +818,240 @@ pub(super) fn classify_sink_alignment_with_old(
     )
 }
 
+/// Row-level sink-alignment states aligned with `related` order (#5574).
+pub(in crate::analysis::language::python) fn row_sink_alignments_prepared(
+    owner: &PythonOwner,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    related: &[RelatedTest],
+    prep: &AlignmentPrep<'_>,
+    guard_entered: bool,
+    literal_pair: Option<&(String, String)>,
+) -> Vec<PythonRowSinkAlignment> {
+    sink_alignment_and_rows(
+        owner,
+        line_text,
+        old_line_text,
+        related,
+        prep,
+        guard_entered,
+        literal_pair,
+    )
+    .1
+}
+
+fn not_applicable_row_sink_alignment() -> PythonRowSinkAlignment {
+    PythonRowSinkAlignment {
+        state: PythonRowSinkAlignmentState::NotApplicable,
+        observed_sink: None,
+        category: None,
+        reason: "no_strong_oracle",
+        credited: None,
+    }
+}
+
+fn not_applicable_row_sink_alignments(related: &[RelatedTest]) -> Vec<PythonRowSinkAlignment> {
+    related
+        .iter()
+        .map(|_| not_applicable_row_sink_alignment())
+        .collect()
+}
+
+fn finding_sink_alignment_from_units<'a>(
+    units: &[AlignmentUnit<'a>],
+    branches: &[CreditBranch<'_, 'a>],
+    changed_sink: Option<String>,
+    fallback_observed: Option<String>,
+) -> SinkAlignment {
+    let credit = branches.iter().find_map(|(alignment, reason, credits)| {
+        units
+            .iter()
+            .find(|unit| credits(unit))
+            .map(|unit| (*alignment, *reason, unit))
+    });
+    match credit {
+        Some((alignment, reason, unit)) => SinkAlignment {
+            changed_sink,
+            observed_sink: Some(unit.reported.clone()),
+            oracle_alignment: alignment.to_string(),
+            alignment_reason: reason.to_string(),
+            credited: Some(CreditedAssertion {
+                test_name: unit.related.name.clone(),
+                test_file: unit.related.file.clone(),
+                text: unit.reported.clone(),
+                kind: unit.kind.clone(),
+            }),
+        },
+        None if !units.is_empty() || fallback_observed.is_some() => SinkAlignment {
+            changed_sink,
+            observed_sink: fallback_observed,
+            oracle_alignment: "orthogonal".to_string(),
+            alignment_reason: "strong_oracle_observes_different_sink".to_string(),
+            credited: None,
+        },
+        None => SinkAlignment::unknown(changed_sink),
+    }
+}
+
+fn row_units<'a, 'u>(
+    related: &'a RelatedTest,
+    units: &'u [AlignmentUnit<'a>],
+) -> Vec<&'u AlignmentUnit<'a>> {
+    units
+        .iter()
+        .filter(|unit| std::ptr::eq(unit.related, related))
+        .collect()
+}
+
+fn row_sink_alignment_unresolved<'a>(row_units: &[&AlignmentUnit<'a>]) -> bool {
+    use super::PythonHelperOrigin;
+    row_units
+        .iter()
+        .any(|unit| unit.helper_origin == PythonHelperOrigin::FieldHelperRefused)
+}
+
+fn row_sink_alignment_affirms_other<'a>(
+    owner: &PythonOwner,
+    related: &RelatedTest,
+    row_units: &[&AlignmentUnit<'a>],
+    test_lookup: &TestLookup<'_>,
+    field_construction_credit_ok: &impl Fn(&AlignmentUnit<'_>) -> bool,
+    fstring_credit_ok: &impl Fn(&AlignmentUnit<'_>) -> bool,
+) -> bool {
+    if related.oracle_strength.rank() < OracleStrength::Strong.rank() {
+        return false;
+    }
+    if related.oracle.as_ref().is_some_and(|oracle| {
+        let names_owner = (!owner.name.is_empty()
+            && owner.name != "<module>"
+            && oracle_text_observes_token(oracle, &owner.name))
+            || owner
+                .qualified_name
+                .split('.')
+                .filter(|part| !part.is_empty() && *part != "<module>")
+                .any(|part| oracle_text_observes_token(oracle, part));
+        !names_owner
+    }) {
+        return true;
+    }
+    if strong_tests_import_only_rival_modules(owner, &[related], test_lookup) {
+        return true;
+    }
+    row_units
+        .iter()
+        .any(|unit| !field_construction_credit_ok(unit) || !fstring_credit_ok(unit))
+}
+
+fn evaluate_row_sink_alignment<'a>(
+    owner: &PythonOwner,
+    related: &'a RelatedTest,
+    units: &'a [AlignmentUnit<'a>],
+    branches: &[CreditBranch<'_, 'a>],
+    test_lookup: &TestLookup<'a>,
+    field_construction_credit_ok: &impl Fn(&AlignmentUnit<'_>) -> bool,
+    fstring_credit_ok: &impl Fn(&AlignmentUnit<'_>) -> bool,
+) -> PythonRowSinkAlignment {
+    if related.oracle_strength.rank() < OracleStrength::Strong.rank()
+        && !matches!(related.oracle_kind, OracleKind::MockExpectation)
+    {
+        return not_applicable_row_sink_alignment();
+    }
+    let units_for_row = row_units(related, units);
+    if let Some((category, reason, unit)) =
+        branches.iter().find_map(|(alignment, reason, credits)| {
+            units_for_row
+                .iter()
+                .find(|candidate| credits(candidate))
+                .map(|candidate| (*alignment, *reason, *candidate))
+        })
+    {
+        return PythonRowSinkAlignment {
+            state: PythonRowSinkAlignmentState::ConfirmedChangedSink,
+            observed_sink: Some(unit.reported.clone()),
+            category: Some(category),
+            reason,
+            credited: Some(CreditedAssertion {
+                test_name: unit.related.name.clone(),
+                test_file: unit.related.file.clone(),
+                text: unit.reported.clone(),
+                kind: unit.kind.clone(),
+            }),
+        };
+    }
+    let observed_sink = related.oracle.clone();
+    if row_sink_alignment_unresolved(&units_for_row) {
+        return PythonRowSinkAlignment {
+            state: PythonRowSinkAlignmentState::Unresolved,
+            observed_sink,
+            category: None,
+            reason: "sink_alignment_unresolved",
+            credited: None,
+        };
+    }
+    if units_for_row.is_empty() && related.oracle_strength.rank() >= OracleStrength::Strong.rank() {
+        return PythonRowSinkAlignment {
+            state: PythonRowSinkAlignmentState::AffirmativelyOtherSink,
+            observed_sink,
+            category: Some("orthogonal"),
+            reason: "strong_oracle_observes_different_sink",
+            credited: None,
+        };
+    }
+    if row_sink_alignment_affirms_other(
+        owner,
+        related,
+        &units_for_row,
+        test_lookup,
+        field_construction_credit_ok,
+        fstring_credit_ok,
+    ) {
+        return PythonRowSinkAlignment {
+            state: PythonRowSinkAlignmentState::AffirmativelyOtherSink,
+            observed_sink,
+            category: Some("orthogonal"),
+            reason: "strong_oracle_observes_different_sink",
+            credited: None,
+        };
+    }
+    if related.oracle_strength.rank() >= OracleStrength::Strong.rank()
+        || matches!(related.oracle_kind, OracleKind::MockExpectation)
+    {
+        return PythonRowSinkAlignment {
+            state: PythonRowSinkAlignmentState::Unresolved,
+            observed_sink,
+            category: None,
+            reason: "sink_alignment_unresolved",
+            credited: None,
+        };
+    }
+    not_applicable_row_sink_alignment()
+}
+
+fn row_sink_alignments_for_evaluated_related<'a>(
+    owner: &PythonOwner,
+    related: &'a [RelatedTest],
+    units: &'a [AlignmentUnit<'a>],
+    branches: &[CreditBranch<'_, 'a>],
+    test_lookup: &TestLookup<'a>,
+    field_construction_credit_ok: &impl Fn(&AlignmentUnit<'_>) -> bool,
+    fstring_credit_ok: &impl Fn(&AlignmentUnit<'_>) -> bool,
+) -> Vec<PythonRowSinkAlignment> {
+    related
+        .iter()
+        .map(|candidate| {
+            evaluate_row_sink_alignment(
+                owner,
+                candidate,
+                units,
+                branches,
+                test_lookup,
+                field_construction_credit_ok,
+                fstring_credit_ok,
+            )
+        })
+        .collect()
+}
+
 pub(super) fn classify_sink_alignment_prepared(
     owner: &PythonOwner,
     line_text: &str,
@@ -799,6 +1061,27 @@ pub(super) fn classify_sink_alignment_prepared(
     guard_entered: bool,
     literal_pair: Option<&(String, String)>,
 ) -> SinkAlignment {
+    sink_alignment_and_rows(
+        owner,
+        line_text,
+        old_line_text,
+        related,
+        prep,
+        guard_entered,
+        literal_pair,
+    )
+    .0
+}
+
+fn sink_alignment_and_rows(
+    owner: &PythonOwner,
+    line_text: &str,
+    old_line_text: Option<&str>,
+    related: &[RelatedTest],
+    prep: &AlignmentPrep<'_>,
+    guard_entered: bool,
+    literal_pair: Option<&(String, String)>,
+) -> (SinkAlignment, Vec<PythonRowSinkAlignment>) {
     // Whether the changed line is genuinely a control-flow construct gates the
     // empty-token-delta fallback below: only a control-flow change may credit
     // `changed_sink_token` from bare line operands when the token delta is empty
@@ -844,7 +1127,10 @@ pub(super) fn classify_sink_alignment_prepared(
         Vec::new()
     };
     if strong_tests.is_empty() && mock_tests.is_empty() {
-        return SinkAlignment::unknown(changed_sink);
+        return (
+            SinkAlignment::unknown(changed_sink),
+            not_applicable_row_sink_alignments(related),
+        );
     }
     let observed_sink = strong_tests
         .iter()
@@ -881,16 +1167,22 @@ pub(super) fn classify_sink_alignment_prepared(
     units
         .retain(|unit| super::oracles::unittest_list::observes_owner(&unit.text, unit.test, owner));
     if units.is_empty() {
+        let row_alignments = row_sink_alignments_for_evaluated_related(
+            owner,
+            related,
+            &units,
+            &[],
+            test_lookup,
+            &|_| true,
+            &|_| true,
+        );
         if strong_tests.is_empty() {
-            return SinkAlignment::unknown(changed_sink);
+            return (SinkAlignment::unknown(changed_sink), row_alignments);
         }
-        return SinkAlignment {
-            changed_sink,
-            observed_sink,
-            oracle_alignment: "orthogonal".to_string(),
-            alignment_reason: "strong_oracle_observes_different_sink".to_string(),
-            credited: None,
-        };
+        return (
+            finding_sink_alignment_from_units(&units, &[], changed_sink, observed_sink),
+            row_alignments,
+        );
     }
 
     // Owner-name tokens, split for identity-aware crediting. For a method /
@@ -1001,6 +1293,53 @@ pub(super) fn classify_sink_alignment_prepared(
                     .is_some_and(|test| function_scope_stand_in(test, token, owner))
         })
     };
+    // For a free-function owner, an exception assertion's bare-name and
+    // changed-token credit reads only the code its `with` body (or rule 13
+    // callable) runs: the error it pins is raised there, so a name spelled
+    // only in the item's `match=`, before the `with`, in the rule 14
+    // comparison after it, or inside a body string does not observe the
+    // changed raise (#14267). Method owners, non-exception assertions, and
+    // units whose gate text carries no separable body keep the whole-text
+    // probe; the module-call branch already reads the body on its own.
+    let exception_body_scoped = |unit: &AlignmentUnit<'_>| -> bool {
+        !is_method_owner
+            && matches!(unit.kind, OracleKind::ExactErrorVariant)
+            && unit
+                .text
+                .strip_prefix(&unit.reported)
+                .is_some_and(|rest| rest.starts_with('\n'))
+    };
+    let observes_body_scoped = |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
+        if exception_body_scoped(unit) {
+            group.iter().any(|token| {
+                exception_body_observes_token(
+                    &unit.text,
+                    &unit.reported,
+                    unit.exception_body_end,
+                    token,
+                )
+            })
+        } else {
+            observes(unit, group)
+        }
+    };
+    let observes_imported_owner_body_scoped =
+        |unit: &AlignmentUnit<'_>, group: &[String]| -> bool {
+            if exception_body_scoped(unit) {
+                group.iter().any(|token| {
+                    exception_body_observes_token(
+                        &unit.text,
+                        &unit.reported,
+                        unit.exception_body_end,
+                        token,
+                    ) && !unit
+                        .test
+                        .is_some_and(|test| function_scope_stand_in(test, token, owner))
+                })
+            } else {
+                observes_imported_owner(unit, group)
+            }
+        };
     // Receiver identity for a method owner: the test holding the assertion must
     // call the owner's method on a receiver statically bound to the owner class
     // (inline construct, local binding, or a classmethod/direct call on the
@@ -1044,6 +1383,8 @@ pub(super) fn classify_sink_alignment_prepared(
         is_method_owner
             && !strong_tests_import_only_rival_modules(owner, &[unit.related], test_lookup)
     });
+    // A coroutine owner's result is what `await` hands back.
+    let owner_is_coroutine = owner.decorators.iter().any(|name| name == "async_def");
     // Owner output observed through a module-identified call (#4567): the
     // assertion calls the owner through its module (`utils.sign(0) == 0`,
     // `pkg.utils.sign(0)`, an imported name), or asserts a local the same test
@@ -1059,12 +1400,23 @@ pub(super) fn classify_sink_alignment_prepared(
                     return observes;
                 }
                 let callees = owner_module_callees(test, owner);
-                callees
+                // An exception assertion compares no operand: the owner call
+                // it observes is the one its `with` body (or rule 13
+                // callable) makes (RIPR-SPEC-0238 rule 4).
+                let raised_in_body = |callee: &String| {
+                    matches!(unit.kind, OracleKind::ExactErrorVariant)
+                        && exception_body_calls(
+                            &unit.text,
+                            &unit.reported,
+                            unit.exception_body_end,
+                            callee,
+                        )
+                };
+                callees.iter().any(|callee| {
+                    oracle_operand_calls(&unit.text, callee) || raised_in_body(callee)
+                }) || owner_result_locals(test, &callees, owner_is_coroutine)
                     .iter()
-                    .any(|callee| oracle_operand_calls(&unit.text, callee))
-                    || owner_result_locals(test, &callees)
-                        .iter()
-                        .any(|local| oracle_operand_names(&unit.text, local))
+                    .any(|local| oracle_operand_names(&unit.text, local))
             })
     };
     // Dunder owner invoked through a builtin protocol entry (`reversed(Range(0))`
@@ -1270,9 +1622,53 @@ pub(super) fn classify_sink_alignment_prepared(
             && fstring_credit_ok(unit)
             && !assertion_calls_stand_in(unit, owner)
     };
-    let branches: [CreditBranch<'_, '_>; 7] = [
+    // A route handler returning a changed dict literal is observed by an
+    // identified client's response (#13869, #10237 gap 5): the JSON body of
+    // `response = client.get("/path")` is the returned dict. The response
+    // names come from the test body alone and only for the owner's own
+    // application; the changed-key gate in `gates_ok` still decides which
+    // response field observes the edit.
+    // `detail` is the error-envelope key of FastAPI's `HTTPException` and
+    // request-validation (422) bodies, so a keyed `detail` read may observe
+    // an error response that never reached the changed return.
+    // The response operand itself must read a changed key: the shared
+    // changed-key gate also accepts a whole-collection comparison or a
+    // changed-key subscript on the expected side, which an unchanged sibling
+    // field (`response.json()["meta"] == {...}`) would pass. A key whose old
+    // and new values serialize to the same JSON is not changed in the body.
+    let json_equivalent = json_equivalent_keys(gate_old, gate_new);
+    let changed_response_keys: Vec<String> = dict_change
+        .as_ref()
+        .map(|(keys, _)| {
+            keys.iter()
+                .map(|key| key.trim_matches(|c| c == '"' || c == '\'').to_string())
+                .filter(|key| !json_equivalent.contains(key))
+                .collect()
+        })
+        .unwrap_or_default();
+    // An old line is required (repo mode has none, so it never earns this).
+    let returns_changed_dict = owner.route_returns_body
+        && gate_old.is_some()
+        && line_text.trim_start().starts_with("return ")
+        && !changed_response_keys.is_empty()
+        && dict_change.as_ref().is_some_and(|(keys, _)| {
+            !keys
+                .iter()
+                .any(|key| key.trim_matches(|c| c == '"' || c == '\'') == "detail")
+        });
+    let route_response_observed = |unit: &AlignmentUnit<'_>| {
+        returns_changed_dict
+            && unit.kind == OracleKind::ExactValue
+            && unit.test.is_some_and(|test| {
+                super::related_tests::identified_route_response_names(test, owner)
+                    .iter()
+                    .any(|name| reads_response_json(&unit.text, name, &changed_response_keys))
+            })
+            && gates_ok(unit)
+    };
+    let branches: [CreditBranch<'_, '_>; 8] = [
         ("direct", "strong_oracle_observes_owner_name", &|unit| {
-            observes_imported_owner(unit, &identity_tokens)
+            observes_imported_owner_body_scoped(unit, &identity_tokens)
                 && (method_owner_identity(unit) || free_fn_module_identity(unit))
                 && result_gates_ok(unit)
         }),
@@ -1293,8 +1689,10 @@ pub(super) fn classify_sink_alignment_prepared(
             // `from m import owner as quote` does not make this test's `quote`
             // the owner (#8247). Without source facts the pooled set stands.
             let own_aliases = unit.test.map(owner_aliases_in);
-            observes_imported_owner(unit, own_aliases.as_deref().unwrap_or(&alias_tokens))
-                && result_gates_ok(unit)
+            observes_imported_owner_body_scoped(
+                unit,
+                own_aliases.as_deref().unwrap_or(&alias_tokens),
+            ) && result_gates_ok(unit)
         }),
         (
             "direct",
@@ -1310,6 +1708,11 @@ pub(super) fn classify_sink_alignment_prepared(
             "strong_oracle_observes_owner_call_through_module",
             &|unit| module_call_observed(unit) && result_gates_ok(unit),
         ),
+        (
+            "direct",
+            "strong_oracle_observes_route_response",
+            &route_response_observed,
+        ),
         // Gate the changed-sink-token path with the same free-function module
         // identity as the direct/alias paths: a same-named free function from a
         // different module must not credit `exposed` via this sibling branch
@@ -1318,7 +1721,7 @@ pub(super) fn classify_sink_alignment_prepared(
             "changed_sink_token",
             "strong_oracle_observes_changed_sink_token",
             &|unit| {
-                observes(unit, &delta_tokens)
+                observes_body_scoped(unit, &delta_tokens)
                     && change_only_credit_ok(unit)
                     && gates_ok(unit)
                     && (method_owner_identity(unit) || free_fn_module_identity(unit))
@@ -1332,40 +1735,20 @@ pub(super) fn classify_sink_alignment_prepared(
     ];
     // Branches keep their order; within a branch the first crediting assertion
     // in related-test order, then source order, is reported.
-    let credit = branches.iter().find_map(|(alignment, reason, credits)| {
-        units
-            .iter()
-            .find(|unit| credits(unit))
-            .map(|unit| (*alignment, *reason, unit))
-    });
-    let (oracle_alignment, alignment_reason, observed_sink, credited) = match credit {
-        Some((alignment, reason, unit)) => (
-            alignment,
-            reason,
-            Some(unit.reported.clone()),
-            Some(CreditedAssertion {
-                test_name: unit.related.name.clone(),
-                test_file: unit.related.file.clone(),
-                text: unit.reported.clone(),
-                kind: unit.kind.clone(),
-            }),
-        ),
-        None => (
-            "orthogonal",
-            "strong_oracle_observes_different_sink",
-            observed_sink,
-            None,
-        ),
-    };
-    SinkAlignment {
-        changed_sink,
-        observed_sink,
-        oracle_alignment: oracle_alignment.to_string(),
-        alignment_reason: alignment_reason.to_string(),
-        credited,
-    }
+    let row_alignments = row_sink_alignments_for_evaluated_related(
+        owner,
+        related,
+        &units,
+        &branches,
+        test_lookup,
+        &field_construction_credit_ok,
+        &fstring_credit_ok,
+    );
+    (
+        finding_sink_alignment_from_units(&units, &branches, changed_sink, observed_sink),
+        row_alignments,
+    )
 }
-
 /// Receivers of `.attr` reads in an assertion text: the trailing
 /// identifier chain before each `.{attr}` (`conn.status` -> `conn`,
 /// `self.session.status` -> `self.session`), plus the first argument of a
@@ -1452,6 +1835,8 @@ struct AlignmentUnit<'a> {
     test: Option<&'a PythonTest>,
     /// The text every gate reads ([`super::PythonAssertion::gate_text`]).
     text: String,
+    /// Where the exception body ends in `text`, before the rule 14 comparison.
+    exception_body_end: Option<usize>,
     /// The assertion text a crediting finding reports.
     reported: String,
     /// The file line the assertion starts on, when it is a source assertion.
@@ -1495,6 +1880,7 @@ fn alignment_units<'a>(
                     related,
                     test: Some(test),
                     text: assertion.gate_text.clone(),
+                    exception_body_end: assertion.exception_body_end,
                     reported: assertion.text.clone(),
                     line: Some(assertion.line),
                     source_range: assertion.source_range,
@@ -1517,6 +1903,7 @@ fn alignment_units<'a>(
                 related,
                 test,
                 text: text.clone(),
+                exception_body_end: None,
                 reported: text.clone(),
                 line: None,
                 source_range: None,
@@ -1594,7 +1981,7 @@ pub(super) fn function_scope_stand_in(test: &PythonTest, name: &str, owner: &Pyt
     if name.is_empty() {
         return false;
     }
-    let Some((parameter_names, body)) = parse_test_function_scope(test) else {
+    let Some((parameter_names, body)) = parse_test_function_scope(&test.body_text) else {
         return false;
     };
     parameter_names.iter().any(|parameter| parameter == name)
@@ -1646,8 +2033,8 @@ pub(super) fn pattern_binds_name(pattern: &ast::Pattern, name: &str) -> bool {
     }
 }
 
-fn parse_test_function_scope(test: &PythonTest) -> Option<(Vec<String>, Vec<Stmt>)> {
-    let source = dedent_python(&test.body_text);
+pub(super) fn parse_test_function_scope(body_text: &str) -> Option<(Vec<String>, Vec<Stmt>)> {
+    let source = dedent_python(body_text);
     let Ok(Mod::Module(module)) = parse_module_result(Path::new("<python-test-body>"), &source)
     else {
         return None;
@@ -1930,6 +2317,209 @@ mod helper_origin_tests {
             assert_eq!(units[0].line, None, "control must reach fallback");
             assert_eq!(units[0].helper_origin.is_helper(), expected_helper);
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod row_sink_alignment_tests {
+    use super::*;
+    use crate::domain::{OracleKind, OracleStrength, RelatedTestRole};
+    use std::path::PathBuf;
+
+    fn row_align_owner(name: &str) -> PythonOwner {
+        PythonOwner {
+            name: name.to_string(),
+            qualified_name: name.to_string(),
+            file: PathBuf::from("owner.py"),
+            start_line: 1,
+            end_line: 2,
+            owner_kind: None,
+            decorators: Vec::new(),
+            imports: Vec::new(),
+            cli_receiver_names: Vec::new(),
+            route_paths: Vec::new(),
+            route_methods: Vec::new(),
+            route_receivers: Vec::new(),
+            dynamic_route_decorators: Vec::new(),
+            unplain_decorators: Vec::new(),
+            decorator_lines: None,
+            parameters: Vec::new(),
+            reexport_modules: Vec::new(),
+            class_reexport_modules: Vec::new(),
+            star_exported: false,
+            ambiguous_src_modules: Vec::new(),
+            test_local_shadows: Vec::new(),
+            rival_definition_modules: Vec::new(),
+            module_constants: Vec::new(),
+            same_class_callees: Vec::new(),
+            module_callees: Vec::new(),
+            route_scope_callees: Vec::new(),
+            route_scope_awaited_callees: Vec::new(),
+            class_path: String::new(),
+            term_facts: Default::default(),
+            class_facts: Default::default(),
+            foreign_writes: Default::default(),
+            version_conditional: false,
+            cli_subcommand: None,
+            nested_called_by_parent: false,
+            nested_result_discarded: false,
+            trusted_stdlib_click_alias: false,
+            route_returns_body: false,
+            route_dispatch_ambiguous: false,
+            route_dict_annotation: false,
+        }
+    }
+
+    fn row_related(name: &str, oracle: &str) -> RelatedTest {
+        RelatedTest {
+            name: name.to_string(),
+            file: PathBuf::from("tests/test_fees.py"),
+            line: 1,
+            oracle: Some(oracle.to_string()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: RelatedTestRole::Contributing,
+        }
+    }
+
+    fn row_importing_test(name: &str, imported: &str) -> PythonTest {
+        PythonTest {
+            activation_controls: Vec::new(),
+            setup_receivers: Vec::new(),
+            fixture_defs: Vec::new(),
+            value_helpers: Vec::new(),
+            direct_parametrized: Vec::new(),
+            unsettled_indirect: Vec::new(),
+            parametrize_argnames: Vec::new(),
+            constant_rebinding: Default::default(),
+            name: name.to_string(),
+            qualified_name: name.to_string(),
+            file: PathBuf::from("tests/test_fees.py"),
+            line: 1,
+            body_text: String::new(),
+            imports: vec![super::super::PythonImport {
+                imported: imported.to_string(),
+                alias: imported.to_string(),
+                source_module: "owner".to_string(),
+            }],
+            decorators: Vec::new(),
+            fixtures: Vec::new(),
+            parametrized: false,
+            parametrize: None,
+            simple_literal_parametrize: false,
+            generated_inputs: Vec::new(),
+            framework: super::super::PythonFramework::Pytest,
+            assertions: Vec::new(),
+            assertion_admission: super::super::admission::PythonAssertionAdmission::NoAssertionLike,
+            bare_sibling_modules: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn mixed_rows_do_not_donate_changed_sink_observation() {
+        let owner = row_align_owner("calculate_tax");
+        let line = "return amount * rate";
+        let related = [
+            row_related("test_tax", "assert calculate_tax(100) == 15"),
+            row_related("test_shipping", "assert calculate_shipping(100) == 10"),
+        ];
+        let all = [
+            row_importing_test("test_tax", "calculate_tax"),
+            row_importing_test("test_shipping", "calculate_shipping"),
+        ];
+        let prep = AlignmentPrep::new(&owner, &all);
+        let rows = row_sink_alignments_prepared(&owner, line, None, &related, &prep, false, None);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0].state,
+            PythonRowSinkAlignmentState::ConfirmedChangedSink
+        );
+        assert_eq!(
+            rows[1].state,
+            PythonRowSinkAlignmentState::AffirmativelyOtherSink
+        );
+        let aggregate = classify_sink_alignment(&owner, line, &related, &all);
+        assert_eq!(aggregate.oracle_alignment, "direct");
+        assert!(aggregate.observes());
+    }
+
+    #[test]
+    fn row_sink_alignment_permutation_is_invariant() {
+        let owner = row_align_owner("calculate_tax");
+        let line = "return amount * rate";
+        let a = row_related("test_tax", "assert calculate_tax(100) == 15");
+        let b = row_related("test_shipping", "assert calculate_shipping(100) == 10");
+        let all = [
+            row_importing_test("test_tax", "calculate_tax"),
+            row_importing_test("test_shipping", "calculate_shipping"),
+        ];
+        let prep = AlignmentPrep::new(&owner, &all);
+        let forward = row_sink_alignments_prepared(
+            &owner,
+            line,
+            None,
+            &[a.clone(), b.clone()],
+            &prep,
+            false,
+            None,
+        );
+        let reverse = row_sink_alignments_prepared(
+            &owner,
+            line,
+            None,
+            &[b.clone(), a.clone()],
+            &prep,
+            false,
+            None,
+        );
+        assert_eq!(forward[0].state, reverse[1].state);
+        assert_eq!(forward[1].state, reverse[0].state);
+        assert_eq!(
+            classify_sink_alignment(&owner, line, &[a, b], &all).oracle_alignment,
+            "direct"
+        );
+    }
+
+    #[test]
+    fn unresolved_helper_row_is_not_affirmatively_other() -> Result<(), String> {
+        use super::super::PythonHelperOrigin;
+        let file = PathBuf::from("tests/test_stats.py");
+        let source = "from src.stats import Stats\n\ndef check_writes(obj, want):\n    assert obj.writes >= want\n\ndef test_writes():\n    stats = Stats()\n    stats.writes = 0\n    check_writes(stats, 0)\n    assert stats.writes >= 0\n";
+        let facts = super::super::source_facts::extract_source_facts(&file, source);
+        let mut tests = facts.tests;
+        let modules = std::collections::BTreeMap::from([(file.clone(), facts.helper_module)]);
+        super::super::helper_assertions::apply_helper_assertions(&mut tests, &modules);
+        let test = tests.first().ok_or("expected parsed test")?;
+        let helper = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.helper_origin.is_helper())
+            .ok_or("expected helper assertion")?;
+        assert_eq!(helper.helper_origin, PythonHelperOrigin::FieldHelperRefused);
+        let owner = row_align_owner("writes");
+        let line = "self.writes += 1";
+        let related = [RelatedTest {
+            name: test.name.clone(),
+            file: test.file.clone(),
+            line: test.line,
+            oracle: Some(helper.text.clone()),
+            oracle_kind: OracleKind::ExactValue,
+            oracle_strength: OracleStrength::Strong,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+            miss_support: None,
+            role: RelatedTestRole::Contributing,
+        }];
+        let prep = AlignmentPrep::new(&owner, &tests);
+        let rows = row_sink_alignments_prepared(&owner, line, None, &related, &prep, false, None);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].state, PythonRowSinkAlignmentState::Unresolved);
         Ok(())
     }
 }

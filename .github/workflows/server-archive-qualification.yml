@@ -370,6 +370,9 @@ jobs:
             version = $version
             archive_file = [IO.Path]::GetFileName($archivePath)
             archive_sha256 = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLowerInvariant()
+            archive_size_bytes = [long](Get-Item $archivePath).Length
+            executable_size_bytes = [long]$payloadExecutable[0].size_bytes
+            payload_total_size_bytes = [long](($payloadIdentity.files | Measure-Object -Property size_bytes -Sum).Sum)
             archive_readback_verified = $true
             cargo_lock_sha256 = (Get-FileHash -Algorithm SHA256 Cargo.lock).Hash.ToLowerInvariant()
             qualification_workflow_sha256 = (Get-FileHash -Algorithm SHA256 .github/workflows/server-archive-qualification.yml).Hash.ToLowerInvariant()
@@ -398,6 +401,7 @@ jobs:
     name: assemble qualification manifest
     needs: [build, verify-candidate]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Fetch exact candidate without credentials
         shell: bash
@@ -508,6 +512,10 @@ jobs:
           version="${QUALIFICATION_VERSION#v}"
           candidate_sha="${CANDIDATE_SHA,,}"
           candidate_tree="$(git rev-parse 'HEAD^{tree}')"
+          jq -c '.[]' build-identities.json | while IFS= read -r build; do
+            archive_file="$(jq -r '.archive_file' <<< "${build}")"
+            test "$(stat -c%s "dist/${archive_file}")" = "$(jq -r '.archive_size_bytes' <<< "${build}")"
+          done
           jq -e \
             --arg sha "${candidate_sha}" \
             --arg tree "${candidate_tree}" \
@@ -532,6 +540,9 @@ jobs:
                (.rustc_verbose_version | length > 0) and
                (.cargo_verbose_version | length > 0) and
                (.archive_sha256 == $manifest[0].assets[.target].sha256) and
+               (.archive_size_bytes > 0) and
+               (.executable_size_bytes == ($payload.files | map(select(.role == "executable")) | .[0].size_bytes)) and
+               (.payload_total_size_bytes == ($payload.files | map(.size_bytes) | add)) and
                (.archive_readback_verified == true) and
                (.payload_identity_sha256 == $payload.identity_sha256) and
                (.producer_build_sha256 == $producer.producer_build_sha256) and
@@ -580,6 +591,7 @@ jobs:
             echo "- version: ${version}"
             echo "- targets selected/executed/failed/not run: 5/5/0/0"
             echo "- per-target build inputs, producer receipts, payload identities and archive digests: recorded in JSON receipt"
+            echo "- per-target archive, executable and payload-total bytes: recorded as archive_size_bytes, executable_size_bytes and payload_total_size_bytes in JSON receipt build identities"
             echo "- extracted archives: rehashed through the production payload verifier"
             echo "- manifest SHA256: ${manifest_sha256}"
             echo "- SHA256SUMS SHA256: ${checksums_sha256}"
@@ -606,6 +618,32 @@ jobs:
             dist/server-archive-qualification-receipt.json
             dist/server-archive-qualification-receipt.md
           if-no-files-found: error
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+
+      - name: Compile the managed-download rehearsal instrument
+        working-directory: editors/vscode
+        run: |
+          npm ci --ignore-scripts
+          npm run compile
+          node --test out/test/managedDownload/contract.test.js
+
+      - name: Exercise packaged VSIX against the same-run qualified Linux archive
+        # A distinct local-mirror manifest is bound before packaging. Original
+        # qualification bytes stay intact; no publish-extension job is called.
+        run: xvfb-run -a node editors/vscode/out/test/managedDownload/rehearse.js
+
+      - name: Retain managed-download composition evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ripr-packaged-managed-download-rehearsal
+          path: |
+            target/ripr/managed-download/run-*/rehearsal.json
+            target/ripr/managed-download/run-*/*/host.json
+          if-no-files-found: warn
 
   terminal-receipt:
     name: retain terminal qualification denominator

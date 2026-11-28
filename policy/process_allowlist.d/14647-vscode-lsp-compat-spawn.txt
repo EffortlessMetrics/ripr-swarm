@@ -1,0 +1,2 @@
+editors/vscode/test/clientLaunch.ts|child_process|1|lsp/editor-test|#14647: one test-only child_process import owns the exact native and cmd.exe client-launch controls; no production spawn authority.
+editors/vscode/test/clientLaunch.ts|cp.spawn|1|lsp/editor-test|#14647: one bounded test-only spawn site proves exact argv and that embedded shell metacharacters are not executed in isolated temporary fixtures.

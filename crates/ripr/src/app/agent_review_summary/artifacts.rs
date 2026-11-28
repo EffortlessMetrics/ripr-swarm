@@ -100,19 +100,45 @@ pub(super) fn read_json_surface(
     } else {
         format!("{label} artifact is not present.")
     };
-    let Ok(text) = std::fs::read_to_string(&full_path) else {
-        return ArtifactRead {
-            value: None,
-            surface: AgentReviewSurface {
-                name: name.to_string(),
-                label: label.to_string(),
-                path: Some(path.to_string()),
-                state: missing_state.to_string(),
-                status: missing_state.to_string(),
-                required,
-                summary: missing_summary,
-            },
-        };
+    let text = match std::fs::read_to_string(&full_path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return ArtifactRead {
+                value: None,
+                surface: AgentReviewSurface {
+                    name: name.to_string(),
+                    label: label.to_string(),
+                    path: Some(path.to_string()),
+                    state: missing_state.to_string(),
+                    status: missing_state.to_string(),
+                    required,
+                    summary: missing_summary,
+                },
+            };
+        }
+        // Something is at the path but its text cannot be read (not UTF-8, a
+        // directory, permissions, an I/O fault). That is an invalid artifact,
+        // never an absent one: "missing" would tell the reader nothing was
+        // written and send them to regenerate over evidence that exists.
+        Err(error) => {
+            let reason = if error.kind() == std::io::ErrorKind::InvalidData {
+                "it is not UTF-8 text".to_string()
+            } else {
+                error.kind().to_string()
+            };
+            return ArtifactRead {
+                value: None,
+                surface: AgentReviewSurface {
+                    name: name.to_string(),
+                    label: label.to_string(),
+                    path: Some(path.to_string()),
+                    state: "invalid".to_string(),
+                    status: "invalid".to_string(),
+                    required,
+                    summary: format!("{label} artifact exists but could not be read: {reason}."),
+                },
+            };
+        }
     };
     match serde_json::from_str::<Value>(&text) {
         Ok(value) => {

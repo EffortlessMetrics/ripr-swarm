@@ -29,9 +29,9 @@ command when preparation is missing.
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
 ```
 
-The literal-JSON owner-return fixture pins serde_json 1.0.151, which the audited
-expansion in `assertion_dependency.rs` requires and the workspace lock no longer
-carries. Prepare it the same way before the owner-pin JSON tests:
+The literal-JSON owner-return fixture pins serde_json 1.0.151, one of the audited
+releases in `assertion_dependency/registry.rs`, which the workspace lock no longer
+carries (it locks the other audited release, 1.0.154). Prepare it the same way before the owner-pin JSON tests:
 
 ```bash
 cargo fetch --locked --manifest-path fixtures/owner_return_pin_json_real_literal/input/Cargo.toml
@@ -108,6 +108,23 @@ Inspect the selected package instead with
 For workflow-policy, agent-skill, and executable-file edits, use the existing
 [`cargo policy` frontdoor](../CONTRIBUTING.md#local-setup) for focused feedback.
 
+For local checks selected by your committed changes, inspect the fast route's
+scope and then run it from the repository root:
+
+```bash
+cargo xtask help check-fast
+cargo xtask check-fast
+```
+
+`check-fast` selects checks from the committed `origin/main...HEAD` diff;
+unstaged, staged, and untracked changes do not enter that selector, although
+the selected gates inspect the live worktree. It records selector identity and
+ran/skipped gates in `target/ripr/reports/check-fast.md` and
+`target/ripr/reports/check-fast-selector.md`. Local ref freshness is not checked;
+fetch `origin main` and retry if the recorded basis is unexpected. The first
+invocation builds `xtask`, and Rust changes select workspace/all-target Clippy.
+This focused route does not replace `precommit` or required hosted CI.
+
 ### Bounded module-motion controls
 
 The #4680 controls implement the
@@ -159,9 +176,40 @@ Select additional proof for the changed behavior before requesting qualification
 
 ## Full validation inventory
 
+Before compiling Rust or installing editor dependencies, the explicit Linux
+[provisioning command](../CONTRIBUTING.md#provision-a-linux-cloud-image) can prepare
+the checkout's requirements. Its focused controls run without live downloads:
+
+```bash
+node --test tools/provision-dev.test.cjs
+```
+
+On Unix, `cargo test -p xtask --test developer_provisioning` runs the same
+controls as part of workspace testing. These exercise pin changes, dependency
+reuse and failure boundaries with isolated fixtures. Linux-specific native
+process controls explicitly skip on other hosts. These tests do not establish a
+real SDK installation, editor-host pass or managed-task restoration. The
+provisioner's native editor smoke and the full preset below are separate runs.
+
 The commands below inventory applicable checks. `cargo xtask ci-full` composes
 the complete local review/evidence/package pass; choose the aggregate for the
 intended proof without repeating its constituent commands.
+
+For an explicit prepared Linux source-checkout validation across Rust and the
+editor, use `cd editors/vscode && npm run setup:verify-full` under a supported
+live display (or a provisioned `xvfb-run -a`). The
+[full-development preset](../CONTRIBUTING.md#explicit-full-development-validation)
+checks prerequisites, delegates the existing serial owners, retains the first
+native failure and marks later stages `not_run`. It invokes the canonical editor
+suite once, then packages its compiled output. This on-demand preset is not run
+inside the ordinary editor CI job; its controlled orchestration tests are
+discovered normally and use isolated tool fixtures. Those controls establish
+sequencing and failure handling, not a real SDK, native host, full setup pass,
+saved-environment restoration or measured resource envelope.
+
+Run `cargo test -p xtask --bin xtask golden_drift` to check the classification
+of human evidence drift, including the detail-window swap from
+`manual_let_else_pairing`, and its Markdown and JSON reports.
 
 ```bash
 cargo xtask shape
@@ -241,6 +289,39 @@ Convention: property tests use `Result<(), String>` bodies, no `unwrap`/`expect`
 per the workspace lint posture. See `docs/TEST_TAXONOMY.md` for the Property
 and Fuzz test type definitions.
 
+The classification properties (#12927) generate bounded Python and TypeScript
+source, import relations, registration guards and assertion shapes, then invoke
+the real extractors and retained changed-line classifiers. Each has 24 shrinking
+cases and a deterministic semantic-category sweep; Rust's shared decision
+projection has 32 cases. These run with the default language features and need
+neither external interpreters nor Kani. They cover changed straight-line
+integer returns and a return under an arm the observed input never enters,
+not every adapter rule. The latter keeps an exact oracle fixed while varying
+the values and import relation, so oracle strength cannot stand in for infection.
+The TypeScript arm property supplies isolated complete source/test files because
+its guard authority checks for additional calls outside test bodies; the other
+generated paths use their retained in-memory semantic inputs.
+
+`analysis/classification_properties.rs` shares the exposed/not-exposed projection
+and the partial oracle chain `reachable_unrevealed -> weakly_exposed -> exposed`.
+The chain applies only with the same modeled return seam, active test and direct
+or aliased import relation. Unknown classes have no rank. A stronger assertion
+can reveal an unmodeled path (for example the TypeScript module-entry rule), so
+global oracle monotonicity would encode a false contract.
+
+Explicit language-specific stage exceptions to Rust's five-stage decision are:
+
+| Adapter | Exception | Retained obligation |
+| --- | --- | --- |
+| TypeScript | `propagate` is always `unknown`; unmodeled `infect` is `unknown` | Exposed still requires confirmed reach, observation and discrimination; guarded registration cannot credit an exact assertion. |
+| Python | Field/effect propagation may be `weak`; static limits are decided before the oracle ladder | This bounded return generator has modeled propagation; runtime-guarded tests cannot credit an exact assertion. |
+| Rust | Observe may be unknown/opaque when discriminate is yes | The shared Rust projection preserves the actual `observe != no` rule, rather than claiming all five stages must be yes. |
+
+Non-exposed findings must carry a stop reason, nonempty missing-evidence text,
+or a typed missing discriminator. That obligation includes confident gaps;
+it does not invent an unknown stop reason for them. Unrecognized checks and
+foreign imports cannot promote the generated return seam to exposed.
+
 ## Harness Trial-Subject Evidence Parity Scan
 
 The repository-governed test-harness registry
@@ -296,6 +377,29 @@ npm ci
 npm run test:e2e
 ```
 
+`npm test` runs the same full end-to-end entry point as `npm run test:e2e`.
+Choose one command per validation pass. The package scripts can build the Rust
+server and compile the extension, so prepare the repository's pinned Rust
+toolchain and Node dependencies first. Run the
+[explicit setup verification](../CONTRIBUTING.md#explicit-setup-verification)
+before these expensive steps: `npm run setup:verify-editor` uses the installed
+TypeScript compiler directly and needs no RIPR/xtask build. The cheap
+`npm run setup:check -- --json` is read-only and performs no verification.
+
+The host download needs access to the VS Code update/download endpoints and
+their redirects through the environment's configured proxy and CA trust.
+Headless Linux also needs Xvfb and the native libraries required by VS Code;
+provide those before invoking the `xvfb-run` command below. Both explicit setup
+verification and the canonical editor runner use the retained downloader and a
+minimal native extension-host sentinel. The runner awaits that prerequisite
+before invoking the genuine actionable-queue producer. Missing display, a denied
+download or a failed native host stops before the producer and editor suite.
+The sentinel uses a disposable empty extension and profile, records the actual
+VS Code/Electron versions and one smoke case, and is distinct from e2e acceptance.
+Its 60-second deadline/cancellation uses the existing process-tree owner; no
+timeout is accepted as host readiness. Download retry/idle-timeout semantics stay
+with the locked test-electron owner.
+
 The test suite:
 
 - opens a fixture Rust workspace (`test-fixtures/workspace/Cargo.toml`)
@@ -347,6 +451,56 @@ test-host failure copies a size-capped, redacted log subset into
 the vscode job fails. Success runs do not retain the diagnostics copy, and
 collection cannot change the original test exit status.
 
+The additional setup receipt is `target/ripr/setup-editor-host.json`. Explicit
+`setup:verify-editor` invalidates that receipt and its setup log before the source
+report or installed compiler can fail; direct verifier and canonical runner
+entrypoints use the same narrow reset before display/acquisition checks. Ordinary
+read-only reporting preserves those files. A failed native smoke attempts to
+retain at most a 64-KiB redacted output tail in
+`target/ripr/setup-editor-host.log`; the existing failure-only upload includes
+these files. Each invocation requires a fresh nonce-bound sentinel and native
+status zero; an earlier success receipt cannot discharge a failed attempt.
+Native error reasons remain in the bounded redacted error and diagnostic output.
+If diagnostic writing fails, the original native failure/cause is preserved and
+the report identifies the unavailable log instead of pointing to it as evidence.
+
+After the normal extension compile step, the setup-ordering controls can run
+without a VS Code download or a Rust producer build:
+
+```bash
+# From editors/vscode, after npm run compile:
+node node_modules/mocha/bin/mocha.js --ui tdd out/test/suite/host_setup.test.js
+```
+
+These controls invoke the retained runner with isolated host and producer
+boundaries, including rejected acquisition, asynchronous success, producer
+failure, untrusted, multi-root-only, and supplied-queue paths. They also run as
+part of the full suite; they do not replace genuine producer or editor-host
+qualification.
+
+The genuine actionable-queue fixture has a separate 30-minute Cargo deadline.
+It reports the producer phase and log directory immediately, then progress every
+15 seconds. For a deliberately slower cold build, set
+`RIPR_TEST_PRODUCER_TIMEOUT_MS` to an integer from `1` through `7200000`
+(two hours); zero and invalid values refuse setup before the producer starts.
+`SIGINT` or `SIGTERM` cancels the producer through the editor's existing process
+containment helper, and setup waits for process/pipe closure before returning.
+The same deadline covers a completed Cargo process whose descendants still hold
+its output pipes. Captured stdout and stderr have a combined 16 MiB limit.
+Timeout, cancellation, excess output or a native failure cannot supply a queue.
+The bounded original output and cause remain in `producer-failure.log` under
+the printed `actionable-queue-…` directory. Successful setup retains its existing
+exact-test, compiler executable and queue-hash receipt. This producer receipt
+does not establish that the subsequent VS Code host suite passed.
+
+After extension compilation, its process and adapter controls can be run without
+launching the editor:
+
+```bash
+cd editors/vscode
+node node_modules/mocha/bin/mocha.js --ui tdd out/test/suite/fixture_producer.test.js
+```
+
 ## Flaky tests
 
 A flaky test is a bug in the test, the product, or the harness, so the fix is
@@ -382,6 +536,18 @@ When changing user-visible output, update or add golden coverage for:
 
 Golden updates must preserve the static language boundary: draft static output
 does not use mutation-runtime terms such as `killed` or `survived`.
+
+The fixture runner compares `expected/human.txt`, `human-full.txt`,
+`sarif.json` and `github.txt` only while the file exists, and the corpus gates
+iterate whatever `cases` a corpus still lists. Deleting a golden or dropping a
+case therefore removes the comparison with it.
+`policy/fixture-denominator-floor.txt` names each of those subjects (one `golden` line per fixture, one `case` line per case), and
+`cargo xtask check-fixture-contracts` fails when a named one leaves the tree
+(#15925). To retire a golden or a case, remove its line in the same change and
+say why in the PR; never remove one to turn a gate green. New goldens and cases
+pass without an edit and are counted as above the floor until
+`target/ripr/reports/fixture-denominator-floor.txt` is copied over the policy
+file. The floor checks presence, not whether the subject still discriminates.
 
 CI-summary changed-source escaping has literal render pins in
 `output::ci_summary::tests::given_changed_behavior_*`, covering both first-run
@@ -431,6 +597,13 @@ cargo test --workspace --doc
 The JUnit output path is configured in `.config/nextest.toml` at
 `target/nextest/ci/junit.xml`.
 
+After a `ci`-profile run, `cargo xtask slow-test-report` lists the 50 slowest
+tests from that file and judges each against the per-test budget in
+`policy/test-time-budget.toml` (advisory; the baseline allowlist names tests
+already over budget so the budget can be enforced later; a baselined test that
+slows past `regression_factor` times its recorded time is reported as regressed). The JUnit file is also
+the `rust-junit` artifact of the Test Analytics workflow.
+
 ## Unused suppression-policy disclosure
 
 The [repository configuration contract](specs/RIPR-SPEC-0007-repository-configuration.md#unused-default-suppression-disclosure-7759)
@@ -457,3 +630,39 @@ cargo test --locked -p ripr --test mcp_sdk
 ```
 
 These tests qualify wire behavior, not installation or every protocol version.
+
+## MCP default gap-list exposure omission
+
+[RIPR-SPEC-0211](specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md)
+defines the default `ripr_list_gaps` exclusion (#14327): with no `class`, only
+`exposed` items refused as `seam_already_gripped` are left out and counted in
+`exposed_omitted`. The unit control separates that cause from a
+truncation-refused `exposed` item; the real-stdio parity case proves a gripped
+Rust seam is omitted by default and recovered by `class: "exposed"`; the
+truncation stdio controls keep evidence-limited `exposed` items listed.
+
+```bash
+cargo test --locked -p ripr --lib mcp::workspace::tests::default_gap_list_omits_exposed_and_discloses_the_count -- --exact
+cargo test --locked -p ripr --test mcp_cli_repair_parity already_gripped_seam_is_refused_with_one_cause_on_every_surface -- --exact
+cargo test --locked -p ripr --test mcp_stdio truncated_seam_inventory
+```
+
+## Stub routes past the seam cap
+
+[RIPR-SPEC-0287](specs/RIPR-SPEC-0287-agent-stub-repair-journey-pointer.md)
+and #14369 cover `ripr agent stub --seam-id` on a workspace larger than the
+seam cap. The subprocess controls set `RIPR_REPO_EXPOSURE_SEAM_LIMIT=1`, so a
+small fixture behaves like a capped large repository:
+
+```bash
+cargo test --locked -p ripr --test agent_stub_compiles printed_seam_id_route_yields_its_stub_past_the_seam_cap -- --exact
+cargo test --locked -p ripr --test agent_stub_compiles seam_id_stub_names_a_repair_start_only_when_the_capped_before_phase_finds_it -- --exact
+```
+
+The first test checks that the route `check` prints yields its stub, after a
+precondition shows that the capped inventory lacks the seam. The second test
+checks that, past the cap, the stub omits the repair start the capped
+`--phase before` refuses, and that inside the cap the start is printed and
+runs. The in-process `app::test_stub` controls pin that the ambiguity
+validator classifies only the finding's file, reuses that inventory across
+findings, and refuses stand-in evidence.

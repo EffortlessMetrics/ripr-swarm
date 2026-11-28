@@ -3,10 +3,11 @@
 //! Neither command reads a token or the network; the workflow step that
 //! holds `GH_TOKEN` makes every call.
 
-use crate::cli::parse::expect_value;
+use crate::cli::parse::{expect_value, reconcile_root};
 use crate::cli::suggest::unknown_argument;
+use crate::output::ci_summary::gate_verdict::GateVerdict;
 use crate::output::pr_inline_comment_github::{existing_comments, publish_requests};
-use crate::output::pr_summary_comment::summary_request;
+use crate::output::pr_summary_comment::{GateState, summary_request};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,13 +45,17 @@ pub(super) fn parse_pr_comments_existing_options(
         raw: PathBuf::from(DEFAULT_RAW),
         out: PathBuf::from(DEFAULT_EXISTING_OUT),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
             "--root" => {
-                options.root = PathBuf::from(non_empty_string_arg(args, i, flag, EXISTING)?)
+                let value = non_empty_string_arg(args, i, flag, EXISTING)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, EXISTING)?;
+                options.root = reconciled;
+                root_explicit = true;
             }
             "--raw" => options.raw = PathBuf::from(non_empty_string_arg(args, i, flag, EXISTING)?),
             "--out" => options.out = PathBuf::from(non_empty_string_arg(args, i, flag, EXISTING)?),
@@ -80,8 +85,7 @@ pub(super) fn pr_comments_existing(args: &[String]) -> Result<(), String> {
     let pages = if options.raw.as_os_str() == "-" {
         // The workflow pipes `gh api` straight in; keep the raw pages beside
         // the normalized file so the uploaded artifact still shows them.
-        let mut bytes = Vec::new();
-        std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
+        let bytes = crate::bounded_input::read_reader(std::io::stdin())
             .map_err(|err| format!("{EXISTING} could not read standard input: {err}; pipe the JSON into the command, or check the step that produces it ran"))?;
         store_raw_copy(&options.root, &bytes)?;
         serde_json::from_slice(&bytes)
@@ -120,18 +124,24 @@ pub(super) fn parse_pr_comments_requests_options(
         pull_request: String::new(),
         head_sha: String::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
             "--root" => {
-                options.root = PathBuf::from(non_empty_string_arg(args, i, flag, REQUESTS)?)
+                let value = non_empty_string_arg(args, i, flag, REQUESTS)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, REQUESTS)?;
+                options.root = reconciled;
+                root_explicit = true;
             }
             "--plan" => {
                 options.plan = PathBuf::from(non_empty_string_arg(args, i, flag, REQUESTS)?)
             }
-            "--out-dir" => {
+            // Canonical `--output-dir` (#10543 item 4); `--out-dir` is a
+            // hidden alias kept for existing scripts.
+            "--output-dir" | "--out-dir" => {
                 options.out_dir = PathBuf::from(non_empty_string_arg(args, i, flag, REQUESTS)?);
             }
             "--pull-request" => options.pull_request = expect_value(args, i, flag)?.to_string(),
@@ -159,7 +169,7 @@ pub(super) fn parse_pr_comments_requests_options(
     Ok(options)
 }
 
-/// The run replaces request files in `--out-dir`, so it must stay a relative
+/// The run replaces request files in `--output-dir`, so it must stay a relative
 /// path inside `--root`: no absolute path, no `..`, not the root itself, and
 /// no tab or line break, since the request manifest is tab-separated.
 fn validate_out_dir(out_dir: &Path) -> Result<(), String> {
@@ -181,20 +191,20 @@ fn is_relative_inside_root(path: &Path) -> bool {
 fn validate_out_dir_for(command: &str, out_dir: &Path) -> Result<(), String> {
     if !is_relative_inside_root(out_dir) {
         return Err(format!(
-            "{command} --out-dir must be a relative directory inside --root (got {}); the run replaces its request files; pass a relative `--out-dir` under the root",
+            "{command} --output-dir must be a relative directory inside --root (got {}); the run replaces its request files; pass a relative `--output-dir` under the root",
             out_dir.display()
         ));
     }
     if out_dir.to_string_lossy().contains(['\t', '\r', '\n']) {
         return Err(format!(
-            "{command} --out-dir cannot contain a tab or line break: the request manifest is tab-separated; use a plain relative path without tabs or line breaks"
+            "{command} --output-dir cannot contain a tab or line break: the request manifest is tab-separated; use a plain relative path without tabs or line breaks"
         ));
     }
     Ok(())
 }
 
 /// `existing --out` is a file under `--root`: the same relative / inside-root
-/// / no-control-char rule as `--out-dir`, applied to a file path.
+/// / no-control-char rule as `--output-dir`, applied to a file path.
 fn validate_out_file(out: &Path) -> Result<(), String> {
     if !is_relative_inside_root(out) {
         return Err(format!(
@@ -219,7 +229,7 @@ pub(super) fn pr_comments_requests(args: &[String]) -> Result<(), String> {
     refuse_linked_out_dir(&options.root, &options.out_dir)?;
     let out_dir = options.root.join(&options.out_dir);
     // Stale request files from an earlier run must never be replayed. Only
-    // files this command writes are removed, so a mistyped --out-dir cannot
+    // files this command writes are removed, so a mistyped --output-dir cannot
     // lose anything else.
     if out_dir.is_dir() {
         let entries = fs::read_dir(&out_dir)
@@ -292,19 +302,25 @@ pub(super) fn parse_pr_comments_summary_options(args: &[String]) -> Result<Summa
         head_sha: String::new(),
         run_url: String::new(),
     };
+    let mut root_explicit = false;
     let mut i = 0usize;
     while i < args.len() {
         let flag = args[i].as_str();
         i += 1;
         match flag {
-            "--root" => options.root = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?),
+            "--root" => {
+                let value = non_empty_string_arg(args, i, flag, SUMMARY)?;
+                let reconciled = reconcile_root(&options.root, root_explicit, &value, SUMMARY)?;
+                options.root = reconciled;
+                root_explicit = true;
+            }
             "--pr-guidance" => {
                 options.pr_guidance = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?)
             }
             "--raw" => {
                 options.raw = Some(PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?))
             }
-            "--out-dir" => {
+            "--output-dir" | "--out-dir" => {
                 options.out_dir = PathBuf::from(non_empty_string_arg(args, i, flag, SUMMARY)?)
             }
             "--pull-request" => options.pull_request = expect_value(args, i, flag)?.to_string(),
@@ -338,13 +354,19 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
     let pages = match options.raw.as_deref() {
         None => Value::Array(Vec::new()),
         Some(raw) if raw.as_os_str() == "-" => {
-            let mut bytes = Vec::new();
-            std::io::Read::read_to_end(&mut std::io::stdin(), &mut bytes)
+            let bytes = crate::bounded_input::read_reader(std::io::stdin())
                 .map_err(|err| format!("{SUMMARY} could not read standard input: {err}; pipe the JSON into the command, or check the step that produces it ran"))?;
             serde_json::from_slice(&bytes)
                 .map_err(|err| format!("{SUMMARY}: standard input is not JSON: {err}; pass the JSON the earlier step wrote on standard input"))?
         }
         Some(raw) => read_json(&options.root.join(raw), SUMMARY)?,
+    };
+    // #15718: the job's gate mode, read raw as `reports ci-packet` reads it,
+    // and the verdict the gate stage left for that mode.
+    let gate_mode = std::env::var("RIPR_GATE_MODE").unwrap_or_default();
+    let gate = GateState {
+        verdict: GateVerdict::for_run(&options.root, &gate_mode),
+        mode: gate_mode,
     };
     let request = summary_request(
         &guidance,
@@ -352,6 +374,7 @@ pub(super) fn pr_comments_summary(args: &[String]) -> Result<(), String> {
         &options.pull_request,
         &options.head_sha,
         &options.run_url,
+        &gate,
     );
 
     refuse_linked_out_dir(&options.root, &options.out_dir)?;
@@ -390,13 +413,13 @@ fn write_manifest(path: &Path, text: &str, command: &str) -> Result<(), String> 
         .map_err(|err| format!("{command} could not write {}: {err}; check the path exists and you can access it, then rerun", path.display()))
 }
 
-/// The lexical check in the parser keeps `--out-dir` under `--root` only if
+/// The lexical check in the parser keeps `--output-dir` under `--root` only if
 /// no existing component is a link: a symlink or junction there would send
 /// the cleanup and the writes outside the workspace, so refuse it.
 fn refuse_linked_out_dir(root: &Path, out_dir: &Path) -> Result<(), String> {
     refuse_linked_path(
         REQUESTS,
-        "--out-dir",
+        "--output-dir",
         root,
         out_dir,
         "the run replaces request files there",
@@ -474,9 +497,11 @@ fn manifest_field(text: &str) -> String {
 }
 
 fn read_json(path: &Path, command: &str) -> Result<Value, String> {
-    let bytes = fs::read(path)
+    // A `gh api ... > raw.json` or review-guidance file saved by a Windows
+    // PowerShell 5.1 redirect is UTF-16 with a mark (#15936).
+    let text = crate::bounded_input::read_artifact_text(path)
         .map_err(|err| format!("{command} could not read {}: {err}; check the path exists and you can access it, then rerun", path.display()))?;
-    serde_json::from_slice(&bytes).map_err(|err| {
+    serde_json::from_str(&text).map_err(|err| {
         format!(
             "{command}: {} is not JSON: {err}; pass the JSON the earlier step wrote",
             path.display()
@@ -560,7 +585,7 @@ mod tests {
             .map(|options| options.out_dir.display().to_string())
     }
 
-    /// The run clears --out-dir, so only a dedicated directory under --root
+    /// The run clears --output-dir, so only a dedicated directory under --root
     /// may be named.
     #[test]
     fn requests_out_dir_must_stay_inside_the_root() {
@@ -646,7 +671,7 @@ mod tests {
         let _ = fs::remove_dir_all(&base);
 
         let err = match result {
-            Ok(()) => return Err("a linked --out-dir was accepted".to_string()),
+            Ok(()) => return Err("a linked --output-dir was accepted".to_string()),
             Err(err) => err,
         };
         assert!(err.contains("cannot pass through a link"), "{err}");

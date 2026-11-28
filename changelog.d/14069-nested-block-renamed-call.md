@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Analysis: a test whose bare call sits inside a nested block that renames another function to the changed function's name (`{ use super::other as discount; discount(50); }`) no longer gets a direct-call relation to the changed `discount`, in `ripr check` on a diff or in the whole-repository exposure report. A bare call of the name outside that block still counts as a direct call. Pinned in the evidence-promotion honesty corpus with an outer-call control (#14069).

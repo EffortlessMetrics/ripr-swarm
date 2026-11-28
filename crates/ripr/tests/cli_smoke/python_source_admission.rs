@@ -20,7 +20,7 @@ fn fixture(label: &str) -> TestResult<PathBuf> {
     fs::write(root.join("src/discount.py"), SOURCE)?;
     fs::write(
         root.join("tests/test_discount.py"),
-        "from src.discount import discount\n\ndef test_discount_boundary():\n    assert discount(100) is True\n",
+        "from src.discount import discount\n\ndef test_discount_boundary():\n    assert discount(100) is not None\n",
     )?;
     fs::write(root.join("change.patch"), PATCH)?;
     run_git(&root, &["init", "-b", "main"])?;
@@ -514,8 +514,11 @@ fn assert_path_restoration(path: &str) -> TestResult {
     assert_eq!(absent["summary"]["findings"], 0);
     assert!(absent.get("preview_languages").is_none(), "{absent}");
     let absent_human = check(&root, "human")?;
+    // Human prose spells a tab as `\t` so the name stays one visible token
+    // (#16455); JSON keeps the raw identity.
+    let prose_path = path.replace('\t', "\\t");
     assert!(
-        absent_human.contains(&format!("file: {path};")),
+        absent_human.contains(&format!("file: {prose_path};")),
         "{absent_human}"
     );
     assert!(!absent_human.contains("Python file analyzed"));

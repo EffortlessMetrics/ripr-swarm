@@ -197,6 +197,20 @@ fn throws_builtin_error(throw: &[LineToken]) -> bool {
 /// message of its own: any member call, or a call to a name that is neither
 /// an owner parameter, a keyword, nor a `new` construction. Conservative.
 fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
+    calls_unknown_function_except(masked, params, false)
+}
+
+/// `Math` methods that return a number (or `NaN`) and throw only while
+/// coercing an argument: a BigInt, a throwing `valueOf`, or a spread
+/// iterator. Such an error does not carry the owner's literal message, so a
+/// test pinning that message still fails on it rather than passing.
+const PURE_MATH_METHODS: &[&str] = &[
+    "abs", "ceil", "floor", "max", "min", "round", "sign", "sqrt", "trunc",
+];
+
+/// [`calls_unknown_function`], optionally treating a pure `Math` method call
+/// (`Math.floor(a / b)`) as known: it throws no message of its own.
+fn calls_unknown_function_except(masked: &str, params: &[String], pure_math: bool) -> bool {
     const KEYWORDS: [&str; 9] = [
         "if", "for", "while", "switch", "catch", "function", "return", "typeof", "await",
     ];
@@ -236,6 +250,13 @@ fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
             }
             continue;
         }
+        if pure_math
+            && word
+                .strip_prefix("Math.")
+                .is_some_and(|method| PURE_MATH_METHODS.contains(&method))
+        {
+            continue;
+        }
         if word.contains('.') {
             return true;
         }
@@ -261,6 +282,33 @@ fn calls_unknown_function(masked: &str, params: &[String]) -> bool {
         return true;
     }
     false
+}
+
+/// Whether a removed line could have thrown or rejected the old side's
+/// error (#13827): it names `throw`, `reject`, `Promise`, `new`, `await` or
+/// `yield` anywhere in its raw text, holds a template, opens with `(`, or
+/// calls anything but a pure `Math` method. Conservative: a removed
+/// signature or any call counts, so the message pin is refused rather than
+/// guessed. A throwing setter or coercion hook is not read.
+pub(crate) fn removed_line_may_throw(line: &str) -> bool {
+    let names = |word: &str| {
+        line.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
+            .any(|token| token == word)
+    };
+    if ["throw", "reject", "Promise", "new", "await", "yield"]
+        .iter()
+        .any(|word| names(word))
+    {
+        return true;
+    }
+    let masked = ts_mask_literals_and_comments(line);
+    // A template (possibly tagged, or spanning lines) or a line that opens
+    // with `(` (a call whose callee sits on the line above) is unread.
+    if line.contains('`') || masked.trim_start().starts_with('(') {
+        return true;
+    }
+    // Scan the whole line: the leading `{` stops the signature skip.
+    calls_unknown_function_except(&format!("{{{masked}"), &[], true)
 }
 
 const NON_THROWING_BUILTINS: &[&str] = &[
@@ -422,6 +470,14 @@ pub(crate) struct ErrorChangeFacts {
     old_shape: Option<MessageShape>,
     /// The new side's [`Self::old_shape`].
     new_shape: Option<MessageShape>,
+    /// An old line was read for this change (`false` for a pure addition).
+    old_line_read: bool,
+    /// [`Self::sole_throw_site`], with pure `Math` method calls in the owner
+    /// treated as unable to throw (#13827).
+    sole_throw_site_allowing_pure_math: bool,
+    /// The old line calls something that may throw its own error: any call
+    /// but a pure `Math` method or a built-in construction (#13827).
+    old_line_calls_unknown: bool,
 }
 
 impl ErrorChangeFacts {
@@ -526,7 +582,49 @@ impl ErrorChangeFacts {
                 .and_then(|(_, throw)| builtin_class(throw)),
             old_shape,
             new_shape,
+            old_line_read: old_line.is_some(),
+            sole_throw_site_allowing_pure_math: false,
+            old_line_calls_unknown: old_line.is_some_and(|line| {
+                let masked = ts_mask_literals_and_comments(line);
+                calls_unknown_function_except(&format!("{{{masked}"), &[], true)
+            }),
         }
+    }
+
+    /// The literal message a `toThrow('<message>')` repair may pin for this
+    /// change (#13827), or `None`. Only for a generic `Error` whose new
+    /// message is a plain literal at the owner's sole throw site (pure `Math`
+    /// calls allowed), and only
+    /// when the old side cannot also satisfy that substring check: either
+    /// the line is a pure addition, or the old side threw a known message
+    /// that does not contain the new one. A shortened message
+    /// (`'division by zero occurred'` to `'division by zero'`), an unread
+    /// old message, or a replaced non-throw line stays `None`, since pinning
+    /// would pass on both versions or is not established to discriminate.
+    pub(crate) fn pinnable_generic_error_message(&self) -> Option<&str> {
+        if !self.sole_throw_site_allowing_pure_math
+            || self.new_builtin_class.as_deref() != Some("Error")
+        {
+            return None;
+        }
+        let message = self.new_message.as_deref().filter(|m| !m.is_empty())?;
+        if self.new_shape.is_some() {
+            return None;
+        }
+        if self.old_line_read {
+            // The old message is the runtime message only for a built-in
+            // error class: a user class or factory (`new NotFoundError('user')`
+            // with `super(`${r} not found`)`) can build a longer one, and a
+            // call inside the old line can throw first.
+            if self.old_builtin_class.is_none() || self.old_line_calls_unknown {
+                return None;
+            }
+            let old = self.old_message.as_deref()?;
+            if old.contains(message) {
+                return None;
+            }
+        }
+        Some(message)
     }
 
     /// The two sides construct different built-in sibling error classes
@@ -566,6 +664,7 @@ impl ErrorChangeFacts {
         owner_params: &[String],
         changed_line: &str,
     ) -> Self {
+        let mut pure_math_sole = false;
         self.sole_throw_site = owner_source.is_some_and(|source| {
             let masked = ts_mask_literals_and_comments(source);
             // The one throw site must be the changed line itself: another
@@ -594,15 +693,18 @@ impl ErrorChangeFacts {
                     })
                     .count()
             };
-            count("throw") == 1
-                && !calls_unknown_function(&masked, owner_params)
+            let one_throw = count("throw") == 1
                 && count("reject") == 0
                 && !masked
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ")
-                    .contains("new Promise")
+                    .contains("new Promise");
+            pure_math_sole =
+                one_throw && !calls_unknown_function_except(&masked, owner_params, true);
+            one_throw && !calls_unknown_function(&masked, owner_params)
         });
+        self.sole_throw_site_allowing_pure_math = pure_math_sole;
         self
     }
 
@@ -1909,5 +2011,87 @@ mod tests {
             &payload(Kind::AssertThrowsRegex, "/^Error: unsupported $/"),
             &shortened
         ));
+    }
+
+    #[test]
+    fn pinnable_generic_error_message_needs_a_literal_the_old_side_cannot_satisfy() {
+        let new = "throw new Error('division by zero');";
+        let source = |line: &str| {
+            format!(
+                "function divide(a, b) {{\n  if (b === 0) {{\n    {line}\n  }}\n  return Math.floor(a / b);\n}}"
+            )
+        };
+        let pin = |old: Option<&str>, new: &str| {
+            ErrorChangeFacts::read(old, new)
+                .with_owner_source(Some(&source(new)), &["a".to_string(), "b".to_string()], new)
+                .pinnable_generic_error_message()
+                .map(str::to_string)
+        };
+        // A pure addition, and a known old message the new one is not part of.
+        assert_eq!(pin(None, new).as_deref(), Some("division by zero"));
+        assert_eq!(
+            pin(Some("throw new Error('empty divisor');"), new).as_deref(),
+            Some("division by zero")
+        );
+        // The old side would satisfy the substring pin too.
+        assert_eq!(
+            pin(Some("throw new Error('division by zero occurred');"), new),
+            None
+        );
+        assert_eq!(
+            pin(Some("throw new RangeError('division by zero');"), new),
+            None
+        );
+        assert_eq!(pin(Some("throw 'division by zero';"), new), None);
+        // A user class or factory may build a longer runtime message, and a
+        // call inside the old line may throw first.
+        assert_eq!(pin(Some("throw new DivisionError('division');"), new), None);
+        assert_eq!(pin(Some("throw divisionError('division');"), new), None);
+        assert_eq!(
+            pin(
+                Some("throw new Error('empty divisor', { cause: check(b) });"),
+                new
+            ),
+            None
+        );
+        // A replaced non-throw line or an unread old message is not established.
+        assert_eq!(pin(Some("return a / b;"), new), None);
+        assert_eq!(pin(Some("throw new Error(`div ${b}`);"), new), None);
+        // Only a generic `Error` with a plain literal.
+        assert_eq!(pin(None, "throw new RangeError('division by zero');"), None);
+        assert_eq!(pin(None, "throw new Error(`division by ${b}`);"), None);
+        assert_eq!(pin(None, "throw new Error('');"), None);
+    }
+
+    #[test]
+    fn removed_line_may_throw_flags_throws_rejections_and_calls() {
+        for line in [
+            "  if (b === 0) throw new Error('division by zero occurred');",
+            "  return Promise.reject(err);",
+            "  return new Promise((ok) => ok(1));",
+            "  checkDivisor(b);",
+            "  invariant(b !== 0, 'division by zero');",
+            "  return lib.divide(a, b);",
+            "  const c = new Custom(1);",
+            "export function divide(a: number, b: number): number {",
+            "  /* throw */ return a;",
+            "  const m = new Map();",
+            "  const c = new Custom;",
+            "  await pending;",
+            "  return validate`${b}`;",
+            "  (b);",
+        ] {
+            assert!(removed_line_may_throw(line), "{line}");
+        }
+        for line in [
+            "  return Math.floor(a / b);",
+            "  if (b === 0) {",
+            "  const q = a / b;",
+            "  return 'checkDivisor(b)';",
+            "  }",
+            "",
+        ] {
+            assert!(!removed_line_may_throw(line), "{line}");
+        }
     }
 }

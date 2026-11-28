@@ -18,7 +18,8 @@
 
 use super::gap_admission::{is_ignored, withhold_gap};
 use super::related_tests::{
-    inherent_owner_call_resolves_if_macros_trusted, requires_inherent_receiver_identity,
+    inherent_owner_call_resolves_if_macros_trusted, inherent_owner_call_resolves_in_forwarded_body,
+    inherent_owner_call_resolves_inside_unreadable_macro, requires_inherent_receiver_identity,
 };
 use crate::analysis::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::*;
@@ -27,6 +28,13 @@ const LIMIT: StaticLimitKind = StaticLimitKind::RustInherentReceiverUnestablishe
 const FIRST_UNRESOLVED_EDGE: &str = "whether the standard assertion macro around the owner call is the one the test's target compiles";
 const JUDGED_TEST_LIMIT: usize = 3;
 
+/// Placed variant (#12829): placement is available, and the assertion macro
+/// around the owner call is one ripr does not read. The marker names the
+/// judged tests.
+pub(in crate::analysis) const RECEIVER_UNREADABLE_MACRO_PREFIX: &str = "receiver_unestablished: the owner call resolves inside an assertion macro ripr does not read: ";
+const UNREADABLE_MACRO_EDGE: &str =
+    "whether the assertion macro around the owner call discriminates the owner's result";
+
 /// Classifier-to-post-pass marker prefix: a related test's owner call resolves
 /// if the standard assertion macro were trusted, and placement is unavailable.
 /// The rest of the line names the judged tests.
@@ -34,7 +42,12 @@ pub(in crate::analysis) const RECEIVER_UNVERIFIABLE_MACRO_PREFIX: &str = "receiv
 
 /// Tests whose owner call is blocked only by the unverifiable macro binding,
 /// formatted for the next step. Empty when the rule does not apply.
-fn blocked_tests(finding: &Finding, owner: &FunctionSummary, index: &RustIndex) -> Vec<String> {
+fn blocked_tests(
+    finding: &Finding,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+    resolves: fn(&TestSummary, &FunctionSummary, &RustIndex) -> bool,
+) -> Vec<String> {
     if !matches!(
         finding.class,
         ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
@@ -55,7 +68,7 @@ fn blocked_tests(finding: &Finding, owner: &FunctionSummary, index: &RustIndex) 
                 .any(|row| is_test(&row.name, &row.file, row.line, test))
                 && !is_ignored(test)
                 && assertions_over_owner_are_strong(test, owner)
-                && inherent_owner_call_resolves_if_macros_trusted(test, owner, index)
+                && resolves(test, owner, index)
         })
         .take(JUDGED_TEST_LIMIT)
         .map(|test| {
@@ -67,6 +80,160 @@ fn blocked_tests(finding: &Finding, owner: &FunctionSummary, index: &RustIndex) 
             )
         })
         .collect()
+}
+
+/// Tests whose owner call sits inside a workspace assertion macro defined in
+/// another file (#12886). The macro's own definition must expand exactly to
+/// one `strong` std assertion over the call's operands (the bounded shape the
+/// same-file credit expands), so a macro that ignores its operand, has several
+/// arms or fragment kinds, or cannot be resolved keeps the gap. The call is
+/// read over a body where the macro call is replaced by its operands, under
+/// the direct relation's receiver rules; nothing is written to the index, so no
+/// credit follows.
+fn cross_file_wrapped_tests(
+    finding: &Finding,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> Vec<String> {
+    if !matches!(
+        finding.class,
+        ExposureClass::WeaklyExposed | ExposureClass::ReachableUnrevealed
+    ) || finding.static_limit_kind.is_some()
+        || !requires_inherent_receiver_identity(owner)
+    {
+        return Vec::new();
+    }
+    index
+        .tests()
+        .iter()
+        .filter(|test| {
+            finding
+                .related_tests
+                .iter()
+                .any(|row| is_test(&row.name, &row.file, row.line, test))
+                && !is_ignored(test)
+                && test.body.contains(owner.name.as_str())
+                && forwarded_macro_resolves_owner(test, owner, index)
+        })
+        .take(JUDGED_TEST_LIMIT)
+        .map(|test| {
+            format!(
+                "`{}` ({}:{})",
+                test.name,
+                test.file.display().to_string().replace('\\', "/"),
+                test.start_line
+            )
+        })
+        .collect()
+}
+
+fn forwarded_macro_resolves_owner(
+    test: &TestSummary,
+    owner: &FunctionSummary,
+    index: &RustIndex,
+) -> bool {
+    // Assertions the ordinary extractor already reads must not be what keeps
+    // the test weak: a non-strong one over the owner is a real gap.
+    if test.assertions.iter().any(|assertion| {
+        assertion.text.contains(owner.name.as_str()) && assertion.strength != OracleStrength::Strong
+    }) {
+        return false;
+    }
+    let Some(file) = index.files().get(&test.file) else {
+        return false;
+    };
+    let data = file.data();
+    if file.used_lexical_fallback {
+        return false;
+    }
+    let visibility = index.call_identity_memos.assertion_wrapper_visibility(|| {
+        crate::analysis::facts::macro_visibility::MacroVisibility::for_assertion_wrappers(
+            index
+                .files()
+                .iter()
+                .map(|(path, file)| (path.clone(), file.source.clone())),
+        )
+    });
+    let imported = visibility.imported_macros(&test.file);
+    let calls = crate::analysis::facts::imported_forwarding_calls(&data.source, &imported, test);
+    if calls.is_empty() {
+        return false;
+    }
+    let mut any = false;
+    for call in &calls {
+        if !call.call_text.contains(owner.name.as_str()) {
+            continue;
+        }
+        // One occurrence keeps the replaced text unambiguous.
+        if call.strength != OracleStrength::Strong
+            || test.body.matches(call.call_text.as_str()).count() != 1
+        {
+            return false;
+        }
+        let Some((_, operands)) = call.statement.split_once('!') else {
+            return false;
+        };
+        let operands = operands.trim();
+        if !operands.starts_with('(') || !operands.ends_with(')') {
+            return false;
+        }
+        // The expansion's operands must themselves evaluate the owner call: an
+        // operand the macro discards is not asserted on.
+        if !contains_word(operands, owner.name.as_str()) {
+            return false;
+        }
+        // Any other mention of the owner in the test is not this assertion's
+        // owner call, so it must not stand in for one.
+        let Some((before, after)) = test.body.split_once(call.call_text.as_str()) else {
+            return false;
+        };
+        let body = format!(
+            "{}{operands}{}",
+            blank_word(before, owner.name.as_str()),
+            blank_word(after, owner.name.as_str())
+        );
+        if !inherent_owner_call_resolves_in_forwarded_body(test, body, owner, index) {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
+fn is_ident_char(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
+}
+
+/// Whether `word` appears in `text` as a whole identifier.
+fn contains_word(text: &str, word: &str) -> bool {
+    text.match_indices(word).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(is_ident_char)
+            && !text[at + word.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident_char)
+    })
+}
+
+/// `text` with every whole-identifier `word` replaced by same-length filler,
+/// so byte offsets and line counts are unchanged.
+fn blank_word(text: &str, word: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for (at, _) in text.match_indices(word) {
+        let end = at + word.len();
+        if at < last
+            || text[..at].chars().next_back().is_some_and(is_ident_char)
+            || text[end..].chars().next().is_some_and(is_ident_char)
+        {
+            continue;
+        }
+        out.push_str(&text[last..at]);
+        out.push_str(&"_".repeat(word.len()));
+        last = end;
+    }
+    out.push_str(&text[last..]);
+    out
 }
 
 /// Whether a related-test row names `test`. Name and file alone cannot tell
@@ -103,12 +270,33 @@ pub(in crate::analysis) fn mark_receiver_unestablished(
     let Some(owner) = owner else {
         return false;
     };
-    let judged = blocked_tests(finding, owner, index);
+    let judged = blocked_tests(
+        finding,
+        owner,
+        index,
+        inherent_owner_call_resolves_if_macros_trusted,
+    );
+    if !judged.is_empty() {
+        finding.evidence.push(format!(
+            "{RECEIVER_UNVERIFIABLE_MACRO_PREFIX}{}",
+            judged.join(", ")
+        ));
+        return true;
+    }
+    let mut judged = blocked_tests(
+        finding,
+        owner,
+        index,
+        inherent_owner_call_resolves_inside_unreadable_macro,
+    );
+    if judged.is_empty() {
+        judged = cross_file_wrapped_tests(finding, owner, index);
+    }
     if judged.is_empty() {
         return false;
     }
     finding.evidence.push(format!(
-        "{RECEIVER_UNVERIFIABLE_MACRO_PREFIX}{}",
+        "{RECEIVER_UNREADABLE_MACRO_PREFIX}{}",
         judged.join(", ")
     ));
     true
@@ -125,10 +313,16 @@ pub(in crate::analysis) fn withhold_receiver_unestablished_gap(
         .iter()
         .find_map(|line| line.strip_prefix(RECEIVER_UNVERIFIABLE_MACRO_PREFIX))
         .map(str::to_string);
-    finding
+    let unreadable = finding
         .evidence
-        .retain(|line| !line.starts_with(RECEIVER_UNVERIFIABLE_MACRO_PREFIX));
-    let Some(judged) = marker else {
+        .iter()
+        .find_map(|line| line.strip_prefix(RECEIVER_UNREADABLE_MACRO_PREFIX))
+        .map(str::to_string);
+    finding.evidence.retain(|line| {
+        !line.starts_with(RECEIVER_UNVERIFIABLE_MACRO_PREFIX)
+            && !line.starts_with(RECEIVER_UNREADABLE_MACRO_PREFIX)
+    });
+    let Some(judged) = marker.clone().or(unreadable) else {
         return false;
     };
     if finding.static_limit_kind.is_some()
@@ -150,6 +344,20 @@ pub(in crate::analysis) fn withhold_receiver_unestablished_gap(
     }) else {
         return false;
     };
+    if marker.is_none() {
+        let next_step = format!(
+            "{judged} calls `{name}` on a receiver that resolves inside an assertion macro ripr does not read, so it does not report a gap. Inspect the macro's definition and check that the assertion would fail if `{name}` returned the wrong value; add a test only if none does.",
+            name = owner.name,
+        );
+        withhold_gap(
+            finding,
+            StaticLimitKind::RustMacroWrappedAssertionUnresolved,
+            UNREADABLE_MACRO_EDGE,
+            next_step,
+            &[judged],
+        );
+        return true;
+    }
     let next_step = format!(
         "{} calls `{}` on a receiver that would resolve if the standard assertion macro is the one its target compiles, and ripr cannot place the test in a Cargo target here (an unresolved `include!` or `#[path]`), so it does not report a gap. Check that the assertion would fail if `{}` returned the wrong value; add a test only if none does.",
         judged, owner.name, owner.name,

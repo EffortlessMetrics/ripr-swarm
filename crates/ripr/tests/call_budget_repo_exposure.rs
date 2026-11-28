@@ -350,8 +350,17 @@ fn the_summary_reading_withholds_the_same_seam() -> Result<(), String> {
             count("/metrics/grip_class/discrimination_unknown")?,
         ))
     };
-    assert_eq!(counts(254)?, (1, 0), "premise: the baseline is a weak grip");
-    assert_eq!(counts(255)?, (0, 1));
+    assert_eq!(
+        counts(254)?,
+        (2, 0),
+        "premise: the baseline is a weak grip, and the branch-local return-value \
+         seam that loses credit joins it"
+    );
+    assert_eq!(
+        counts(255)?,
+        (0, 2),
+        "premise: at the budget the same two seams read discrimination_unknown"
+    );
     Ok(())
 }
 

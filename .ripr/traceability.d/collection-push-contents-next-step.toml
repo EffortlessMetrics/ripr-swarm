@@ -1,0 +1,27 @@
+[[behavior]]
+id = "RIPR-SPEC-0412"
+name = "Collection push next step names a contents check only on the repair route's precondition"
+spec = "docs/specs/RIPR-SPEC-0412-collection-push-contents-check-next-step.md"
+tests = [
+  "crates/ripr/src/analysis/repair_route.rs::tests::collection_contents_next_step_gate_matches_the_repair_route_decision",
+  "crates/ripr/src/analysis/classify/decision.rs::tests::recommended_next_step_covers_side_effect_and_default_weak_guidance",
+  "crates/ripr/src/lsp/hover.rs::seam_hover_tests::localized_collection_push_side_effect_hover_names_contents_check_not_mock",
+]
+fixtures = [
+  "fixtures/collection_push_contents_check_next_step",
+  "fixtures/rust_direct_collection_count_payload",
+]
+code = [
+  "crates/ripr/src/analysis/repair_route.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+  "crates/ripr/src/analysis/classify/decision.rs",
+  "crates/ripr/src/lsp/hover.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0412-collection-push-contents-check-next-step.md",
+  "docs/spec-index.d/RIPR-SPEC-0412.md",
+  "policy/doc-artifacts.d/RIPR-SPEC-0412.toml",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

@@ -1,0 +1,11 @@
+{
+  "subject_id": "authored-7117-f64-impl-import",
+  "origin": "authored",
+  "version_label": "authored 2026-11-02; #7117 f64 Render trait-shadow production-path corpus",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {"path": "Cargo.toml", "sha256": "c1f80b0f8f3590f9a42eae487b5b4e9fa75f4f86142acd47a2a1f8694a1529b9"},
+    {"path": "src/lib.rs", "sha256": "f5380c27a4178e95d535178cf05e78bcd8dc769a7c8e74465acbb967fce9e3ec"}
+  ]
+}

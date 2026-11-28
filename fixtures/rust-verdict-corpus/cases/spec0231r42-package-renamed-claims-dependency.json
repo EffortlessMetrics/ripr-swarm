@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0231r42-package-renamed-claims-dependency",
+  "subject_id": "authored-spec0231-42",
+  "diff": "cases/spec0231r42-package-renamed-claims-dependency.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "package_renamed_claims_assert_ok_eq",
+  "hard_case": "The dependency is `cl = { package = \"claims\", .. }`, so `use cl::assert_ok_eq;` is not a verified `claims` import and ripr keeps the oracle unknown; the real macro does pin the value, so the withheld oracle is a missed credit, never a false claim.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(2 + n)",
+        "mutated_line": "Ok(2 + n)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::parse_doubles",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      },
+      {
+        "replacement": "Ok(2 / n)",
+        "mutated_line": "Ok(2 / n)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::parse_doubles",
+        "equivalence_review": "not equivalent: the test fails on the changed value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`assert_ok_eq!(parse(5), 10)` comes from claims through a package-renamed dependency, so the pin of 10 kills every mutant, but the import is not a verified claims path. Spec cells: RIPR-SPEC-0231 example 42 (a `package` claims dependency reads unknown / none).",
+  "labeling_observation": {
+    "ripr_commit": "99b377f5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#42"
+  ]
+}

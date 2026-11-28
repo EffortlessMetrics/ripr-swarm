@@ -1,0 +1,2 @@
+crates/ripr/src/analysis/diff/load.rs|git diff failed: {stderr}{hint}
+crates/ripr/src/analysis/diff/load.rs|packet diff is not valid UTF-8: {err}

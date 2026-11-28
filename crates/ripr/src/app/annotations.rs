@@ -10,23 +10,23 @@ use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-use crate::cli::unknown_argument;
 use crate::output::workflow_escape::{
     escape_data, escape_property, path_is_unplaceable, unplaced_location_prefix,
 };
 
-use super::subcommand::{
-    NonEmptyPlaceholder, invocation_repo_root_with_directory_hint, non_empty_arg,
-};
+use super::subcommand::invocation_repo_root_with_directory_hint;
 
 const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const DEFAULT_ANNOTATIONS_TXT: &str = "target/ripr/review/annotations.txt";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct AnnotationOptions {
-    comments: String,
-    out: String,
-    check: bool,
+pub(crate) struct AnnotationOptions {
+    pub(crate) comments: String,
+    pub(crate) out: String,
+    pub(crate) check: bool,
+    /// `--comments` was passed: a missing file is then a typo, not the
+    /// optional default-path skip.
+    pub(crate) comments_explicit: bool,
 }
 
 impl Default for AnnotationOptions {
@@ -35,16 +35,14 @@ impl Default for AnnotationOptions {
             comments: DEFAULT_COMMENTS_JSON.to_string(),
             out: DEFAULT_ANNOTATIONS_TXT.to_string(),
             check: false,
+            comments_explicit: false,
         }
     }
 }
 
-pub(crate) fn run_annotations(args: &[String]) -> Result<(), String> {
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
-        print_help();
-        return Ok(());
-    }
-    let options = parse_options(args)?;
+/// Run `ripr annotations` for parsed options. Argv parsing and `--help` live in
+/// the CLI adapter (`cli::commands::annotations`).
+pub(crate) fn execute_annotations(options: AnnotationOptions) -> Result<(), String> {
     let repo = invocation_repo_root_with_directory_hint()?;
     let generated = render_annotations(&repo, &options)?;
     let out = repo.join(&options.out);
@@ -53,43 +51,6 @@ pub(crate) fn run_annotations(args: &[String]) -> Result<(), String> {
     } else {
         write_annotations(&out, &generated, &options)
     }
-}
-
-fn parse_options(args: &[String]) -> Result<AnnotationOptions, String> {
-    let mut options = AnnotationOptions::default();
-    let mut i = 0usize;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--comments" => {
-                i += 1;
-                options.comments = non_empty_arg(
-                    "annotations",
-                    args,
-                    i,
-                    "--comments",
-                    NonEmptyPlaceholder::Path,
-                )?
-                .to_string();
-            }
-            "--out" => {
-                i += 1;
-                options.out =
-                    non_empty_arg("annotations", args, i, "--out", NonEmptyPlaceholder::Path)?
-                        .to_string();
-            }
-            "--check" => options.check = true,
-            other => return Err(unknown_argument("annotations", other)),
-        }
-        i += 1;
-    }
-    Ok(options)
-}
-
-fn print_help() {
-    println!(
-        "{}",
-        crate::cli::help::render_command_help(ANNOTATIONS_HELP, &[])
-    );
 }
 
 /// Help body for `ripr annotations`. Also the flag source for unknown-argument
@@ -113,8 +74,14 @@ fn render_annotations(
     // One direct read determines presence: `NotFound` is the intended
     // optional-comments-file state; every other I/O failure (permission
     // denied, directory input, invalid UTF-8) stays an explicit error.
-    let text = match fs::read_to_string(&comments_path) {
+    let text = match crate::bounded_input::read_artifact_text(&comments_path) {
         Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && options.comments_explicit => {
+            return Err(format!(
+                "annotations --comments {} does not exist; pass --comments naming a comments.json written by `ripr review-comments`, or omit it to use {DEFAULT_COMMENTS_JSON}",
+                options.comments
+            ));
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(AnnotationOutput {
                 text: String::new(),
@@ -188,7 +155,11 @@ fn annotation_from_comment(item: &Value) -> Result<String, String> {
         .get("suggested_test")
         .and_then(|test| test.get("intent"))
         .and_then(Value::as_str);
-    let mut message = reason.to_string();
+    // A card on another changed line of its function names the gap's own
+    // line first (#14303).
+    let mut message =
+        crate::output::review_comments::displaced_seam_prefix(item).unwrap_or_default();
+    message.push_str(reason);
     if let Some(intent) = intent {
         message.push_str(" Suggested test: ");
         message.push_str(intent);
@@ -234,10 +205,11 @@ fn check_annotations(
         println!("RIPR annotations skipped: {} is missing", options.comments);
         return Ok(());
     }
-    let actual = fs::read_to_string(path).map_err(|err| {
+    let actual = crate::bounded_input::read_to_string(path).map_err(|err| {
         format!(
-            "missing or unreadable {}: {err}; run `ripr annotations` to write it",
-            options.out
+            "missing or unreadable {}: {}; run `ripr annotations` to write it",
+            options.out,
+            crate::bounded_input::read_failure_detail(&err)
         )
     })?;
     if actual == generated.text {
@@ -282,32 +254,6 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    #[test]
-    fn parse_supports_paths_and_check() -> Result<(), String> {
-        let parsed = parse_options(&[
-            "--comments".to_string(),
-            "comments.json".to_string(),
-            "--out".to_string(),
-            "annotations.txt".to_string(),
-            "--check".to_string(),
-        ])?;
-        assert_eq!(parsed.comments, "comments.json");
-        assert_eq!(parsed.out, "annotations.txt");
-        assert!(parsed.check);
-        match parse_options(&["--comments".to_string(), "".to_string()]) {
-            Err(msg) if msg.contains("non-empty") => Ok(()),
-            other => Err(format!("expected non-empty error, got {other:?}")),
-        }
-    }
-
-    #[test]
-    fn parse_rejects_unknown_arg() -> Result<(), String> {
-        match parse_options(&["--bogus".to_string()]) {
-            Err(msg) if msg.contains("--bogus") => Ok(()),
-            other => Err(format!("expected unknown-arg error, got {other:?}")),
-        }
-    }
-
     fn unique_temp_dir(label: &str) -> Result<PathBuf, String> {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -326,6 +272,7 @@ mod tests {
             comments: "comments.json".to_string(),
             out: "annotations.txt".to_string(),
             check: false,
+            comments_explicit: false,
         }
     }
 
@@ -351,6 +298,34 @@ mod tests {
         {
             return Err(format!("wire encoding mismatch: {annotation}"));
         }
+        Ok(())
+    }
+
+    /// #14303: `ripr annotations` names a displaced card's gap line, the
+    /// same prefix the workflow annotations print; exact cards are unchanged.
+    #[test]
+    fn a_displaced_card_annotation_names_the_gap_line() -> Result<(), String> {
+        let card = |mode: &str| -> Result<Value, String> {
+            serde_json::from_str(&format!(
+                r#"{{
+                    "placement": {{"path": "src/p.rs", "line": 3, "mode": "{mode}"}},
+                    "source_location": {{"line": 5}},
+                    "seam": {{"line": 5, "expression": "total_cents >= 5_000"}},
+                    "severity": "warning",
+                    "kind": "predicate_boundary",
+                    "reason": "Missing 5_000."
+                }}"#
+            ))
+            .map_err(|err| format!("fixture must parse: {err}"))
+        };
+        assert_eq!(
+            annotation_from_comment(&card("owner_function_changed_line")?)?,
+            "::warning file=src/p.rs,line=3,title=ripr warning predicate_boundary::Gap at line 5 (`total_cents >= 5_000`) of this function: Missing 5_000."
+        );
+        assert_eq!(
+            annotation_from_comment(&card("exact_seam_line")?)?,
+            "::warning file=src/p.rs,line=3,title=ripr warning predicate_boundary::Missing 5_000."
+        );
         Ok(())
     }
 
@@ -400,7 +375,9 @@ mod tests {
     #[test]
     fn render_invalid_utf8_is_an_explicit_error() -> Result<(), String> {
         let dir = unique_temp_dir("utf8")?;
-        std::fs::write(dir.join("comments.json"), [0xff, 0xfe, 0x00, 0x01])
+        // A lone 0xFF is not UTF-8, and without its 0xFE partner it is not a
+        // UTF-16 byte-order mark either (#15936 decodes marked UTF-16).
+        std::fs::write(dir.join("comments.json"), [0xff, 0x00, 0x01])
             .map_err(|err| format!("write comments.json: {err}"))?;
         match render_annotations(&dir, &options()) {
             Err(msg) if msg.contains("failed to read") => Ok(()),

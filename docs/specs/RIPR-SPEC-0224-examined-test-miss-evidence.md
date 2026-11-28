@@ -19,6 +19,7 @@ Linked issues:
 - #5498 (Perl findings list tests without a reason)
 - #5566 (promote to a language-neutral related-test miss contract)
 - #5445 (Python, TypeScript and Perl related tests without a reason)
+- #6889 (TypeScript residual no-assertion admission forms)
 
 Support-tier impact:
 
@@ -120,9 +121,15 @@ Three states stay distinct: a recognized assertion; established absence of any a
 construct after complete extraction; and an assertion-like, refused, custom or
 dynamic form whose admission is unresolved. An empty recognized-assertion
 vector is not by itself `no_assertion`. `assertion_not_credited` is not a
-bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust's current
-emission on a refused row predates this rule and stays a documented exception
-until #5446 lands.
+bucket for unsupported syntax; only a typed established refusal (#5446) may use it. Rust splits
+every such row into `assertion_inert` or `assertion_admission_unproven` from its typed
+refusal (#5446), so the unsplit value is not left on a Rust refused row.
+An `assertion_inert` row whose every refusal names the same conditional
+construct carries that construct as its `miss_support` value (`a \`for\` loop,
+which may run zero times`), and `output::related_test_miss` renders "this
+test's assertion is inside <construct>" (#15337). Refusals that disagree, or
+that name no construct, leave the support absent and the generic sentence in
+place. The support stays evidence only.
 
 ### Minimum evidence per miss
 
@@ -131,7 +138,7 @@ until #5446 lands.
 | `no_call_path` | no established path to the changed owner under the producer's relation model |
 | `no_assertion` | path established, extraction complete, no executable assertion-like construct |
 | `assertion_not_observing` | affirmative evidence the admitted assertion observes another owner, value or sink |
-| `assertion_not_credited` | a typed established refusal accepted by #5446 |
+| `assertion_not_credited` | a typed established refusal; the Rust adapter reports it as `assertion_inert` or `assertion_admission_unproven` (#5446) |
 | `weak_assertion` | an admitted, family-relevant oracle at a weak or smoke tier, below the producer's strong or exact threshold |
 | `missing_input` | a row-owned predicate-activation or boundary omission |
 | `missing_exact_assertion` | a row-owned observed-surface or exact-discriminator omission |
@@ -140,6 +147,10 @@ until #5446 lands.
 The typed `ProbeFamily` is authoritative for behavior-family prose; source
 text such as ` == ` never decides whether a fact is a boundary, return value,
 field, error variant, effect, call deletion or match arm.
+
+In the Rust slice-table boundary fixture (#14808), the assertion-free direct
+caller carries `no_assertion`. Its neighbor, linked only by file proximity,
+carries `no_call_path`. Known implicit dispatch also establishes row reach.
 
 ### Adapter capability table
 
@@ -153,8 +164,8 @@ unsupported state as unknown and fabricates no reason conforms.
 | --- | --- | --- | --- | --- |
 | `no_call_path` | yes | yes (closed-body reach fact on a function owner, name-only rows; residual limits below) | no (absence unprovable from one file) | no |
 | `no_assertion` | yes | yes (extraction-complete admission, fail-closed; residual limits below) | no (admission blind spots) | no |
-| `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | no (withheld pending #5495) | no (#3223) |
-| `assertion_not_credited` | yes, unsplit until #5446 | no (#5446) | no (#5446) | no |
+| `assertion_not_observing` | yes | no (credit-only alignment; withheld pending #5491) | yes (affirmative other-sink only, #5528) | no (#3223) |
+| `assertion_not_credited` | yes, split into `assertion_inert` and `assertion_admission_unproven` (#5446) | no (no typed refusal) | no (no typed refusal) | no |
 | `weak_assertion` | yes | yes (weak and smoke only) | yes (weak and smoke only) | no |
 | `missing_input` | yes | yes (predicate boundary, row-owned) | yes (row-owned `MissedBoundary` fact only, hedged "seen" wording, #10040) | no (#4061, perl-lsp-swarm#17237, #5562) |
 | `missing_exact_assertion` | yes | no (no row-owned fact) | no (no row-owned fact) | no |
@@ -186,8 +197,9 @@ call, not hooks, helpers or re-exports; a sound fact needs a reach mode of the
 admission scan that treats production imports, barrel and `export *`
 re-exports, side-effect imports, `jest.mock`/`vi.mock` factories, `it.each`
 tables, dynamic `import()`/`require`, class and instance owners, hook bodies
-and runner config as reaching), `assertion_not_observing` (withheld pending
-#5495; row eligibility is the explicit role, not this value) and
+and runner config as reaching), `assertion_not_observing` (only when row-local
+changed-sink observation is `affirmatively_other_sink`, #5528; unresolved
+observation stays `observation_unconfirmed`) and
 `no_assertion` (the single-file admission scan cannot see project setup files
 or runner plugins). Rows with unresolved admission, static-limited findings,
 `exposed`, `static_unknown`
@@ -397,7 +409,44 @@ not yet satisfy all of it, and these gaps are tracked rather than claimed away:
   and are tracked separately: `exact_oracle_gap_next_step` on
   `missing_exact_assertion`, and the Rust oracle pass on
   `assertion_not_credited` when choosing the macro-wrapped-assertion limit
-  and its next step.
+  and its next step. One ranking read orders rows, never admits or drops
+  them: `RelatedTest::observation_tier` (#14454, #14483) reads only the
+  recorded miss and ranks a `no_call_path` row lowest, then
+  `assertion_not_observing`, then every other row, including `no_assertion`
+  (its minimum evidence is an established path, so the row is where the
+  missing assertion goes; the Rust reveal pass also sets it on oracle-free
+  proximity rows whose path is not established, tracked as #14808) and the
+  unknown-edge
+  misses such as `observation_unconfirmed`, which record an unestablished
+  observation, not an absent one. It does not read the relation: a
+  proximity-only row can still reach the owner through a helper, and the
+  producer's `no_call_path` miss is the one owner of that fact. Every
+  picker that names one row of a finding uses it, keeping its own keys
+  within a tier: the agent
+  `tK=` row (`strongest_test`), the fix site
+  (`DiagnosticWitness::best_related_test`, which the code lens and hover
+  read), the human `Related test` headline (the first row of the best tier,
+  then the Python changed-file rule within that tier), the JSON
+  `oracle_kind`/`oracle_strength` summary (the tier, then strength, so a
+  strong oracle held only by a `no_call_path` row no longer speaks for the
+  finding, last of equal rows as before), the agent `open=` row
+  (`triage::weak_assertion_row`, the first bound weak row of the best tier)
+  and the agent `done=` noticer (`noticing_test`, the tier, then strength).
+  The headline and the JSON summary always come from the same tier, though
+  the headline can name a weaker row of that tier than the summary
+  describes; `tK=` and the fix site lead with relation confidence and reach,
+  so they can name a row of another tier. The
+  TypeScript/JavaScript preview row and the per-test lead row of `ripr
+  explain` keep their own rules, and editor seam actions read seam grips,
+  which carry no miss. The fix site keeps reach as its leading key
+  (#5335), so among rows of equal reach it places the row after every row
+  that can observe the change, and places a `no_call_path` row after it,
+  because a test with no call to the changed code reaches it least of all; a
+  non-observing direct caller still outranks an observing row linked only by
+  the owner's name, import path or a fixture. The `tK=` row keeps relation
+  confidence as its leading key (#13603), so it places the row after every
+  observing row of the same confidence tier; a non-observing direct caller
+  can still outrank an observing row linked only by file location.
 - Row-owned support (#5564): the Rust annotation pass still computes boundary
   and exact-assertion presence once from the finding-wide
   `missing_discriminators` list and assigns `missing_input` or
@@ -452,10 +501,58 @@ written and must not copy these gaps.
   those gaps. Post-classification gates that asked whether any related
   test survived oracle matching use `Finding::oracle_related_tests`, which
   skips `assertion_not_observing` rows, so their decisions are unchanged.
-- Oracle rows are ranked and packed into the eight-row window exactly as
-  before; `assertion_not_observing` rows take only the slots left free, so no
-  window, fix site, exact-oracle alignment or repair readiness changes.
+- Oracle rows are ranked and packed into the eight-row window by the rules
+  below; `assertion_not_observing` rows take only the slots left free, so
+  adding them changes no window, fix site, exact-oracle alignment or repair
+  readiness.
   Fix-site selection (`DiagnosticWitness`) reads only oracle rows.
+- Within one relation-confidence tier, after diff-touched tests (#8387), a row
+  whose test calls the owner or a function the bounded caller walk says
+  reaches it ranks ahead of name order (#15026). In a single-file crate every
+  inline test is `same_test_file`, so without this the window filled with
+  name-order neighbours while tests calling the owner's wrapper were cut.
+  Matching is by called name, not type, so a common name can mark an
+  unrelated row near; that only moves it within its tier. The rule never
+  lifts a row a tier, but when a tier holds more rows than the window it
+  decides which of them fill it, so the window and what reads it (fix site,
+  exact-oracle alignment, next step) can change.
+- On an `Err`-to-`Err` variant swap (an `error_path` or `return_value`
+  probe whose paired base line and head line each hold exactly one `Err`
+  construction, with differing literal variants, and are otherwise identical
+  up to whitespace; unknown base text fails closed), a row the annotation pass marked `missing_exact_assertion`
+  whose oracle is an `assert_eq!` or `debug_assert_eq!` pinning only the `Ok` arm (an
+  `Ok(..)` side, or a direct `.unwrap()` / `.expect(..)` side; no text
+  naming `Err` and no `.err()`, `.unwrap_err()`, `.expect_err(..)` or
+  `.map_err(..)`; and the `Ok` side is the changed call's result: an
+  `Ok(..)` wrapping a call compared with a bare binding, or an unwrap of a
+  bare binding compared with a call, fails closed; an empty `()` argument
+  list is not read as a call, so a no-argument owner call in those shapes is
+  a known limit) becomes
+  `assertion_not_observing` with no `miss_support`
+  (#14454). Such a pin cannot separate one `Err` variant from another: if its
+  input reaches the changed branch it fails on old and new code alike, and if
+  not it never sees the change. A guard flip or an `Ok`-to-`Err` change is
+  not a swap, because an `Ok` pin can fail on the new code there. The row
+  keeps its role and oracle, so no class or gate changes, and the
+  exact-oracle next step never runs for a literal `Err` variant probe. The
+  pickers that name one row prefer a row that can observe the change (see
+  Current Rust conformance gaps). A changed struct field, an `assert_ne!`
+  and an `Err`-naming side keep `missing_exact_assertion`. Limits: the base
+  line comes from line pairing in the replacement block, so a guard rewritten
+  on an earlier line of the same block is not seen by this check (that guard
+  gets its own predicate finding). A test marked `#[should_panic]` keeps its
+  original annotation because an expected panic message can distinguish the
+  variant printed by `.unwrap()` or `.expect(..)`. This pass does not verify
+  that the expected substring matches either variant.
+  A weak `assert!(matches!(f(), Ok(_)))` row with a direct owner-call
+  relation also becomes `assertion_not_observing` when the scrutinee is the
+  bare owner call with simple inputs (bindings, plain strings or decimal
+  integers). Other patterns and expressions keep their original annotation.
+  Debug assertions with no credited oracle keep their existing miss.
+  Two conservative limits also keep the original annotation:
+  `let value = f(..)?;` followed by `assert_eq!(value, expected)` needs a
+  binding traced across statements, and `.ok_or(A)?` to `.ok_or(B)?`
+  lacks the explicit paired `Err(..)` constructions this pass requires.
 - One prose owner, `output::related_test_miss`, renders the reason. The human
   digest appends it in parentheses after the related test; human-full prints
   `misses: <why>; checked <assertion>`; JSON, the context packet and MCP gap
@@ -497,6 +594,10 @@ written and must not copy these gaps.
 - `ripr explain` adds a "Why this verdict" section: every retained examined
   test with its verdict and checked assertion, what a test would need to change
   the verdict (gap classes only), and the meaning of each stop reason.
+  A refused assertion contributes the always-run assertion recipe only when its
+  row records `assertion_inert`. Rows with `assertion_admission_unproven` or
+  legacy `assertion_not_credited` leave the recipe to independently established
+  test or input evidence (#5446).
 
 ### Assertion admission prerequisite (Python, TypeScript)
 
@@ -519,8 +620,8 @@ actionability. For Python, a `conftest.py` on the test's directory chain that
 declares an `autouse` fixture, a `pytest_runtest_*` hook or `pytest_plugins`,
 or a test-item hook (`pytest_collection_modifyitems` and similar), or that imports names from any module outside a short standard-library list (the name may be an autouse fixture or hook), builds an autouse fixture decorator, aliases the fixture decorator or an external fixture, star-imports or imports relatively, passes `**options` to `fixture`, or that could not be read, withholds `extraction_complete_no_assertion` from
 every test in its scope (#6657). For the Python `no_assertion` miss a conftest that declares any fixture or `pytest_*` hook, or has a top-level call, taints every test below it as well. Remaining blind spots (dynamically registered
-plugins, plugins or `usefixtures` set in pytest ini `addopts`, TypeScript setup files; Python bare sibling modules are recorded per test and withhold the Python `no_assertion` row) are tracked in #6657
-and #6889.
+plugins, plugins or `usefixtures` set in pytest ini `addopts`, TypeScript setup files and neutrally named colocated helpers; Python bare sibling modules are recorded per test and withhold the Python `no_assertion` row) are tracked in #6657
+and #6889. TypeScript admission withholds `extraction_complete_no_assertion` for AVA's default `failWithoutAssertions`, thenable `reject` aliasing, a describe/loop parameter that shadows a production import, and a sibling test that assigns an enclosing name (#6889).
 
 ### Family-relevant assertion selection (Python)
 
@@ -555,6 +656,18 @@ assertion than the strength-only pick surfaces
 `other_behavior_assertion_passed_over`. The gap ledger never delegates either
 reason, so no repair card becomes agent-packet eligible because of this
 selection.
+
+The human `Related test` headline row is one shared display pick. The anchor
+is the first row of the best observation tier (#14483); among the rows with
+the anchor's oracle strength and tier, the first row whose test file the same
+diff changed leads, and otherwise the anchor stays, so the headline prefers a
+test file the change touched over an untouched same-strength file that sorts
+earlier (#14027). The match is by file, not by test: when the diff edits one
+test in a file, the headline can name another related test in that file that
+the diff left alone. The Python adapter writes no changed-file marks when the
+anchor itself is already in a changed file; a changed first row that ranks
+below the anchor does not suppress them (#14083). The pick moves no row, class
+or oracle strength.
 
 ### Family-relevant assertion selection (TypeScript)
 
@@ -621,7 +734,16 @@ position rules as the witness (#5527):
 1. `not_applicable`: the changed line is not a predicate.
 2. `witnessed`: a strong, pinned, family-matching assertion of this test
    observes an owner call carrying the boundary input, and its expected side
-   is live. The finding-wide witness is "some row is `witnessed`".
+   is live. The finding-wide witness is "some row is `witnessed`". An owner
+   call is spelled with the owner's name, through a namespace receiver bound
+   to the owner module, or as a bare call of a renamed import of the owner
+   (`import { applyDiscount as discount }`, `const { applyDiscount: discount }
+   = require(...)`) whose source resolves to the owner module. The aliases are
+   exactly those that give the test its `ImportAliasOwnerCall` relation, so a
+   body-local, destructured or enclosing-scope shadow of the alias is not an
+   owner call (#16452). A renamed import through a barrel the
+   resolver cannot place, and a re-export that renames the owner (`export {
+   applyDiscount as discount }`), are not owner calls here.
 3. `reached_without_discriminator`: an owner call in this test carries the
    boundary input, but no such assertion witnesses it. The input is present,
    so this is never a missing input.
@@ -663,8 +785,11 @@ position rules as the witness (#5527):
    underived boundary, a computed, absent or spread input, or an owner
    reference that is not a plain call). Never a missing input.
 
-Activation is not serialized and changes no class, stage, missing text,
-actionability or rendered output.
+Activation is not serialized. The per-row split itself changes no class,
+stage, missing text, actionability or rendered output: the finding-wide
+witness it reduces to is the RIPR-SPEC-0027 boundary witness, so only a
+change to the witness rules (such as the owner-call spellings in state 2,
+#16452) moves a class.
 
 ## Required Evidence
 
@@ -684,8 +809,9 @@ actionability or rendered output.
 
 - Changing any verdict. Whether a self-contradicting gap should become an
   unknown is RIPR-SPEC-0221's admission rule.
-- Splitting `assertion_not_credited` into proven-inert and admission-unproven
-  cases; that needs the typed admission refusal tracked by #5446 (see #5359).
+- Splitting `assertion_not_credited` for the Python, TypeScript and Perl adapters; the
+  Rust split into proven-inert and admission-unproven cases landed with the typed
+  admission refusal (#5446, #5359), and those adapters have no typed refusal.
 - Per-adapter miss mappings: the capability table states which reasons each
   adapter writes, and each producer PR owns its own column. Richer Perl reasons that need row-owned facts (#5562).
 - Any producer implementation, parser, call-graph or oracle expansion,
@@ -711,6 +837,10 @@ actionability or rendered output.
   selection beside a stronger row.
 - `crates/ripr/src/analysis/classify/reveal.rs::tests` — examined misses are
   listed and rank after matched tests.
+- `crates/ripr/src/analysis/classify/reveal.rs::tests::near_owner_rows_name_tests_that_call_the_owner_or_its_caller`,
+  `crates/ripr/src/analysis/classify/reveal.rs::tests::finalized_related_tests_lead_with_rows_near_the_owner_within_a_tier`
+  and `crates/ripr/tests/related_window_near_owner.rs::wrapper_tests_fill_the_window_before_file_only_neighbours`
+  — rows near the owner lead their tier and fill the window (#15026).
 - `crates/ripr/src/output/related_test_miss.rs::tests` — reason prose and the
   row-owned support controls (#5564): per-row boundaries, no cross-row or
   finding-wide borrowing, typed-family wording, absent support, row-order
@@ -763,7 +893,7 @@ actionability or rendered output.
 
 | Surface | Responsibility |
 | --- | --- |
-| `crates/ripr/src/domain/probe.rs` | `RelatedTestMiss`, `RelatedTest::miss`, `Finding::oracle_related_tests` |
+| `crates/ripr-contract/src/domain/probe.rs` | `RelatedTestMiss`, `RelatedTest::miss`, `Finding::oracle_related_tests` |
 | `crates/ripr/src/analysis/classify/reveal.rs` | retain examined tests; set assertion-level misses; ranking |
 | `crates/ripr/src/analysis/classifier/finding.rs` | class-level misses |
 | `crates/ripr/src/analysis/language/perl/mod.rs` | Perl v1 `observation_unconfirmed` rows |

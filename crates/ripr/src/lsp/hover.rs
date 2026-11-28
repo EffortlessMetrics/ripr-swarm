@@ -1,4 +1,6 @@
 use super::HOVER_TEXT;
+use super::actions::inspect_finding_quick_fix_offered;
+use super::client_features::ClientFeatureProfile;
 use super::position::line_span_range;
 use super::state::{AnalysisAttemptState, AnalysisHealth, AnalysisSnapshot, format_duration};
 use super::uri::{CappedArtifactRead, read_artifact_capped};
@@ -10,7 +12,6 @@ use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
     suggested_assertion_for_classified_seam, targeted_test_brief_outline_for_classified_seam,
 };
-use crate::output::evidence_record::repair_start_command_for;
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::human::{plain_observation_wording, plain_stop_condition};
 use crate::output::placeholder_assertion::fill_in_note_line;
@@ -225,7 +226,16 @@ const MAX_LINE_HOVER_FINDINGS: usize = 5;
 /// server key `diagnosticProfile` (initializationOptions or the pulled
 /// `ripr` configuration section) and `diagnostic_profile` under the `lsp`
 /// table in `ripr.toml`. `ripr.diagnosticProfile` is the VS Code settings-UI name.
-const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them with their Inspect finding quick fix.";
+const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable` diagnostic profile publishes only current `weakly_exposed`, `reachable_unrevealed` or `no_static_path` findings with a producer-backed repair route (a named missing value or check and a fix site), so these are not diagnostics. Set `diagnosticProfile` to `full` (VS Code setting `ripr.diagnosticProfile`) or `[lsp] diagnostic_profile = \"full\"` in `ripr.toml` to publish them";
+
+/// Tail of the guidance when this client is offered the Inspect finding quick
+/// fix (#13440): the same negotiated decision that gates the code action.
+const INSPECT_FINDING_OFFERED_TAIL: &str = " with their Inspect finding quick fix.";
+
+/// Tail when this client is not offered the quick fix: no executable Inspect
+/// finding quick fix is offered until the editor integration registers the
+/// `ripr.copyContext` client command.
+const INSPECT_FINDING_NOT_OFFERED_TAIL: &str = ". This client did not advertise the `ripr.copyContext` command, so no executable Inspect finding quick fix is offered; the quick fix needs an editor integration that registers that command.";
 
 /// Hover for a position with no published diagnostic but with snapshot
 /// findings on its line — the findings the code lens on that line summarizes.
@@ -235,6 +245,7 @@ const ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE: &str = "The `actionable`
 pub(super) fn line_findings_hover_response(
     findings: &[&Finding],
     profile: LspDiagnosticProfile,
+    client_features: &ClientFeatureProfile,
 ) -> Hover {
     let mut lines = vec![
         "**ripr** no published diagnostic at this position".to_string(),
@@ -245,7 +256,14 @@ pub(super) fn line_findings_hover_response(
         ),
     ];
     if profile == LspDiagnosticProfile::Actionable {
-        lines.push(ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE.to_string());
+        let tail = if inspect_finding_quick_fix_offered(client_features) {
+            INSPECT_FINDING_OFFERED_TAIL
+        } else {
+            INSPECT_FINDING_NOT_OFFERED_TAIL
+        };
+        lines.push(format!(
+            "{ACTIONABLE_PROFILE_UNPUBLISHED_FINDINGS_GUIDANCE}{tail}"
+        ));
     } else {
         lines.push(
             "They have no published diagnostic under the current severity configuration."
@@ -258,7 +276,8 @@ pub(super) fn line_findings_hover_response(
             "### `{}` {} `{}`",
             finding.class.as_str(),
             finding.probe.family.as_str(),
-            finding.probe.expression
+            // #14420: a head-only arm names its result (`Size::Medium => 450`).
+            crate::output::flow_sink_line::with_arm_result(finding, &finding.probe.expression)
         ));
         lines.push(format!("Finding: `{}`", finding.id));
         lines.extend([
@@ -749,8 +768,19 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         {
             witness.explain_command = command.to_string();
         }
+        // #14420: a head-only arm names the result the flow model read on its
+        // line (`Size::Medium => 450`), the value a test must pin. Hover text
+        // only: the diagnostic's data and identity keep the head.
+        if let std::borrow::Cow::Owned(joined) =
+            crate::output::flow_sink_line::with_arm_result(finding, &witness.changed_expression)
+        {
+            witness.changed_expression = joined;
+        }
         push_diagnostic_witness(&mut lines, &witness);
         let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
+        // A blank line ends the witness list; without it Markdown folds this
+        // line into the last bullet (#14464).
+        lines.push(String::new());
         lines.push(format!(
             "**Fix instruction:** {}",
             fix_instruction_label(&summary)
@@ -846,6 +876,9 @@ fn push_diagnostic_witness(lines: &mut Vec<String>, witness: &DiagnosticWitness)
     if let Some(before) = &witness.before {
         lines.push(format!("- before: `{before}`"));
     }
+    if let Some(condition) = &witness.before_condition {
+        lines.push(format!("- old condition: `{condition}`"));
+    }
     if let Some(after) = &witness.after {
         lines.push(format!("- after: `{after}`"));
     }
@@ -935,49 +968,41 @@ fn push_preview_actionability(lines: &mut Vec<String>, finding: &Finding) {
         return;
     };
     lines.push("## Preview Actionability".to_string());
+    // The hover is read by a person at the code. A preview finding with no
+    // complete repair packet gets one line on why, not the packet contract's
+    // state, category, route, field list and promotion criteria: those are
+    // machine fields that diagnostic `data`, check JSON and the context packet
+    // still carry in full. "Advisory only" is already in Preview Boundary
+    // (#14353).
+    if !actionability.repair_packet_ready {
+        lines.push(format!(
+            "Repair instructions for an AI agent: not ready \u{2014} {}",
+            actionability.why_not_actionable
+        ));
+        lines.push(String::new());
+        return;
+    }
     lines.push(format!("State: {}", actionability.gap_state));
     lines.push(format!(
         "Category: {}",
         actionability.actionability_category
     ));
-    lines.push(format!(
-        "Repair instructions for an AI agent: {}",
-        if actionability.repair_packet_ready {
-            "ready"
-        } else {
-            "not ready"
-        }
-    ));
+    lines.push("Repair instructions for an AI agent: ready".to_string());
     // RIPR-SPEC-0088 §PR8: relabel for the actionable case so the hover does
     // not show blocked-case "Why not actionable" / "Evidence needed" lines that
     // contradict the complete packet.
-    if actionability.repair_packet_ready {
-        lines.push(format!(
-            "Why actionable: {}",
-            actionability.why_not_actionable
-        ));
-        lines.push(format!("Repair action: {}", actionability.repair_route));
-        push_missing_actionability_fields(lines, &actionability);
-    } else {
-        lines.push(format!(
-            "Why not actionable: {}",
-            actionability.why_not_actionable
-        ));
-        lines.push(format!("Repair route: {}", actionability.repair_route));
-        push_missing_actionability_fields(lines, &actionability);
-        lines.push(format!(
-            "Evidence needed: {}",
-            actionability.evidence_needed_to_promote
-        ));
-    }
+    lines.push(format!(
+        "Why actionable: {}",
+        actionability.why_not_actionable
+    ));
+    lines.push(format!("Repair action: {}", actionability.repair_route));
+    push_missing_actionability_fields(lines, &actionability);
     lines.push("Authority: preview advisory only".to_string());
     lines.push(String::new());
 
-    // §PR8 (RIPR-SPEC-0088): when repair_packet_ready, add a "Repair packet"
-    // section with the full work-packet from the shared GapRecord projection.
-    if actionability.repair_packet_ready {
-        push_ts_repair_packet_section(lines, finding);
-    }
+    // §PR8 (RIPR-SPEC-0088): a ready packet adds a "Repair packet" section
+    // with the full work-packet from the shared GapRecord projection.
+    push_ts_repair_packet_section(lines, finding);
 }
 
 /// Push a `## Repair instructions (TypeScript preview, advisory)` hover section for
@@ -1277,10 +1302,45 @@ fn classified_seam_hover_markdown(
     lines.join("\n")
 }
 
+/// The selected new-test proposal for one seam, from the same producer route
+/// readiness the repair card and agent packet read. Admission supplies the
+/// governed inline module only when it holds the very proposal readiness
+/// selected; nothing here selects or invents a target.
+fn selected_new_test_proposal(
+    entry: &ClassifiedSeam,
+) -> Option<crate::analysis::new_test_target::SelectedProposal> {
+    use crate::analysis::new_test_target::SelectedProposal;
+    use crate::analysis::repair_route::{RepairTargetSelection, repair_packet_eligibility};
+    // Same gate as the agent packet's recommended test: a proposal the route
+    // would withhold (not repair-ready, or past the repair-packet flip) is
+    // never named here either.
+    let eligibility = repair_packet_eligibility(entry);
+    if !eligibility.eligible() || !eligibility.readiness.is_repair_ready() {
+        return None;
+    }
+    let RepairTargetSelection::Proposed(proposal) = &eligibility.readiness.target_selection else {
+        return None;
+    };
+    let admission = entry.evidence.new_test_target.as_ref();
+    if let Some(admission) = admission
+        && admission.proposal.as_ref() == Some(proposal)
+        && let Some(selected) = SelectedProposal::from_admission(admission)
+    {
+        return Some(selected);
+    }
+    Some(SelectedProposal::from_proposal(proposal))
+}
+
 fn push_test_shape(lines: &mut Vec<String>, entry: &ClassifiedSeam) {
     let outline = targeted_test_brief_outline_for_classified_seam(entry);
     lines.push(String::new());
     lines.push("## Suggested test shape".to_string());
+    // #13204: the selected new-test proposal reads from the one shared
+    // projection the repair card, agent packet and MCP also consume, so the
+    // hover never names a different target than they do.
+    if let Some(selected) = selected_new_test_proposal(entry) {
+        lines.push(format!("- proposed new test: {}", selected.statement()));
+    }
     lines.push(format!("- file: `{}`", outline.suggested_file));
     lines.push(format!("- name: `{}`", outline.suggested_name));
     if let Some(candidate) = outline.candidate_value {
@@ -1355,8 +1415,26 @@ fn push_editor_commands(
     // Only a seam `agent repair` would accept (the fail-closed repair-packet
     // flip, RIPR-SPEC-0087 §8, plus a test-surface target) names the repair
     // start; any other seam's hover stays as it was (#3906).
-    if let Some(repair) = repair_start_command_for(entry, &root) {
-        lines.push(format!("- repair (start here): `{repair}`"));
+    if let Some(repair) = super::actions::seam_repair_start_command(entry, snapshot, &root) {
+        // #13636: the start refuses a dirty production premise; name the
+        // commit step first, as the inert "Start repair" action does.
+        match super::actions::seam_start_step(&snapshot.root, &root) {
+            super::actions::SeamStartStep::Commit(commit) => {
+                lines.push(format!(
+                    "- commit first (the repair start refuses to begin while source files are uncommitted): `{commit}`"
+                ));
+                lines.push(format!("- then repair: `{repair}`"));
+            }
+            // #16381: a dirty file whose name breaks a line can be named in
+            // no printed commit, and the start refuses until it is committed.
+            super::actions::SeamStartStep::Withheld => lines.push(
+                "- repair: no start offered while a dirty file whose name holds a line break is uncommitted"
+                    .to_string(),
+            ),
+            super::actions::SeamStartStep::Runnable => {
+                lines.push(format!("- repair (start here): `{repair}`"));
+            }
+        }
     }
     lines.push(format!(
         "- packet: `{}`",
@@ -1689,7 +1767,14 @@ fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
             "Assert on the specific field or use whole-object equality.".to_string()
         }
         SeamKind::SideEffect => {
-            "Add a mock expectation, event observer, or persistence assertion.".to_string()
+            if crate::analysis::repair_route::seam_needs_collection_contents_guidance(
+                &entry.seam,
+                &entry.evidence,
+            ) {
+                crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP.to_string()
+            } else {
+                "Add a mock expectation, event observer, or persistence assertion.".to_string()
+            }
         }
         SeamKind::MatchArm => {
             "Drive an input that selects this arm and assert the result.".to_string()
@@ -1708,6 +1793,7 @@ mod seam_hover_tests {
     };
     use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
     use crate::app::Mode;
+    use crate::domain::DiscriminatorShape;
     use crate::domain::{
         Confidence, MissingDiscriminatorFact, OracleKind, OracleStrength, StageEvidence,
         StageState, ValueContext, ValueFact,
@@ -1739,6 +1825,7 @@ mod seam_hover_tests {
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
             related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
+                assertion_targets_non_function: None,
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -1774,6 +1861,8 @@ mod seam_hover_tests {
                 value: "discount_threshold (equality boundary)".to_string(),
                 reason: "observed values do not include the equality-boundary case".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             }],
             new_test_target: None,
             statically_contradicted_related_tests: 0,
@@ -1822,6 +1911,61 @@ mod seam_hover_tests {
         assert!(
             !unrecorded.contains("called on") && !unrecorded.contains("call returns"),
             "{unrecorded}"
+        );
+    }
+
+    #[test]
+    fn localized_collection_push_side_effect_hover_names_contents_check_not_mock() {
+        use crate::analysis::repair_route::COLLECTION_CONTENTS_CHECK_NEXT_STEP;
+
+        let seam = RepoSeam::new(
+            "src/lib.rs",
+            "log_line",
+            SeamKind::SideEffect,
+            5,
+            6,
+            "buf.push(msg.to_string())",
+            RequiredDiscriminator::Effect {
+                sink: "buf.push(msg.to_string())".to_string(),
+            },
+            ExpectedSink::SideEffect,
+        );
+        let evidence = TestGripEvidence {
+            seam_id: seam.id().clone(),
+            related_tests: Vec::new(),
+            reach: stage(StageState::Yes, "test reaches owner"),
+            activate: stage(StageState::Yes, "test activates change"),
+            propagate: stage(
+                StageState::Yes,
+                &format!(
+                    "Static propagation to `side_effect` sink is yes; {}",
+                    crate::analysis::test_grip_evidence::PUSHED_COLLECTION_COUNT_PINNED
+                ),
+            ),
+            observe: stage(StageState::Yes, "count read observes"),
+            discriminate: stage(StageState::Weak, "count read is weak"),
+            observed_values: Vec::new(),
+            missing_discriminators: Vec::new(),
+            new_test_target: None,
+            statically_contradicted_related_tests: 0,
+        };
+        let entry = ClassifiedSeam {
+            seam,
+            evidence,
+            class: SeamGripClass::WeaklyGripped,
+        };
+        let step = seam_next_step_for(&entry);
+        assert_eq!(step, COLLECTION_CONTENTS_CHECK_NEXT_STEP);
+        assert!(!step.contains("mock"), "{step}");
+
+        // Stage states and the push shape alone are not the repair route's
+        // precondition (#12456): without the count-pinned marker (aliased,
+        // conditional or unfollowed receiver) the mock wording stays.
+        let mut unmarked = entry;
+        unmarked.evidence.propagate = stage(StageState::Yes, "push follows to local");
+        assert_eq!(
+            seam_next_step_for(&unmarked),
+            "Add a mock expectation, event observer, or persistence assertion."
         );
     }
 
@@ -1928,13 +2072,15 @@ mod seam_hover_tests {
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
-            diagnostics_by_uri: BTreeMap::new(),
+            diagnostics_by_uri: BTreeMap::new().into(),
             diagnostic_uri_index: None,
             delivery_selection: None,
             seams_deferred: false,
+            seam_inventory_on_full_refresh: false,
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            owner_opt_out_findings: 0,
             unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
             language_view: None,
             rust_diagnostic_origins: Default::default(),
@@ -2254,6 +2400,8 @@ mod seam_hover_tests {
             value: "PricingError::Boundary".to_string(),
             reason: "no test asserts this error variant".to_string(),
             flow_sink: None,
+            shape: DiscriminatorShape::Other,
+            drafted_boundary: None,
         }];
         let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
         let md = extract_markup(&hover)?;
@@ -2288,12 +2436,16 @@ mod seam_hover_tests {
                 value: "a".to_string(),
                 reason: "input unexecuted (observation_unverified)".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
             MissingDiscriminatorFact {
                 value: "b".to_string(),
                 reason: "missing proof: `raise ValueError(\"observation_unverified\")`."
                     .to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             },
         ];
         let hover = classified_seam_hover_response(&seam, &sample_diagnostic(), None);
@@ -2424,7 +2576,7 @@ mod seam_hover_tests {
             "- name: `discounted_total_boundary_discriminator`",
             "- candidate value: `discount_threshold (equality boundary)`",
             "- assertion shape: assert_eq!(discounted_total",
-            "  (replace each /* ... */ comment with a real value from your test before using it)",
+            "  (replace each /* ... */ comment with a real value from your test before using it; the expected value is what the changed code produces now)",
         ] {
             if !md.contains(needle) {
                 return Err(format!("missing {needle:?} in:\n{md}"));
@@ -3003,7 +3155,7 @@ mod plain_hover_summary_tests {
     #[test]
     fn rewrites_producer_prose_but_not_user_source_text() {
         assert_eq!(
-            plain_hover_summary("the equality-boundary discriminator is missing"),
+            plain_hover_summary("the equality-boundary check is missing"),
             "the equality-boundary check is missing"
         );
         // Known forms that append source text: the tail stays verbatim.
@@ -3069,7 +3221,7 @@ mod plain_hover_summary_tests {
             include_str!("../analysis/classify/flow.rs"),
             include_str!("../analysis/classify/reach.rs"),
             include_str!("../analysis/classify/infection.rs"),
-            include_str!("../domain/classification.rs"),
+            include_str!("../../../ripr-contract/src/domain/classification.rs"),
         ]
         .map(|source| {
             // Cut at the real test module: producers carry earlier item-level

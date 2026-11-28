@@ -392,6 +392,60 @@ fn missing_config_detects_python_source_under_src_or_tests() -> Result<(), Strin
 }
 
 #[test]
+fn flat_python_detection_respects_explicit_configuration() -> Result<(), String> {
+    let root = temp_root("flat-python-config")?;
+    write_file(&root.join("shop.py"), "def price():\n    return 1\n")?;
+    write_file(&root.join("test_shop.py"), "from shop import price\n")?;
+    assert!(detect_python_project(&root));
+    let detected = load_for_root(&root);
+    if cfg!(feature = "lang-python") {
+        assert_eq!(
+            detected?.languages().enabled_owned(),
+            vec![LanguageId::Rust, LanguageId::Python]
+        );
+    } else {
+        assert!(detected.is_err_and(|err| err.contains("lang-python")));
+    }
+    write_file(
+        &root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\"]\n",
+    )?;
+    assert_eq!(
+        load_for_root(&root)?.languages().enabled_owned(),
+        vec![LanguageId::Rust]
+    );
+    fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+    Ok(())
+}
+
+#[test]
+fn flat_python_detection_ignores_non_source_entries() -> Result<(), String> {
+    let root = temp_root("flat-python-nonsource")?;
+    for name in [
+        "generated_client.py",
+        "service_pb2.py",
+        "README.md",
+        "app.PY",
+    ] {
+        write_file(&root.join(name), "")?;
+    }
+    fs::create_dir_all(root.join("directory.py")).map_err(|err| format!("mkdir: {err}"))?;
+    write_file(&root.join("scripts/tool.py"), "")?;
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(root.join("README.md"), root.join("linked.py"))
+        .map_err(|err| format!("symlink: {err}"))?;
+    assert!(!detect_python_project(&root));
+    assert_eq!(
+        load_for_root(&root)?.languages().enabled_owned(),
+        vec![LanguageId::Rust]
+    );
+    assert!(!detect_python_project(&root.join("missing")));
+    assert!(!detect_python_project(&root.join("README.md")));
+    fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+    Ok(())
+}
+
+#[test]
 fn missing_config_does_not_treat_empty_src_or_tests_as_python() -> Result<(), String> {
     let root = temp_root("empty-python-marker-dirs")?;
     fs::create_dir_all(root.join("src")).map_err(|err| format!("create src failed: {err}"))?;
@@ -1358,7 +1412,12 @@ cache_dir = "target/\u0000perl-facts"
         ),
     ] {
         let error = parse_config(source).expect_err("NUL cannot name a filesystem path");
-        assert_eq!(error, format!("{field} must not contain NUL characters"));
+        assert_eq!(
+            error,
+            format!(
+                "{field} must not contain NUL characters; remove the escaped NUL from the path"
+            )
+        );
         assert!(!error.contains('\0'), "diagnostics must not echo the NUL");
     }
 }
@@ -1413,6 +1472,7 @@ fn oracle_policy_rewrites_configurable_oracle_strengths() {
         snapshot_strength: OracleStrength::Strong,
         mock_expectation_strength: OracleStrength::Weak,
         broad_error_strength: OracleStrength::Medium,
+        ..OraclePolicy::default()
     };
     assert_eq!(
         policy.strength_for_kind(&OracleKind::Snapshot, OracleStrength::Medium),
@@ -1453,12 +1513,15 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
         "languages.rust.generated_file_patterns",
         "languages.rust.handwritten_files",
         "languages.python.handwritten_files",
+        "languages.python.excluded_file_patterns",
         "languages.typescript.handwritten_files",
+        "languages.typescript.excluded_file_patterns",
         "analysis.production_like_targets",
         "analysis.test_harnesses",
         "oracles.broad_error_strength",
         "oracles.mock_expectation_strength",
         "oracles.snapshot_strength",
+        "overrides.oracles",
         "perl.cache_dir",
         "perl.executable",
         "perl.producer",
@@ -1502,9 +1565,12 @@ fn check_artifact_identity_fields_classify_every_config_field() -> Result<(), St
         "lsp.diagnostic_profile",
         "reports.max_related_tests",
         "suppressions.path",
+        "overrides.severity",
         "profiles.bun_ub",
         "source_path",
         "source_text",
+        "workspace_crates",
+        "verification_contract_decision",
     ] {
         expected.push((name, ConfigIdentityRole::Excluded));
     }
@@ -1595,6 +1661,22 @@ fn check_artifact_config_identity_hash_tracks_finding_affecting_fields_only() ->
     let severity_changed = tests_only_parse("[severity.findings]\nexposed = \"warning\"\n")?;
     if check_artifact_config_identity_hash(&severity_changed) != base_hash {
         return Err("severity display is render-only and must not change the identity".to_string());
+    }
+
+    // Per-crate severity overlays are render-only; oracle overlays are not.
+    let severity_override = tests_only_parse(
+        "[[overrides]]\npath = \"crates/alpha/**\"\nseverity.findings.exposed = \"warning\"\n",
+    )?;
+    if check_artifact_config_identity_hash(&severity_override) != base_hash {
+        return Err(
+            "overrides.severity is render-only and must not change the identity".to_string(),
+        );
+    }
+    let oracle_override = tests_only_parse(
+        "[[overrides]]\npath = \"crates/alpha/**\"\noracles.snapshot_strength = \"strong\"\n",
+    )?;
+    if check_artifact_config_identity_hash(&oracle_override) == base_hash {
+        return Err("overrides.oracles must change the config identity".to_string());
     }
 
     // A render-only change (reports bound) does NOT change it either.
@@ -1698,6 +1780,7 @@ proptest! {
                 timeout_ms: Some(timeout_ms),
                 cache_dir: Some(cache_dir),
             }),
+            overrides: None,
         };
 
         let serialized = match toml::to_string(&raw) {
@@ -2731,7 +2814,8 @@ fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String
             "Windows UNC verbatim form must render its plain spelling: {unc_windows}"
         ));
     }
-    let notice = crate::core_error::CoreError::config_invalid(windows.clone()).refusal_notice();
+    let notice = crate::core_error::CoreError::config_invalid(windows.clone())
+        .refusal_notice(&crate::config::config_error_summary);
     if notice.message != expected_prefix {
         return Err(format!(
             "JSON refusal message must be the cleaned first line, got: {}",
@@ -2744,7 +2828,8 @@ fn config_load_parse_error_strips_windows_verbatim_prefix() -> Result<(), String
             notice.message
         ));
     }
-    let unix_notice = crate::core_error::CoreError::config_invalid(unix).refusal_notice();
+    let unix_notice = crate::core_error::CoreError::config_invalid(unix)
+        .refusal_notice(&crate::config::config_error_summary);
     if unix_notice.message
         != format!("{verbatim}: invalid ripr.toml: TOML parse error at line 4, column 2")
     {
@@ -3125,5 +3210,226 @@ fn large_path_lists_parse_in_linear_time_and_still_reject_duplicates() -> Result
     .err()
     .ok_or("duplicate pattern must be rejected")?;
     assert!(error.contains("`gen17/**/*.rs` more than once"), "{error}");
+    Ok(())
+}
+
+#[test]
+fn verification_contract_compiles_parsed_harness_registrations() -> Result<(), String> {
+    let source = r#"
+[[analysis.test_harnesses]]
+registration_id = "mimic-suite"
+target = "tests/mimic.rs"
+kind = "custom_harness"
+adapter = "libtest_mimic_v1"
+marker = "libtest_mimic"
+"#;
+    let config = parse_config(source)?;
+    let decision = verification_contract::compile_repository_verification_contract(
+        verification_contract::VerificationContractCompileInput {
+            repository_root: Path::new("."),
+            ripr_toml_path: Some(Path::new("ripr.toml")),
+            ripr_toml_content_digest: Some("sha256:integration-test".to_string()),
+            config: &config,
+        },
+    );
+    if decision.contract.declarations.len() != 1 {
+        return Err(format!(
+            "expected one harness declaration, got {}",
+            decision.contract.declarations.len()
+        ));
+    }
+    Ok(())
+}
+
+/// #14310: git stores symbolic links, so a clone can deliver `ripr.toml` as a
+/// link to any file on the machine. A parse error quotes the offending line,
+/// so the target must not be read at all. The refusal is one fixed sentence:
+/// it names the entry, and carries neither the target's path nor its content.
+#[cfg(unix)]
+#[test]
+fn config_link_leaving_the_repository_is_refused_before_it_is_read() -> Result<(), String> {
+    const SENTINEL: &str = "canary-outside-content-14310";
+    let outside = temp_root("link-escape-outside-zq")?;
+    let outside_name = outside
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("outside name")?
+        .to_string();
+    let private = outside.join("private-zq.txt");
+    write_file(&private, &format!("TOKEN={SENTINEL}\n"))?;
+    let repo = temp_root("link-escape-repo")?;
+    fs::create_dir_all(repo.join(".git")).map_err(|err| format!("create .git: {err}"))?;
+    let member = repo.join("member");
+    fs::create_dir_all(&member).map_err(|err| format!("create member: {err}"))?;
+
+    // Control: read directly, the same content is quoted by the parse error.
+    write_file(&repo.join("ripr.toml"), &format!("TOKEN={SENTINEL}\n"))?;
+    let quoted = match load_for_root(&repo) {
+        Ok(_) => return Err("control: expected a parse error".to_string()),
+        Err(error) => error,
+    };
+    assert!(quoted.contains(SENTINEL), "{quoted}");
+    fs::remove_file(repo.join("ripr.toml")).map_err(|err| format!("remove control: {err}"))?;
+
+    // Targets: the file, a directory, and a FIFO (opening it for reading
+    // would block, so a refusal that returns shows the target is not opened).
+    let fifo = outside.join("fifo-zq");
+    let made = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .map_err(|err| format!("mkfifo: {err}"))?;
+    assert!(made.success(), "mkfifo failed");
+    // Chains that end outside: a link to an in-repository link, and a link
+    // through an in-repository directory link.
+    std::os::unix::fs::symlink(&private, repo.join("hop.toml"))
+        .map_err(|err| format!("hop link: {err}"))?;
+    std::os::unix::fs::symlink(&outside, repo.join("hopdir"))
+        .map_err(|err| format!("hop dir link: {err}"))?;
+
+    let targets: [(&str, PathBuf); 5] = [
+        ("file", private.clone()),
+        ("directory", outside.clone()),
+        ("fifo", fifo.clone()),
+        ("link chain", repo.join("hop.toml")),
+        (
+            "linked directory",
+            repo.join("hopdir").join("private-zq.txt"),
+        ),
+    ];
+    let entries: [(&str, &Path, PathBuf); 3] = [
+        ("root entry", &repo, repo.join("ripr.toml")),
+        ("ancestor entry", &member, repo.join("ripr.toml")),
+        ("member entry", &member, member.join("ripr.toml")),
+    ];
+    for (target_label, target) in &targets {
+        for (entry_label, root, entry) in &entries {
+            let label = format!("{target_label} via {entry_label}");
+            std::os::unix::fs::symlink(target, entry)
+                .map_err(|err| format!("{label}: symlink failed: {err}"))?;
+            let outcome = load_for_root_failure(root);
+            fs::remove_file(entry).map_err(|err| format!("{label}: remove link: {err}"))?;
+            let error = match outcome {
+                Ok(_) => return Err(format!("{label}: expected a refusal, got a config")),
+                Err(ConfigLoadFailure::Read(error)) => error,
+                Err(ConfigLoadFailure::Parse { .. }) => {
+                    return Err(format!("{label}: the target was read and parsed"));
+                }
+            };
+            for leaked in [SENTINEL, "private-zq", "fifo-zq", outside_name.as_str()] {
+                assert!(!error.contains(leaked), "{label}: `{leaked}` in {error}");
+            }
+            assert!(
+                error.contains(CONFIG_LINK_LEAVES_REPOSITORY),
+                "{label}: {error}"
+            );
+            assert!(error.contains("ripr.toml"), "{label}: {error}");
+        }
+    }
+    let _ = fs::remove_dir_all(&repo);
+    let _ = fs::remove_dir_all(&outside);
+    Ok(())
+}
+
+/// #14310: a link that cannot be resolved keeps the existing loud read error
+/// (#5304), and an absent entry keeps the built-in defaults.
+#[cfg(unix)]
+#[test]
+fn unresolvable_config_links_and_absent_entries_keep_their_contracts() -> Result<(), String> {
+    let repo = temp_root("link-escape-unresolvable")?;
+    fs::create_dir_all(repo.join(".git")).map_err(|err| format!("create .git: {err}"))?;
+    assert!(load_for_root(&repo)?.source_path().is_none());
+    for (label, target) in [
+        ("dangling outside", "/no-such-dir-14310/none.toml"),
+        ("loop", "ripr.toml"),
+    ] {
+        std::os::unix::fs::symlink(target, repo.join("ripr.toml"))
+            .map_err(|err| format!("{label}: symlink failed: {err}"))?;
+        let outcome = load_for_root(&repo);
+        fs::remove_file(repo.join("ripr.toml")).map_err(|err| format!("{label}: {err}"))?;
+        let error = match outcome {
+            Ok(_) => return Err(format!("{label}: expected an error, got a config")),
+            Err(error) => error,
+        };
+        assert!(error.starts_with("read "), "{label}: {error}");
+        assert!(
+            !error.contains(CONFIG_LINK_LEAVES_REPOSITORY),
+            "{label}: {error}"
+        );
+    }
+    let _ = fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// #14310 control: a `ripr.toml` link whose target stays inside the
+/// repository still loads, from the root and from a member directory.
+#[cfg(unix)]
+#[test]
+fn config_link_inside_the_repository_still_loads() -> Result<(), String> {
+    let repo = temp_root("link-inside-repo")?;
+    fs::create_dir_all(repo.join(".git")).map_err(|err| format!("create .git: {err}"))?;
+    let member = repo.join("member");
+    fs::create_dir_all(&member).map_err(|err| format!("create member: {err}"))?;
+    let shared = repo.join("shared").join("ripr.shared.toml");
+    write_file(&shared, "[analysis]\nmode = \"deep\"\n")?;
+
+    for (label, root, entry) in [
+        ("root entry", &repo, repo.join("ripr.toml")),
+        ("member entry", &member, member.join("ripr.toml")),
+    ] {
+        std::os::unix::fs::symlink(&shared, &entry)
+            .map_err(|err| format!("{label}: symlink failed: {err}"))?;
+        let loaded = load_for_root(root);
+        fs::remove_file(&entry).map_err(|err| format!("{label}: remove link: {err}"))?;
+        let config = loaded.map_err(|error| format!("{label}: {error}"))?;
+        assert!(
+            config.analysis().mode().is_some(),
+            "{label}: mode not loaded"
+        );
+    }
+    let _ = fs::remove_dir_all(&repo);
+    Ok(())
+}
+
+/// #14310: with no `.git` entry above it, the tree is the link's own
+/// directory, so a link to a sibling directory is refused and a link beside
+/// its target loads.
+#[cfg(unix)]
+#[test]
+fn config_link_without_a_repository_marker_is_bounded_by_its_own_directory() -> Result<(), String> {
+    let base = temp_root("link-no-marker")?;
+    let tree = base.join("tree");
+    let sibling = base.join("sibling");
+    write_file(&sibling.join("other.toml"), "[analysis]\nmode = \"deep\"\n")?;
+    write_file(&tree.join("local.toml"), "[analysis]\nmode = \"deep\"\n")?;
+
+    std::os::unix::fs::symlink(sibling.join("other.toml"), tree.join("ripr.toml"))
+        .map_err(|err| format!("symlink failed: {err}"))?;
+    let refused = load_for_root(&tree);
+    fs::remove_file(tree.join("ripr.toml")).map_err(|err| format!("remove link: {err}"))?;
+    // The bound is the nearest enclosing `.git` entry. Cargo can place the
+    // temporary directory inside a checkout, and then the sibling is inside
+    // that repository and loads; with no marker above, the link's own
+    // directory is the bound and the sibling is refused.
+    let enclosing_marker = base
+        .ancestors()
+        .any(|ancestor| fs::symlink_metadata(ancestor.join(".git")).is_ok());
+    match (enclosing_marker, refused) {
+        (true, Ok(config)) => assert!(config.analysis().mode().is_some()),
+        (false, Err(error)) => {
+            assert!(error.contains(CONFIG_LINK_LEAVES_REPOSITORY), "{error}");
+        }
+        (marker, outcome) => {
+            return Err(format!(
+                "sibling link: enclosing marker {marker}, loaded {}",
+                outcome.is_ok()
+            ));
+        }
+    }
+
+    std::os::unix::fs::symlink("local.toml", tree.join("ripr.toml"))
+        .map_err(|err| format!("symlink failed: {err}"))?;
+    let loaded = load_for_root(&tree);
+    let _ = fs::remove_dir_all(&base);
+    assert!(loaded?.analysis().mode().is_some());
     Ok(())
 }

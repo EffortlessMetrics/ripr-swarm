@@ -30,6 +30,7 @@ fn status_and_refresh_advertise_committed_scope_variants() -> Result<(), String>
                 "type": "string",
                 "pattern": "^(committed (default-branch diff|diff against base .+)|saved tracked-worktree diff against (the default branch|base .+))$"
             },
+            "analyzed_base": { "type": "string", "minLength": 1 },
             "uncommitted_edits": {
                 "type": "string",
                 "enum": ["outside this analysis", "saved tracked edits included"]
@@ -119,7 +120,14 @@ fn status_and_refresh_advertise_committed_scope_variants() -> Result<(), String>
             std::fs::write(root.join("ripr.toml"), "[broken\n")
                 .map_err(|error| error.to_string())?;
         }
-        let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), timeout)?;
+        // Explicit committed input: an omitted source would read the tracked
+        // state's saved edits (#13096), and these are the committed variants.
+        let refresh = session.call_tool(
+            "refresh",
+            "ripr_refresh",
+            json!({ "source": "committed" }),
+            timeout,
+        )?;
         let refresh = structured_tool_success(&refresh, "refresh")?;
         let status = session.call_tool("status", "ripr_workspace_status", json!({}), timeout)?;
         let status = structured_tool_success(&status, "status")?;

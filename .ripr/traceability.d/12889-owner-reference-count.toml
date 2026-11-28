@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0001"
+tests = [
+  "crates/ripr/src/analysis/syntax/owner_pin/slice_table.rs::tests::plain_data_definitions_preserve_reference_completeness",
+  "crates/ripr/src/analysis/syntax/owner_pin/slice_table.rs::tests::data_definitions_do_not_relax_unresolved_semantics",
+  "crates/ripr/tests/slice_direct_calls.rs::plain_error_type_keeps_direct_reference_guard",
+  "crates/ripr/tests/literal_length_boundary.rs::plain_error_type_keeps_literal_reference_guard",
+]
+code = ["crates/ripr/src/analysis/syntax/owner_pin/slice_table.rs"]

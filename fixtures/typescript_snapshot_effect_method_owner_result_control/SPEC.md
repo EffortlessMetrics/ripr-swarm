@@ -27,6 +27,13 @@ only as `box.<member>(..)`, and the asserted subject is the whole result of the
 method call, so the snapshot confirms the effect seam and it reads `exposed`
 (RIPR-SPEC-0258 rule 3).
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.ts:typescript_preview:322bd6d3 -> exposed
+```
+
 ## Must Not
 
 - Refuse a method owner's result because it is called on a receiver.

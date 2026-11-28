@@ -43,10 +43,21 @@ treated as observing a different sink. Companion unit tests pin the inverse: an
 oracle that observes the changed key's value (`["port"] == 9090`) or the whole dict
 stays `exposed`.
 
+The repair guidance names the changed key: the missing check is `port == 9090`,
+never the sibling `host == "localhost"` the test already asserts (#13630).
+
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_conf.py:python_preview:932c667d -> weakly_exposed
+```
+
 ## Must Not
 
 - Credit `exposed` when the only strong oracle observes a sibling dict key (or an
   aggregate) of a localized dict-literal change.
 - Regress dict/field fixtures whose oracle observes the changed key or the whole
   result (e.g. `python_field_assignment_shape`, `python_model_field_repair_gap`).
+- Name the asserted unchanged sibling (`host`) as the missing check.
 - Run any Python runtime; static preview evidence only.

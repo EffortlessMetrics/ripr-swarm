@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub trait Shape {
+     fn area(&self) -> u32 {
+-        self.base() * 2
++        self.base() * 2 + 1
+     }
+ 
+     fn base(&self) -> u32;

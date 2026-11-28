@@ -1,8 +1,7 @@
 //! Cache payload tamper/recovery corpus contract (#4515, #4507).
 //!
 //! The exact-candidate runner and evidence packet emission remain follow-up
-//! work under the shared #4510 harness. This module owns the manifest schema,
-//! offline validation, and fixture-contract registration only.
+//! work under the shared `exact_candidate_harness` module (#4510). This module owns the manifest schema,
 
 use std::path::{Path, PathBuf};
 
@@ -70,6 +69,20 @@ pub(crate) enum ExactCandidateExecution {
     Failed,
 }
 
+impl ExactCandidateExecution {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::NotRun => "not_run",
+            Self::Passed => "passed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+fn exact_candidate_not_run_label() -> &'static str {
+    ExactCandidateExecution::NotRun.label()
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct FamilyRow {
     pub(crate) id: String,
@@ -116,6 +129,63 @@ pub(crate) fn load_committed_corpus() -> Result<Corpus, String> {
 }
 
 pub(crate) fn validate_corpus(corpus: &Corpus) -> Result<(), String> {
+    if exact_candidate_not_run_label()
+        != crate::exact_candidate_harness::model::HarnessExecutionState::NotRun.as_str()
+    {
+        return Err(
+            "exact_candidate_execution::NotRun must stay aligned with the #4510 harness"
+                .to_string(),
+        );
+    }
+    let zero_executed = crate::exact_candidate_harness::model::SubjectCounts {
+        selected: 1,
+        executed: 0,
+        passed: 0,
+        failed: 0,
+        skipped: 1,
+    };
+    let (aggregate, reasons) = crate::exact_candidate_harness::packet::aggregate_packet(
+        &zero_executed,
+        &[],
+        &[],
+        "removed",
+    );
+    if aggregate == crate::exact_candidate_harness::model::Aggregate::Passed
+        || !reasons
+            .iter()
+            .any(|reason| reason.contains("zero executed"))
+    {
+        return Err("exact-candidate harness must refuse zero executed rows".to_string());
+    }
+    if crate::exact_candidate_harness::packet::subject_counts(&[]).selected != 0 {
+        return Err("harness subject counter must start empty".to_string());
+    }
+    let sanity = crate::exact_candidate_harness::model::CandidateProofPacket {
+        schema: crate::exact_candidate_harness::model::SCHEMA,
+        candidate: crate::exact_candidate_harness::model::BinaryIdentity {
+            path: String::new(),
+            bytes: 0,
+            sha256: String::new(),
+            reported_version: String::new(),
+            path_resolution: String::new(),
+        },
+        host: crate::exact_candidate_harness::model::HostIdentity {
+            os: String::new(),
+            arch: String::new(),
+            family: String::new(),
+        },
+        environment_boundary: Vec::new(),
+        counts: zero_executed.clone(),
+        rows: Vec::new(),
+        controls: Vec::new(),
+        aggregate: crate::exact_candidate_harness::model::Aggregate::Failed,
+        aggregate_reasons: reasons.clone(),
+        non_claims: Vec::new(),
+        digest: String::new(),
+    };
+    if crate::exact_candidate_harness::packet::packet_digest(&sanity)?.is_empty() {
+        return Err("harness packet digest must be nonempty".to_string());
+    }
     if corpus.schema_version != CORPUS_SCHEMA {
         return Err(format!(
             "schema_version must be {CORPUS_SCHEMA}, got {}",

@@ -10,26 +10,41 @@ use std::time::{Duration, Instant};
 
 const IDS: usize = 32;
 const ID_BYTES: usize = 128;
-const HEADER_BYTES: usize = 128;
+const RAW_V10_HEADER_BYTES: usize = 128;
+const RAW_V11_HEADER_BYTES: usize = 152;
 const ID_BLOCK_BYTES: usize = 8192;
 const JSON_BYTES: usize = 32768;
 const ROOTS: [&str; 4] = ["debug", "debug/deps", "release", "release/deps"];
 
-// LLVM 22 raw64 version 10: 16 u64 header fields, followed by length-prefixed
-// binary IDs padded to eight bytes. Unknown layouts stay explicitly unavailable.
+fn raw_layout(version: u64) -> std::result::Result<(usize, &'static str), &'static str> {
+    match version {
+        10 => Ok((RAW_V10_HEADER_BYTES, "llvm_raw64_le_v10")),
+        11 => Ok((RAW_V11_HEADER_BYTES, "llvm_raw64_le_v11")),
+        _ => Err("unsupported_raw_version"),
+    }
+}
+
+// Raw64 v10 has 16 u64 header fields; v11 has 19 after uniform-counter additions
+// (LLVM ab95a8e7bb519a91abdfa5722ec40c0e0909f8f4). Both place length-prefixed
+// binary IDs padded to eight bytes immediately after the complete header.
+// Unknown versions and variant flags stay explicitly unavailable.
 // compiler-rt's Linux writer emits GNU NT_GNU_BUILD_ID descriptors from PT_NOTE.
 pub(super) fn profile_ids(prefix: &[u8]) -> Value {
     let mut ids = Vec::new();
+    let mut layout = None;
     let mut parse = || -> std::result::Result<(), &'static str> {
-        if prefix.len() < HEADER_BYTES {
+        if prefix.len() < RAW_V10_HEADER_BYTES {
             return Err("truncated_header");
         }
         if prefix[..8] != [0x81, 0x72, 0x66, 0x6f, 0x72, 0x70, 0x6c, 0xff] {
             return Err("unsupported_magic");
         }
-        // Keep the full version visible; only the known layout is admitted.
-        if u64le(prefix, 8).map_err(|_error| "truncated_field")? != 10 {
-            return Err("unsupported_raw_version");
+        // Match the full version, including any unsupported variant flags.
+        let (header_bytes, name) =
+            raw_layout(u64le(prefix, 8).map_err(|_error| "truncated_field")?)?;
+        layout = Some(name);
+        if prefix.len() < header_bytes {
+            return Err("truncated_header");
         }
         let size = usize::try_from(u64le(prefix, 16).map_err(|_error| "truncated_field")?)
             .map_err(|_error| "id_block_limit")?;
@@ -37,7 +52,7 @@ pub(super) fn profile_ids(prefix: &[u8]) -> Value {
             return Err("id_block_limit");
         }
         let block = prefix
-            .get(HEADER_BYTES..HEADER_BYTES.checked_add(size).ok_or("id_block_limit")?)
+            .get(header_bytes..header_bytes.checked_add(size).ok_or("id_block_limit")?)
             .ok_or("truncated_id_block")?;
         let mut at = 0;
         while at < block.len() {
@@ -61,7 +76,7 @@ pub(super) fn profile_ids(prefix: &[u8]) -> Value {
     };
     match parse() {
         Ok(()) => {
-            json!({"status": "available", "ids": ids, "layout": "llvm_raw64_le_v10"})
+            json!({"status": "available", "ids": ids, "layout": layout})
         }
         Err(reason) if ids.is_empty() => json!({
             "status": "unavailable",
@@ -74,7 +89,7 @@ pub(super) fn profile_ids(prefix: &[u8]) -> Value {
             "truncated": reason.contains("limit") || reason.contains("truncated"),
             "reason": reason,
             "ids": ids,
-            "layout": "llvm_raw64_le_v10"
+            "layout": layout
         }),
     }
 }
@@ -364,7 +379,7 @@ mod elf {
         let mut data = false;
         let mut counters = false;
         let mut note = None;
-        for section in table.chunks_exact(64) {
+        for section in table.as_chunks::<64>().0 {
             let at =
                 usize::try_from(u32le(section, 0)?).map_err(|_error| "invalid_section_name")?;
             let tail = names.get(at..).ok_or("invalid_section_name")?;
@@ -396,7 +411,7 @@ mod elf {
             return Err("not_profile_instrumented".into());
         }
         let (offset, length) = note.ok_or("build_id_unavailable")?;
-        if !programs.chunks_exact(56).any(|segment| {
+        if !programs.as_chunks::<56>().0.iter().any(|segment| {
             u32le(segment, 0).ok() == Some(4)
                 && u64le(segment, 8).ok().is_some_and(|start| start <= offset)
                 && u64le(segment, 8)

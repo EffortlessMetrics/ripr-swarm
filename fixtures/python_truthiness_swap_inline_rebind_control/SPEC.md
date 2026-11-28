@@ -18,6 +18,13 @@ predicate with `x == 0`, where the old and the new predicate disagree.
 The finding stays `exposed`: the swap rule treats an assignment after a
 condition's `:` as a rebinding and keeps the existing verdict.
 
+The expected static class per finding (machine-checked against
+`expected/check.json` by `check-fixture-contracts`, #12928):
+
+```expected-classes
+probe:src_lib.py:python_preview:fc6faa73 -> exposed
+```
+
 ## Must Not
 
 Demote the finding to `weakly_exposed` from the call arguments alone when the

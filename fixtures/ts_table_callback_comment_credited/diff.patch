@@ -1,0 +1,33 @@
+diff --git a/src/lineNote.ts b/src/lineNote.ts
+index 0000000..1111111 100644
+--- a/src/lineNote.ts
++++ b/src/lineNote.ts
+@@ -1,5 +1,5 @@
+ export function lineNote(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/blockNote.ts b/src/blockNote.ts
+index 0000000..1111111 100644
+--- a/src/blockNote.ts
++++ b/src/blockNote.ts
+@@ -1,5 +1,5 @@
+ export function blockNote(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";
+diff --git a/src/trailingNote.ts b/src/trailingNote.ts
+index 0000000..1111111 100644
+--- a/src/trailingNote.ts
++++ b/src/trailingNote.ts
+@@ -1,5 +1,5 @@
+ export function trailingNote(points: number): string {
+-    if (points > 1000) {
++    if (points >= 1000) {
+         return "gold";
+     }
+     return "silver";

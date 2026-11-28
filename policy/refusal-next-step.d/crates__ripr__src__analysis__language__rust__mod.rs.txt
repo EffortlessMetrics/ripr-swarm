@@ -1,0 +1,3 @@
+crates/ripr/src/analysis/language/rust/mod.rs|failed to read {}: {err}
+crates/ripr/src/analysis/language/rust/mod.rs|open Rust source tracking probe failed: {error}
+crates/ripr/src/analysis/language/rust/mod.rs|partial_budget_invalid: {err}

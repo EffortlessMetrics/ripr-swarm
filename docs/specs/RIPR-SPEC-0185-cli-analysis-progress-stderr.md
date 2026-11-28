@@ -18,6 +18,8 @@ Linked issues:
 - #4957 — time-based heartbeat cadence so long walks never go silent
 - #5019 — pilot (primary first-run command) joins the same stderr stream
 - #10727 — `ripr pilot -v` prints a per-stage timing table on stderr
+- #8643 — default stderr projects honest seam `processed_<n>_of_<total>` on
+  repo-inventory walks (not only under `RIPR_REPO_EXPOSURE_LATENCY_TRACE`)
 - #2608 — parent shared progress contract (not closed here)
 - #4829 — live producer-owned progress events (PR A; this slice consumes that
   contract and does not replace it)
@@ -49,21 +51,33 @@ second stage vocabulary.
    `AnalysisProgressEvent` records at actual boundaries: `loading_input`,
    `analyzing`, `building_output`, and one terminal `completed`,
    `cancelled`, or `failed`. Counters stay `None` until the producer has an
-   honest denominator. Elapsed time is observational and is not analysis
-   identity.
+   honest denominator. A repo-inventory evidence walk that knows how many
+   seams it will evaluate reports that pair on further `analyzing` events as
+   `completed_units` / `total_units` (#8643). Elapsed time is observational
+   and is not analysis identity.
 2. The CLI projects those events onto stderr only:
    `ripr progress: <stage> [<scope>]` and, while a stage stays active,
    `ripr progress: <stage> still active after <elapsed class>`.
-   `ripr pilot` projects the same producer-owned stream at repo scope while
-   its repo inventory runs, including the cold-cache deadline extension, so the
-   primary first-run command is never minutes of unexplained silence
-   (#5019). Pilot adds no stage vocabulary of its own.
+   When both counters are present, those lines also include
+   `processed_<n>_of_<total>` (no slash, percent, or ETA). Heartbeats repeat
+   the last honest pair. `ripr pilot` projects the same producer-owned stream
+   at repo scope while its repo inventory runs, including the cold-cache
+   deadline extension, so the primary first-run command is never minutes of
+   unexplained silence (#5019). Pilot adds no stage vocabulary of its own.
 3. Non-TTY / CI lines are newline-delimited and contain no ANSI or carriage
    returns. A TTY may reuse one line, pads overwrites to the longest prior
    progress line, and stays silent below a 250ms minimum-duration threshold.
    A TTY stage that remains active past that threshold becomes visible even
    if the producer event arrived during the silence window.
-4. Heartbeats repeat only the current producer stage, start after 2s, and are
+   A non-TTY stream holds its stage lines and the `completed` terminal for the
+   first 2s (`non_tty_hold`), so a run that finishes sooner prints nothing; a
+   longer run prints the current stage once, then heartbeats as below. A failed
+   or cancelled terminal still prints, preceded by the stage in flight.
+   `RIPR_PROGRESS` removes the hold (immediate lines); `--quiet` and
+   `RIPR_QUIET` still win.
+4. Heartbeats repeat only the current producer stage, start after 2s (on a
+   held non-TTY stream, one `heartbeat_every` after the disclosed stage line,
+   about 10s into the run), and are
    time-throttled to at most one line every 8 seconds of stage activity for as
    long as the stage stays active (#4957). There is no per-run count ceiling on
    the STANDARD policy, so a minutes-long repo walk never goes silent; line
@@ -136,7 +150,9 @@ second stage vocabulary.
 - A long-running `ripr pilot` fixture emits stage and heartbeat evidence on
   stderr while `pilot-summary.json` stays byte-identical with `--quiet`;
   a pilot deadline closes the progress run as `cancelled`, never
-  `completed` (#5019).
+  `completed` (#5019). The controller projects that line itself, so a
+  timed-out run ends with exactly one `cancelled [repo]` even when the
+  worker is stuck past its cancel grace (#5444).
 - `ripr pilot -v` on a fixture prints the stage table on stderr, prints no
   table without `-v`, and leaves stdout and `pilot-summary.json` bytes
   unchanged (#10727).
@@ -144,6 +160,10 @@ second stage vocabulary.
   heartbeats and show no 10s window of a minutes-long stage stays silent;
   isolate a broken writer; and show that omitting the producer
   sink leaves the observer empty.
+- Honest seam counters render as `processed_<n>_of_<total>` on the default
+  stderr stream and on heartbeats; an incomplete pair (count without a
+  total) stays unquantified; an oversized token is omitted rather than
+  rendered unsafe (#8643).
 
 ## Non-Goals
 
@@ -166,10 +186,11 @@ second stage vocabulary.
 4. `--diff` pointing at a missing file exits non-zero, prints the real error,
    projects no `failed` line (the path is input the user can fix, #9922), and
    never `completed`. An unresolvable base, unusable root, or invalid config
-   or suppression policy behaves the same, as does a `ripr context` selector
-   miss (#9244); genuine internal failures still project
-   `ripr progress: failed`.
+   or suppression policy behaves the same, as does a `ripr context` or
+   `ripr explain` selector miss (#9244, #13239); genuine internal failures
+   still project `ripr progress: failed`.
 5. A TTY run that finishes under 250ms emits no stage spray.
+5a. A non-TTY human-format run that finishes under 2s emits no progress; one past 2s prints its stage and `completed`; `RIPR_PROGRESS` forces immediate lines.
 6. A blocked analyzing stage keeps emitting heartbeats at most one per 8
    seconds of stage time; no 10s window of a minutes-long stage is silent.
    The STANDARD policy places no per-run count ceiling, so the former
@@ -188,13 +209,27 @@ second stage vocabulary.
 - `crates/ripr/src/app/progress.rs::tests::cancelled_token_through_check_emits_cancelled_not_completed`
 - `crates/ripr/src/cli/progress.rs::tests::non_tty_stage_lines_are_newline_delimited_and_path_free`
 - `crates/ripr/src/cli/progress.rs::tests::unknown_totals_never_render_as_percentage_or_eta`
+- `crates/ripr/src/cli/progress.rs::tests::known_seam_totals_render_processed_n_of_total_without_slash_or_percent`
+- `crates/ripr/src/cli/progress.rs::tests::heartbeat_repeats_last_honest_units_without_slash`
+- `crates/ripr/src/cli/progress.rs::tests::oversized_unit_token_is_omitted_rather_than_rendered_unsafe`
+- `crates/ripr/src/app/progress.rs::tests::repo_inventory_with_progress_forwards_honest_seam_units`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::evidence_for_seams_reports_honest_units_to_the_inventory_listener`
+- `crates/ripr/src/analysis/inventory_progress.rs::tests::nested_listeners_restore_the_outer_reporter`
 - `crates/ripr/src/cli/progress.rs::tests::tty_short_run_does_not_flash_completed`
 - `crates/ripr/src/cli/progress.rs::tests::tty_short_failure_still_projects_failed`
 - `crates/ripr/src/cli/progress.rs::tests::tty_and_non_tty_share_stage_tokens`
 - `crates/ripr/src/cli/progress.rs::tests::failure_terminal_never_emits_completed`
 - `crates/ripr/src/cli/progress.rs::tests::cancelled_terminal_never_emits_completed`
+- `crates/ripr/src/cli/progress.rs::tests::abandon_with_scope_closes_a_run_the_worker_never_started`
+- `crates/ripr/src/cli/commands/pilot.rs::tests::a_worker_stuck_past_the_grace_still_ends_with_one_cancelled_line`
 - `crates/ripr/src/cli/progress.rs::tests::projection_tokens_cover_the_closed_producer_vocabulary`
 - `crates/ripr/src/cli/progress.rs::tests::rendering_failure_is_isolated`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_fast_run_prints_no_progress_including_completed`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_run_past_the_hold_still_prints_stage_and_completed`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_held_stream_heartbeats_one_interval_after_disclosure`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_success_past_the_hold_between_ticks_discloses_the_stage`
+- `crates/ripr/src/cli/progress.rs::tests::non_tty_fast_failure_keeps_stage_context_before_failed`
+- `crates/ripr/src/cli/progress.rs::tests::progress_env_zeroes_the_non_tty_hold_and_only_there`
 - `crates/ripr/src/cli/progress.rs::tests::heartbeat_is_throttled_and_bounded`
 - `crates/ripr/src/cli/progress.rs::tests::standard_heartbeat_spans_long_repo_walks_without_a_ten_second_gap`
 - `crates/ripr/src/cli/progress.rs::tests::tty_suppressed_stage_becomes_visible_once_min_visible_elapses`
@@ -230,6 +265,8 @@ second stage vocabulary.
 
 - `crates/ripr/src/app/progress.rs` — closed event/sink contract
 - `crates/ripr/src/app/check.rs` — producer boundaries on the check path
+- `crates/ripr/src/analysis/inventory_progress.rs` — scoped seam-count listener
+- `crates/ripr/src/analysis/test_grip_evidence.rs` — honest evidence-walk units
 - `crates/ripr/src/cli/progress.rs` — stderr projection, heartbeat, TTY policy
 - `crates/ripr/src/cli/commands/check.rs` — `--quiet` and sink wiring
 - `crates/ripr/src/cli/commands/pilot.rs` — `--quiet` and sink wiring on the

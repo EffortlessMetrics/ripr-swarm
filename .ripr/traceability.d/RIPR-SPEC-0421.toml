@@ -1,0 +1,25 @@
+[[behavior]]
+id = "RIPR-SPEC-0421"
+name = "Cross-language edge registry loading and currentness"
+spec = "docs/specs/RIPR-SPEC-0421-cross-language-edge-registry-currentness-v1.md"
+tests = [
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::currentness_corpus_cases",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::missing_producer_registration_removes_positive_relation",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::producer_and_edge_reorder_preserves_semantic_digest_on_load",
+  "crates/ripr/src/provider_contract/cross_language_edge/tests.rs::generated_artifact_cannot_cross_bind_projects",
+]
+fixtures = [
+  "fixtures/cross-language-edge-registry-currentness-corpus/corpus.json",
+]
+code = [
+  "crates/ripr/src/provider_contract/cross_language_edge/load.rs",
+  "crates/ripr/src/provider_contract/cross_language_edge/currentness.rs",
+  "crates/ripr/src/provider_contract/cross_language_edge/movement.rs",
+  "crates/ripr/src/provider_contract/cross_language_edge/digest.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0421-cross-language-edge-registry-currentness-v1.md",
+]
+metrics = [
+  "unit_test_pass_rate",
+]

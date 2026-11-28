@@ -115,3 +115,110 @@ Updated:
 - `expected/check.json` (unchanged)
 - `expected/human-full.txt` (unchanged)
 - `expected/human.txt` (removed)
+
+## Pending — returned_comparison_rival_import (10)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (11)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (12)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (13)
+
+Reason:
+RIPR-SPEC-0108: diff-mode check no longer credits a test-local rival call as reaching the owner, so the reach summary names only genuine owner tests
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (14)
+
+Reason:
+RIPR-SPEC-0122: a Hidden row whose long reason repeats the row above prints same as above (#14308)
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — returned_comparison_rival_import (15)
+
+Reason:
+RIPR-SPEC-0108: a test whose every mention of the owner's name is a local closure or let binding of its body no longer relates by direct_owner_call (#14552)
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — returned_comparison_rival_import (16)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — returned_comparison_rival_import (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — returned_comparison_rival_import (18)
+
+Reason:
+RIPR-SPEC-0122: #15336 human-full Terms line stops claiming test reach for weakly_exposed and reachable_unrevealed
+
+Command:
+`cargo xtask goldens bless returned_comparison_rival_import --reason "..."`
+
+Updated:
+- `expected/human-full.txt`

@@ -1,0 +1,2 @@
+<!-- section: Changed -->
+- `ripr agent verify` with a `--root` that cannot be resolved now says to pass an existing directory as `--root`. `agent receipt`, `agent brief` and `agent repair` already refuse a missing root earlier with their own guidance; their later canonicalization refusals, reached when the root becomes unusable between checks, carry the same advice. A receipt artifact that cannot be hashed says to check that the file still exists and is readable, then rerun (#16019).

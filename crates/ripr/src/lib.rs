@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg_attr(not(test), deny(missing_docs))]
 //! `ripr` is a static RIPR mutation-exposure analyzer for Rust workspaces.
 //!
 //! It does not run mutants. It reads changed Rust code, creates mutation-shaped
@@ -58,10 +59,12 @@ mod stderr_guard;
 // deliberately carry the contract.
 mod analysis_outcome;
 mod atomic_file;
-mod value_origins;
+// Value-origin shells live in `ripr-contract` (ADR 0027); the crate-private
+// path `crate::value_origins` is preserved for existing consumers.
+pub(crate) use ripr_contract::value_origins;
 // Crate-internal typed error authority (#4859). Git invocation timeout is
 // the first migrated family; later slices extend this enum.
-mod core_error;
+pub(crate) use ripr_contract::core_error;
 // Bounded reads for user-named CLI file and stdin inputs (#4480).
 mod bounded_input;
 // Public application error boundary (#1986).
@@ -105,6 +108,7 @@ compile_error!(
 
 // Kept public for compatibility; prefer the crate-root re-exports for new
 // integrations.
+pub(crate) mod accepted_value;
 pub(crate) mod agent;
 #[doc(hidden)]
 pub mod analysis;
@@ -143,6 +147,7 @@ pub mod output;
 /// Exact-snapshot, read-only provider DTOs for external proof orchestrators.
 pub mod provider_contract;
 mod terminal_text;
+mod work_tree_route;
 mod workspace_status;
 
 pub use analysis::DiffScopeFilter;
@@ -206,4 +211,24 @@ pub fn set_verbose(on: bool) {
 
 pub(crate) fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed)
+}
+
+static STDERR_DIAGNOSTICS: AtomicBool = AtomicBool::new(false);
+
+/// Turn on only the stderr diagnostics of verbose mode (`RIPR_VERBOSE`).
+///
+/// The explicit `-v`/`--verbose` flag also widens some stdout screens
+/// (`doctor`, `agent card`, check JSON cache fields). An ambient environment
+/// variable must not change stdout a script or harness parses, so the
+/// environment twin sets this stderr-only level instead.
+#[doc(hidden)]
+pub fn set_stderr_diagnostics(on: bool) {
+    STDERR_DIAGNOSTICS.store(on, Ordering::Relaxed);
+}
+
+/// Whether stderr diagnostics are on: the `-v` flag or `RIPR_VERBOSE`.
+/// Readers that only write stderr use this; readers that change stdout or
+/// written artifacts keep [`is_verbose`].
+pub(crate) fn stderr_diagnostics() -> bool {
+    is_verbose() || STDERR_DIAGNOSTICS.load(Ordering::Relaxed)
 }

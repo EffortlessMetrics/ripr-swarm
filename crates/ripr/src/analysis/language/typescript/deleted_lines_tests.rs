@@ -190,6 +190,119 @@ fn even_block_leaves_no_base_side_record() -> Result<(), String> {
     Ok(())
 }
 
+/// A statement replaced by an empty statement is removed all the same: the
+/// `;` carries no behavior, so it does not stand in for the old line, and
+/// the removal is a `base_deleted` record on the live function (#15335).
+#[test]
+fn statement_replaced_by_an_empty_statement_is_base_side_evidence() -> Result<(), String> {
+    let findings = analyze(
+        "empty-statement",
+        &[
+            " const CAP = 100;",
+            " ",
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, CAP);",
+            "+  ;",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![record(5, "cappedTotal")],
+        "{findings:?}"
+    );
+    let finding = findings
+        .iter()
+        .find(|finding| finding.source_currentness.is_base_side())
+        .ok_or("no base-side finding")?;
+    assert_eq!(
+        finding.probe.before.as_deref().map(str::trim),
+        Some("total = Math.min(total, CAP);")
+    );
+    assert!(!finding.is_candidate_actionable());
+    let commented = analyze(
+        "commented-empty-statement",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, 100);",
+            "+  ; // no clamp for now",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&commented),
+        vec![record(3, "cappedTotal")],
+        "{commented:?}"
+    );
+    Ok(())
+}
+
+/// A replacement that still runs behavior keeps the pairing, a reflowed
+/// call whose last argument line becomes a bare `);` keeps it too, an
+/// initializer joined onto its declaration line leaves a blank behind but
+/// still runs, and a removed comment replaced by `;` was never behavior:
+/// none leaves a record.
+#[test]
+fn empty_statement_counterpart_needs_a_removed_behavior_line() -> Result<(), String> {
+    let reflowed = analyze(
+        "reflowed-call",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total,",
+            "-    100);",
+            "+  total = Math.min(total, 100",
+            "+  );",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&reflowed), Vec::new(), "{reflowed:?}");
+    let joined = analyze(
+        "joined-initializer",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  const cap =",
+            "-    Math.min(total, 100);",
+            "+  const cap = Math.min(total, 100);",
+            "+",
+            "   return cap;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&joined), Vec::new(), "{joined:?}");
+    let behavior = analyze(
+        "behavior-replacement",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, 100);",
+            "+  total = Math.min(total, 100) + 0;",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&behavior), Vec::new(), "{behavior:?}");
+    let comment = analyze(
+        "comment-replacement",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  // clamp to the cap",
+            "+  ;",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&comment), Vec::new(), "{comment:?}");
+    Ok(())
+}
+
 /// A whole deleted function deletes its owner; its body is not given to the
 /// function that now stands where it was.
 #[test]
@@ -1174,6 +1287,266 @@ fn deleted_nested_header_inside_a_callback_is_not_stolen() -> Result<(), String>
             .filter(|finding| finding.source_currentness.is_base_side())
             .all(|finding| !finding.is_candidate_actionable()),
         "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// #7705 residual 2: a deleted regex literal whose pattern holds `(` must
+/// stay a live-owner behavior line. The `(` is not code, so a following
+/// removed method in the same run is its own header and does not join the
+/// regex line's group.
+#[test]
+fn deleted_regex_literal_does_not_join_a_header_group() -> Result<(), String> {
+    let findings = analyze(
+        "regex-literal-paren",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  const re = /\\(/;",
+            "-  save(id: string) {",
+            "-    audit(id);",
+            "-  }",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    let regex_records = findings
+        .iter()
+        .filter(|finding| {
+            finding.source_currentness.is_base_side()
+                && finding.probe.before.as_deref().map(str::trim) == Some("const re = /\\(/;")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        regex_records.len(),
+        1,
+        "deleted regex assignment must stay on the live owner: {findings:?}"
+    );
+    assert_eq!(
+        regex_records[0].probe.owner.as_ref().map(|owner| owner
+            .0
+            .rsplit("::")
+            .next()
+            .unwrap_or_default()),
+        Some("cappedTotal"),
+        "{findings:?}"
+    );
+    let stolen = findings.iter().any(|finding| {
+        finding.source_currentness.is_base_side()
+            && finding
+                .probe
+                .before
+                .as_deref()
+                .is_some_and(|text| text.contains("save(id") || text.contains("audit(id)"))
+    });
+    assert!(
+        !stolen,
+        "regex parens joined save/audit into cappedTotal: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.source_currentness.is_base_side())
+            .all(|finding| !finding.is_candidate_actionable()),
+        "base-side records must stay non-actionable: {findings:?}"
+    );
+    Ok(())
+}
+
+/// Division is still code: `(a + b) / (c)` keeps both paren pairs and the
+/// deleted line remains base-side evidence on the live owner.
+#[test]
+fn deleted_division_expression_stays_on_the_live_owner() -> Result<(), String> {
+    let findings = analyze(
+        "division-vs-regex",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  total = (a + b) / (c);",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![record(2, "cappedTotal")],
+        "{findings:?}"
+    );
+    let finding = findings
+        .iter()
+        .find(|finding| finding.source_currentness.is_base_side())
+        .ok_or("no base-side finding")?;
+    assert_eq!(
+        finding.probe.before.as_deref().map(str::trim),
+        Some("total = (a + b) / (c);")
+    );
+    assert!(!finding.is_candidate_actionable());
+    Ok(())
+}
+
+/// A `/(` sequence inside a string is string contents, already stripped, and
+/// must not be read as a regex literal that eats the rest of the line.
+#[test]
+fn deleted_slash_inside_a_string_does_not_open_a_regex() -> Result<(), String> {
+    let findings = analyze(
+        "slash-in-string",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            r#"-  const msg = "/(/";"#,
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![record(2, "cappedTotal")],
+        "{findings:?}"
+    );
+    let finding = findings
+        .iter()
+        .find(|finding| finding.source_currentness.is_base_side())
+        .ok_or("no base-side finding")?;
+    assert_eq!(
+        finding.probe.before.as_deref().map(str::trim),
+        Some(r#"const msg = "/(/";"#)
+    );
+    assert!(!finding.is_candidate_actionable());
+    Ok(())
+}
+
+/// Code replaced by a comment was deleted. The diff pairs the comment with
+/// the removed guard, a comment is never a probe, and the guard used to
+/// leave no record at all. It is base-side evidence, as it is when nothing
+/// is added in its place.
+#[test]
+fn code_replaced_by_a_comment_is_base_side_evidence() -> Result<(), String> {
+    let block = |replacement: &[&'static str]| {
+        let mut lines = vec![
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  if (total > 100) {",
+            "-    total = 100;",
+            "-  }",
+        ];
+        lines.extend_from_slice(replacement);
+        lines.extend_from_slice(&["   return total;", " }"]);
+        lines
+    };
+    let texts = |findings: &[Finding]| {
+        let mut texts: Vec<String> = findings
+            .iter()
+            .map(|finding| {
+                format!(
+                    "{} => {:?} {:?}",
+                    finding.probe.expression.trim(),
+                    finding.source_currentness,
+                    finding.class
+                )
+            })
+            .collect();
+        texts.sort();
+        texts
+    };
+    let commented = analyze(
+        "comment-for-code",
+        &block(&["+  // The cap moved to the caller."]),
+    )?;
+    let mut recorded: Vec<String> = commented
+        .iter()
+        .filter(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+        .map(|finding| finding.probe.expression.trim().to_string())
+        .collect();
+    recorded.sort();
+    assert_eq!(
+        recorded,
+        vec!["if (total > 100) {".to_string(), "total = 100;".to_string()],
+        "{commented:?}"
+    );
+    assert!(
+        commented
+            .iter()
+            .all(|finding| finding.source_currentness.is_base_side()),
+        "a comment is no candidate finding: {commented:?}"
+    );
+    // The same deletion with nothing added reads the same.
+    let pure = analyze("comment-for-code-pure", &block(&[]))?;
+    assert_eq!(texts(&commented), texts(&pure));
+    Ok(())
+}
+
+/// A comment added beside replacement code is not a deletion: the removed
+/// line is read through the code that replaced it.
+#[test]
+fn comment_beside_replacement_code_leaves_no_base_side_record() -> Result<(), String> {
+    let findings = analyze(
+        "comment-beside-code",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, 100);",
+            "-  total = Math.max(total, 0);",
+            "+  // one clamp",
+            "+  total = Math.min(Math.max(total, 0), 100);",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A block comment in front of a statement is not a comment-only line: the
+/// statement still runs, so the removed line it replaced was not deleted.
+#[test]
+fn block_comment_before_a_statement_keeps_its_pairing() -> Result<(), String> {
+    let findings = analyze(
+        "block-comment-before-code",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  total = Math.min(total, 100);",
+            "+  /* already positive */ total = Math.min(total, 100);",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// The body rows of a block comment are comment text whatever they start
+/// with, so a multi-line comment that replaces code holds no code.
+#[test]
+fn code_replaced_by_a_multi_line_block_comment_is_base_side_evidence() -> Result<(), String> {
+    let findings = analyze(
+        "block-comment-for-code",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.reduce((sum, item) => sum + item, 0);",
+            "-  if (total > 100) {",
+            "-    total = 100;",
+            "-  }",
+            "+  /*",
+            "+   The cap moved to the caller.",
+            "+   */",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    let mut recorded: Vec<String> = findings
+        .iter()
+        .filter(|finding| finding.source_currentness == SourceCurrentness::BaseDeleted)
+        .map(|finding| finding.probe.expression.trim().to_string())
+        .collect();
+    recorded.sort();
+    assert_eq!(
+        recorded,
+        vec!["if (total > 100) {".to_string(), "total = 100;".to_string()],
+        "{findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| finding.source_currentness.is_base_side()),
+        "a comment body row is no candidate finding: {findings:?}"
     );
     Ok(())
 }

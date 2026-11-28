@@ -1,7 +1,8 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { execFileSync, spawn } from 'child_process';
-import { downloadAndUnzipVSCode, runTests } from '@vscode/test-electron';
+import { runTests } from '@vscode/test-electron';
+import { downloadVSCodeWithRetry, requireEditorDisplay, resetEditorSetupEvidence, verifyHostPrerequisites } from './hostPrerequisites';
 import { stageGenuineActionableQueue } from './actionableQueueFixture';
 import { REQUIRED_TITLE_SEPARATOR, requiredJourneyTitles } from './requiredJourneys';
 import { finalizeHostRun, resetHostLogDir, resolveUserDataDir } from './hostDiagnostics';
@@ -137,31 +138,6 @@ export function stageMultiRootWorkspace(templatePath: string, workspacePath: str
   return workspaceFile;
 }
 
-const DOWNLOAD_ATTEMPTS = 3;
-
-// The VS Code build is fetched at test time; one transient connect error
-// (ETIMEDOUT/ENETUNREACH, #5072) should not fail the whole lane. The download
-// is cached under `cachePath`; the returned executable is handed to every
-// run so none of them repeats the version lookup.
-async function downloadVSCodeWithRetry(
-  cachePath: string,
-  extensionDevelopmentPath: string
-): Promise<string> {
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
-    try {
-      return await downloadAndUnzipVSCode({ cachePath, extensionDevelopmentPath });
-    } catch (caught) {
-      lastError = caught;
-      console.warn(`VS Code download attempt ${attempt}/${DOWNLOAD_ATTEMPTS} failed: ${String(caught)}`);
-      if (attempt < DOWNLOAD_ATTEMPTS) {
-        await new Promise<void>((resolve) => setTimeout(resolve, attempt * 5000));
-      }
-    }
-  }
-  throw lastError;
-}
-
 async function runUntrustedTests(
   vscodeExecutablePath: string,
   extensionDevelopmentPath: string,
@@ -196,7 +172,29 @@ async function runUntrustedTests(
   });
 }
 
-async function main() {
+export interface TestHostRuntime {
+  downloadVSCode: typeof downloadVSCodeWithRetry;
+  stageGenuineActionableQueue: typeof stageGenuineActionableQueue;
+  verifyHostPrerequisites: typeof verifyHostPrerequisites;
+  requireEditorDisplay: typeof requireEditorDisplay;
+  runTests: typeof runTests;
+  runUntrustedTests: typeof runUntrustedTests;
+  exit: (code: number) => void;
+}
+
+const defaultTestHostRuntime: TestHostRuntime = {
+  downloadVSCode: downloadVSCodeWithRetry,
+  verifyHostPrerequisites,
+  requireEditorDisplay,
+  stageGenuineActionableQueue,
+  runTests,
+  runUntrustedTests,
+  exit: (code) => process.exit(code),
+};
+
+// Keep the real entry point testable without downloading a host or compiling
+// the producer. Ordinary invocation always uses the genuine runtime above.
+export async function main(runtime: TestHostRuntime = defaultTestHostRuntime) {
   const artifactRoot = path.resolve(
     process.env.RIPR_TEST_ARTIFACT_ROOT ??
       path.resolve(__dirname, '../../../../target/ripr')
@@ -205,6 +203,7 @@ async function main() {
   let matrixDiagnostics: { userDataDir: string; receiptPath: string } | undefined;
   let error: unknown;
   try {
+    resetEditorSetupEvidence(artifactRoot);
     resetHostLogDir(userDataPath);
     const extensionDevelopmentPath = path.resolve(
       process.env.RIPR_TEST_EXTENSION_PATH ?? path.resolve(__dirname, '../../')
@@ -227,9 +226,15 @@ async function main() {
     const clipboardCapturePath = path.join(userDataPath, 'ripr-test-clipboard.txt');
     fs.rmSync(clipboardCapturePath, { force: true });
     process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = clipboardCapturePath;
+
+    // Host acquisition can fail before a test can run. Resolve it before the
+    // genuine producer, which may compile the separate xtask test harness.
+    runtime.requireEditorDisplay(process.platform, process.env);
+    const vscodeExecutablePath = await runtime.downloadVSCode(cachePath, extensionDevelopmentPath);
+    await runtime.verifyHostPrerequisites(vscodeExecutablePath, artifactRoot);
     if (workspaceTrustMode === 'trusted' && process.env.RIPR_TEST_MULTIROOT_ONLY !== '1'
       && !process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT) {
-      process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = stageGenuineActionableQueue(
+      process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT = await runtime.stageGenuineActionableQueue(
         path.resolve(__dirname, '../../../../'), path.join(artifactRoot, `actionable-queue-${runId}`)
       );
     }
@@ -264,7 +269,6 @@ async function main() {
       );
     }
 
-    const vscodeExecutablePath = await downloadVSCodeWithRetry(cachePath, extensionDevelopmentPath);
     if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
       process.env.RIPR_TEST_REQUIRE_RAN = requiredJourneyTitles(
         workspaceTrustMode,
@@ -275,9 +279,9 @@ async function main() {
       );
     }
     if (workspaceTrustMode === 'untrusted') {
-      await runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
+      await runtime.runUntrustedTests(vscodeExecutablePath, extensionDevelopmentPath, extensionTestsPath, launchArgs);
     } else if (process.env.RIPR_TEST_MULTIROOT_ONLY !== '1') {
-      await runTests({
+      await runtime.runTests({
         vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
@@ -324,7 +328,7 @@ async function main() {
       process.env.RIPR_TEST_CLIPBOARD_CAPTURE_PATH = path.join(matrixUserData, 'clipboard.txt');
       matrixDiagnostics = { userDataDir: matrixUserData,
         receiptPath: matrixReceiptPath };
-      await runTests({
+      await runtime.runTests({
         vscodeExecutablePath,
         extensionDevelopmentPath,
         extensionTestsPath,
@@ -345,7 +349,7 @@ async function main() {
     error,
   });
   if (exitCode !== 0) {
-    process.exit(exitCode);
+    runtime.exit(exitCode);
   }
 }
 

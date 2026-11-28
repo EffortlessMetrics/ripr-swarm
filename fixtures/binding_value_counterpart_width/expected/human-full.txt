@@ -3,11 +3,12 @@ mode: fast
 root: fixtures/binding_value_counterpart_width/input
 
 Summary: 4 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 4 infection_unknown, 0 propagation_unknown, 0 static_unknown; 4 of 4 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 4 changed line(s), 2 candidate line(s), 4 changed behavior(s) checked, 4 finding(s)
@@ -55,8 +56,9 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast probe:src_lib.rs:predicate:4f4e88fc
   ripr context --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast --at probe:src_lib.rs:predicate:4f4e88fc
 
@@ -85,8 +87,9 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast probe:src_lib.rs:return_value:59f646a1
   ripr context --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast --at probe:src_lib.rs:return_value:59f646a1
 
@@ -116,8 +119,9 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see which side of the changed condition they exercise, then name an input that would exercise the other side. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast probe:src_lib.rs:predicate:cdd0dddc
   ripr context --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast --at probe:src_lib.rs:predicate:cdd0dddc
 
@@ -146,7 +150,8 @@ Stop reasons:
   - ripr could not tell whether a test input reaches a value that makes the change matter (infection_evidence_unknown)
     Next: Add a test input that reaches the changed value, such as a boundary value, then assert on the result.
 Next step
-  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown
+  - Open the related test, check whether it reaches the changed code, and inspect other existing tests. Trace their inputs through the local or computed operand (including default and empty cases) to see what the changed expression produces for each, then name an input for which the original and changed code would produce different results. ripr.toml does not support fixture/builder value mappings. Add or tighten a test only if this finds a gap; compare old and new code with the project's configured test runner (`cargo test` for ordinary Cargo tests). The static class may remain unknown
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast probe:src_lib.rs:return_value:67e13b53
   ripr context --root <cwd>/fixtures/binding_value_counterpart_width/input --diff <cwd>/fixtures/binding_value_counterpart_width/diff.patch --mode fast --at probe:src_lib.rs:return_value:67e13b53

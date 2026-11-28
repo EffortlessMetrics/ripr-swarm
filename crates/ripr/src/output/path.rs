@@ -1,8 +1,74 @@
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(test)]
+pub(crate) use ripr_contract::path_identity::path_identity_key_with;
+
+pub(crate) use ripr_contract::path_identity::{
+    host_paths_case_insensitive, path_identity_key, path_identity_key_on,
+};
+
+/// The location text a human report shows for a finding file (#15473).
+///
+/// [`crate::analysis::finding_location_text`] spells a root-relative file
+/// `./<path>`, which JSON, MCP, LSP and selectors keep as the identity.
+/// A reader who ran `ripr` from a directory below the analysis root (the
+/// implicit root walk moved up from `py/` to the repository root) cannot paste
+/// that `./` form: it names nothing under the invocation directory. When the
+/// invocation directory is strictly inside the root, the human spelling is
+/// relative to the invocation directory (`../crates/core/src/lib.rs`). At the
+/// root, with a relative root, or for a file outside the root, the text is the
+/// shared location text byte for byte.
+pub(crate) fn human_location_text(root: &Path, file: &Path) -> String {
+    let shared = crate::analysis::finding_location_text(root, file);
+    match invocation_depth_below(root) {
+        Some(depth) => relative_to_invocation_dir(&shared, depth),
+        None => shared,
+    }
+}
+
+/// Pure core of [`human_location_text`]: `depth` is how many directories the
+/// invocation directory sits below the root.
+fn relative_to_invocation_dir(shared: &str, depth: usize) -> String {
+    match shared.strip_prefix("./") {
+        Some(rest) if depth > 0 => format!("{}{rest}", "../".repeat(depth)),
+        _ => shared.to_string(),
+    }
+}
+
+/// Components between the root and the process working directory, or `None`
+/// unless the working directory is strictly below an absolute root.
+fn invocation_depth_below(root: &Path) -> Option<usize> {
+    if !root.is_absolute() {
+        return None;
+    }
+    let cwd = std::fs::canonicalize(std::env::current_dir().ok()?).ok()?;
+    let root = std::fs::canonicalize(root).ok()?;
+    let below = cwd.strip_prefix(root).ok()?;
+    let depth = below.components().count();
+    (depth > 0).then_some(depth)
+}
+
 /// Render a path with stable slash separators for JSON and Markdown output.
 pub(crate) fn display_path(path: &Path) -> String {
     display_path_for_host(&crate::analysis::stable_path_text(path), cfg!(windows))
+}
+
+/// [`display_path`] with the separator rule taken from `windows` instead of
+/// the host (see [`crate::analysis::stable_path_text_on`]).
+fn display_path_on(path: &Path, windows: bool) -> String {
+    display_path_for_host(
+        &crate::analysis::stable_path_text_on(path, windows),
+        windows,
+    )
+}
+
+/// Render a related-test or other source-file path without collapsing a literal
+/// Unix backslash into a directory separator (#7838).
+pub(crate) fn display_source_path(path: &Path) -> String {
+    display_path_for_host(
+        &crate::analysis::stable_source_path_text(path),
+        cfg!(windows),
+    )
 }
 
 /// [`display_path`] with the host explicit. A canonical Windows root is
@@ -51,117 +117,150 @@ pub(crate) fn repository_display_path(root: &Path, file: &Path) -> String {
     displayed
 }
 
-/// Whether this host's default filesystem compares path names without regard
-/// to case: Windows (NTFS) and macOS (default APFS). Linux stays
-/// case-sensitive. Assumes the default case-insensitive APFS volume on macOS.
-/// This is the single host predicate for case-folding path
-/// identity; separator and verbatim-prefix handling stays keyed on Windows.
-pub(crate) const fn host_paths_case_insensitive() -> bool {
-    cfg!(any(windows, target_os = "macos"))
+/// Where the analyzed root sits under its Git checkout's top level, for the
+/// surfaces whose consumers resolve a finding's file from that top level
+/// rather than from the invoking directory: GitHub workflow annotations
+/// (`file=` resolves against `GITHUB_WORKSPACE`) and SARIF uploads (code
+/// scanning resolves `artifactLocation.uri` against the repository root).
+///
+/// Without an anchor those surfaces print the file relative to `--root`
+/// (absolute root) or as the invoking spelling (relative root), so a run
+/// whose root is a workspace member below the top level (`--root
+/// "$PWD/crates/app"`, or `--root .` from inside `crates/app`) annotated
+/// `src/lib.rs`, a file that does not exist at the top level.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CheckoutAnchor {
+    /// The root's path below the top level (empty when the root is the top
+    /// level). `None` when no Git top level was established, for example a
+    /// `--diff` run outside any work tree: renderers then keep the
+    /// root-relative spelling of [`repository_display_path`].
+    root_prefix: Option<PathBuf>,
 }
 
-/// Whether this host's default filesystem also treats canonically equivalent
-/// Unicode spellings (NFC/NFD) of a name as one file: macOS APFS. Windows
-/// NTFS and Linux preserve the exact code points, so they stay distinct.
-pub(crate) const fn host_paths_normalization_insensitive() -> bool {
-    cfg!(target_os = "macos")
-}
+impl CheckoutAnchor {
+    /// No established top level: renderers keep their root-relative spelling.
+    pub(crate) fn unknown() -> Self {
+        Self { root_prefix: None }
+    }
 
-/// Shared owner of path-identity keys: two paths name the same file for a
-/// path-string comparator exactly when their keys are equal.
-/// `backslash_is_separator` rewrites `\` to `/` and is `true` only where `\` is
-/// a separator (Windows, or a drive/UNC spelling); on Unix `\` is an ordinary
-/// filename byte, so `a\b.rs` and `a/b.rs` stay distinct. `case_insensitive`
-/// folds case per code point, conservatively: a character folds to its
-/// lowercase only when that is a single code point that upper-cases straight
-/// back to it, so one-way folds never merge names NTFS keeps distinct: the
-/// Kelvin, Ohm and Angstrom signs, and `U+1E9E` (it lowercases to `ß`, but `ß`
-/// uppercases to `SS`, so the round trip fails). Case tables are the current
-/// Rust Unicode tables, so newer letters (Georgian Mtavruli, Cherokee small
-/// letters) fold and could over-merge on an old NTFS volume whose `$UpCase`
-/// predates them (accepted; very narrow). This
-/// can still miss equivalences the filesystem makes (e.g. `ς` vs `σ`), which
-/// only keeps files apart. On a host that also ignores normalization
-/// ([`host_paths_normalization_insensitive`], macOS) it additionally folds
-/// canonically equivalent NFC/NFD spellings through the partial table in
-/// `path_unicode`. A caller that passes `false` for both never folds.
-/// A path that is not valid UTF-8 keys on its exact encoded bytes
-/// behind a NUL marker (a path cannot contain NUL, so it cannot collide with a
-/// UTF-8 path's key) and is never folded or rewritten, so two distinct
-/// non-UTF-8 paths never collapse.
-pub(crate) fn path_identity_key_on(
-    path: &Path,
-    backslash_is_separator: bool,
-    case_insensitive: bool,
-) -> String {
-    path_identity_key_with(
-        path,
-        backslash_is_separator,
-        case_insensitive,
-        case_insensitive && host_paths_normalization_insensitive(),
-    )
-}
+    /// The root is `prefix` below the checkout top level (empty for the top
+    /// level itself).
+    pub(crate) fn below_top_level(prefix: PathBuf) -> Self {
+        Self {
+            root_prefix: Some(prefix),
+        }
+    }
 
-/// Lowercase `ch` only when the fold is a reversible single-code-point pair.
-/// `U+0130` (multi-code-point lowercase) and one-way folds (`U+212A` Kelvin,
-/// `U+1E9E`) keep their own spelling so they cannot merge with another name.
-fn conservative_lowercase(ch: char) -> char {
-    let mut lower = ch.to_lowercase();
-    let (Some(single), None) = (lower.next(), lower.next()) else {
-        return ch;
-    };
-    let mut upper = single.to_uppercase();
-    match (upper.next(), upper.next()) {
-        (Some(back), None) if back == ch => single,
-        _ => ch,
+    /// Ask Git where `root` sits under its work tree. Any failure (no work
+    /// tree, no Git, a root outside the discovered top level, a root Git
+    /// ignores or whose ignore status it cannot answer) yields
+    /// [`CheckoutAnchor::unknown`], never an invented prefix.
+    pub(crate) fn discover(root: &Path) -> Self {
+        let Ok(canonical_root) = std::fs::canonicalize(root) else {
+            return Self::unknown();
+        };
+        let Some(top_level) = crate::git::discovered_work_tree_toplevel(
+            &canonical_root,
+            std::time::Duration::from_secs(5),
+        ) else {
+            return Self::unknown();
+        };
+        let Ok(prefix) = canonical_root.strip_prefix(&top_level) else {
+            return Self::unknown();
+        };
+        // A root Git ignores (a scratch fixture under `target/`, a vendored
+        // tree) is not part of the checkout those consumers resolve against,
+        // so prefixing it would name a file the checkout does not carry.
+        // Only Git's negative answer admits the prefix.
+        if !prefix.as_os_str().is_empty()
+            && crate::git::work_tree_path_ignored(
+                &top_level,
+                prefix,
+                std::time::Duration::from_secs(5),
+            ) != Some(false)
+        {
+            return Self::unknown();
+        }
+        Self::below_top_level(prefix.to_path_buf())
+    }
+
+    /// `file` (a finding path) as a path relative to the checkout top level.
+    ///
+    /// Producers spell finding files two ways: Rust findings join the root
+    /// (`crates/app/src/lib.rs` under `--root crates/app`, `./src/lib.rs`
+    /// under `--root .`), while preview-language findings (Python,
+    /// TypeScript, JavaScript) are already root-relative (`src/app.py`).
+    /// A root-joined spelling strips the root; any other plain relative
+    /// spelling is root-relative. When both readings are lexically possible
+    /// (a root-relative file whose first directory repeats the root's
+    /// spelling) the file system decides: only a file that exists under the
+    /// root and not at the invoking-directory spelling is read
+    /// root-relative.
+    ///
+    /// Falls back to [`repository_relative_path`] when no top level is
+    /// known or neither reading is a plain path below the root (a `..`
+    /// remainder never resolves upward).
+    pub(crate) fn relative_path(&self, root: &Path, file: &Path) -> PathBuf {
+        if self.root_prefix.is_none() {
+            return repository_relative_path(root, file).to_path_buf();
+        }
+        let joined = file
+            .strip_prefix(root)
+            .ok()
+            .filter(|below_root| is_plain_relative(below_root));
+        let root_relative = (!file.has_root() && is_plain_relative(file)).then_some(file);
+        let below_root = match (joined, root_relative) {
+            (Some(joined), Some(root_relative)) => {
+                if root.join(root_relative).exists() && !file.exists() {
+                    root_relative
+                } else {
+                    joined
+                }
+            }
+            (Some(joined), None) => joined,
+            (None, Some(root_relative)) => root_relative,
+            (None, None) => return repository_relative_path(root, file).to_path_buf(),
+        };
+        self.root_relative_path(below_root)
+    }
+
+    /// `relative` (a path already relative to the root, such as a repo
+    /// seam's file) as a path relative to the checkout top level. Unchanged
+    /// when no top level is known or `relative` is not a plain relative path.
+    pub(crate) fn root_relative_path(&self, relative: &Path) -> PathBuf {
+        match &self.root_prefix {
+            Some(prefix) if is_plain_relative(relative) => {
+                let mut joined = prefix.clone();
+                for component in relative.components() {
+                    if let Component::Normal(part) = component {
+                        joined.push(part);
+                    }
+                }
+                joined
+            }
+            _ => relative.to_path_buf(),
+        }
+    }
+
+    /// [`CheckoutAnchor::relative_path`] as stable slash text without a
+    /// leading `./`, the anchored counterpart of [`repository_display_path`].
+    pub(crate) fn display_path(&self, root: &Path, file: &Path) -> String {
+        let mut displayed = display_path(&self.relative_path(root, file));
+        while let Some(stripped) = displayed.strip_prefix("./") {
+            displayed = stripped.to_string();
+        }
+        displayed
     }
 }
 
-/// [`path_identity_key_on`] with canonical-equivalence folding explicit, so
-/// the macOS rule is testable on every host. `normalization_insensitive` is
-/// valid on its own (`case_insensitive == false`): it then folds only
-/// canonical equivalence. The fold is one pass of per-character NFD from the
-/// partial `path_unicode` table with no canonical reordering of combining
-/// marks, so Hangul, Indic scripts and out-of-order mark sequences are
-/// intentionally not folded and stay distinct (fail closed).
-pub(crate) fn path_identity_key_with(
-    path: &Path,
-    backslash_is_separator: bool,
-    case_insensitive: bool,
-    normalization_insensitive: bool,
-) -> String {
-    let Some(text) = path.to_str() else {
-        let mut key = String::from("\0");
-        for byte in path.as_os_str().as_encoded_bytes() {
-            key.push_str(&format!("{byte:02x}"));
-        }
-        return key;
-    };
-    let text = if backslash_is_separator {
-        text.replace('\\', "/")
-    } else {
-        text.to_string()
-    };
-    if !case_insensitive && !normalization_insensitive {
-        return text;
-    }
-    let mut key = String::with_capacity(text.len());
-    for ch in text.chars() {
-        let mut piece = String::new();
-        if normalization_insensitive {
-            super::path_unicode::decompose_into(ch, &mut piece);
-        } else {
-            piece.push(ch);
-        }
-        for part in piece.chars() {
-            key.push(if case_insensitive {
-                conservative_lowercase(part)
-            } else {
-                part
-            });
-        }
-    }
-    key
+/// A nonempty relative path made only of plain names (and `.`), so joining
+/// it under a prefix can never climb above that prefix.
+fn is_plain_relative(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::Normal(_)))
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
 }
 
 /// Display-only spelling of a path for LSP messages and editor globs: lossy
@@ -174,12 +273,6 @@ pub(crate) fn path_display_lossy(path: &Path) -> String {
     } else {
         text.into_owned()
     }
-}
-
-/// [`path_identity_key_on`] with the host rules: `\` separates only on Windows
-/// and case folds per [`host_paths_case_insensitive`].
-pub(crate) fn path_identity_key(path: &Path) -> String {
-    path_identity_key_on(path, cfg!(windows), host_paths_case_insensitive())
 }
 
 /// Render a finding's file root-relative for machine consumers, tolerating
@@ -228,7 +321,7 @@ pub(crate) fn repository_relative_path_text_with(
             .components()
             .any(|component| matches!(component, Component::ParentDir))
     {
-        return display_path(relative);
+        return display_path_on(relative, windows);
     }
     if windows
         && let Some(relative) =
@@ -236,15 +329,15 @@ pub(crate) fn repository_relative_path_text_with(
     {
         // Re-encode through the shared stable renderer so `%` escaping
         // matches every other path rendering.
-        return display_path(&PathBuf::from(relative));
+        return display_path_on(&PathBuf::from(relative), windows);
     }
     if !windows
         && case_insensitive
         && let Some(relative) = strip_case_insensitive_root(root, file)
     {
-        return display_path(&relative);
+        return display_path_on(&relative, windows);
     }
-    display_path(file)
+    display_path_on(file, windows)
 }
 
 /// Component-wise, ASCII-case-insensitive root strip (ASCII-only by design:
@@ -340,7 +433,7 @@ fn windows_absolute_segments(path_text: &str) -> Option<Vec<String>> {
 /// Reduce a verbatim prefix to its plain form: `//?/X:` becomes `X:`,
 /// `//?/UNC/server/share` becomes `//server/share`. Any other `//?/` form
 /// (and non-verbatim text) is returned unchanged.
-fn strip_windows_verbatim_prefix(unified: &str) -> Option<String> {
+pub(crate) fn strip_windows_verbatim_prefix(unified: &str) -> Option<String> {
     let rest = unified.strip_prefix("//?/")?;
     let bytes = rest.as_bytes();
     if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
@@ -381,10 +474,29 @@ pub(crate) fn display_path_text(path: &str) -> String {
     path.replace('\\', "/")
 }
 
+/// The one-line path spelling for human prose (#16455), defined beside the
+/// terminal escape so the analysis producers that write recovery prose can use
+/// it without importing the output layer.
+pub(crate) use crate::terminal_text::prose_path_text;
+
 /// Compare output destinations after collapsing `.` / `..` so `--out ./a.json`
 /// and `--out-jsonl a.json` are treated as the same file.
 pub(crate) fn same_output_leaf(left: &Path, right: &Path) -> bool {
     normalize_output_leaf(left) == normalize_output_leaf(right)
+}
+
+/// Whether writing `output` would replace the file a command reads from
+/// `input` (#14312). Filesystem identity decides: both paths must resolve and
+/// their canonical paths must match, so an absolute spelling or a symlink to
+/// the input is caught, and a `..` after a symlinked directory is not
+/// collapsed lexically into a false match. A missing input has nothing to
+/// replace (reports that tolerate one still write and warn), and a
+/// destination that does not exist yet cannot be an existing input.
+pub(crate) fn output_replaces_input(output: &Path, input: &Path) -> bool {
+    match (std::fs::canonicalize(output), std::fs::canonicalize(input)) {
+        (Ok(output), Ok(input)) => output == input,
+        _ => false,
+    }
 }
 
 fn normalize_output_leaf(path: &Path) -> PathBuf {
@@ -472,209 +584,11 @@ fn require_lossless_command_path(path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
-    #[test]
-    fn path_identity_key_is_one_rule_for_separator_case_and_bytes() {
-        let upper = Path::new("Src/A\\B.rs");
-        let lower = Path::new("src/a/b.rs");
-        // Windows-flagged seam: separator rewrite plus ASCII fold.
-        assert_eq!(
-            path_identity_key_on(upper, true, true),
-            path_identity_key_on(lower, true, true)
-        );
-        // Unix seam: `\` is a filename byte, case is significant.
-        assert_ne!(
-            path_identity_key_on(upper, false, false),
-            path_identity_key_on(lower, false, false)
-        );
-        assert_ne!(
-            path_identity_key_on(Path::new("a\\b.rs"), false, true),
-            path_identity_key_on(Path::new("a/b.rs"), false, true)
-        );
-        // Non-ASCII case variants fold only where the host is case-insensitive.
-        assert_eq!(
-            path_identity_key_on(Path::new("\u{c9}.rs"), true, true),
-            path_identity_key_on(Path::new("\u{e9}.rs"), true, true)
-        );
-        assert_ne!(
-            path_identity_key_on(Path::new("\u{c9}.rs"), false, false),
-            path_identity_key_on(Path::new("\u{e9}.rs"), false, false)
-        );
-    }
-
-    #[test]
-    fn nfc_nfd_fold_only_when_normalization_insensitive() {
-        let nfc = Path::new("caf\u{e9}/\u{c5}.rs");
-        let nfd = Path::new("cafe\u{301}/A\u{30a}.rs");
-        // macOS rule (explicit seam): equivalent spellings share a key,
-        // including combined with case folding.
-        assert_eq!(
-            path_identity_key_with(nfc, false, true, true),
-            path_identity_key_with(nfd, false, true, true)
-        );
-        assert_eq!(
-            path_identity_key_with(Path::new("CAF\u{c9}.rs"), false, true, true),
-            path_identity_key_with(Path::new("cafe\u{301}.rs"), false, true, true)
-        );
-        // Linux/Windows rule: distinct files keep distinct keys.
-        assert_ne!(
-            path_identity_key_with(nfc, false, false, false),
-            path_identity_key_with(nfd, false, false, false)
-        );
-        assert_ne!(
-            path_identity_key_with(nfc, true, true, false),
-            path_identity_key_with(nfd, true, true, false)
-        );
-        // Genuinely different names never merge under the macOS rule.
-        assert_ne!(
-            path_identity_key_with(Path::new("\u{e9}.rs"), false, true, true),
-            path_identity_key_with(Path::new("e.rs"), false, true, true)
-        );
-        // U+0130 has a multi-code-point lowercase: not folded to plain `i`.
-        assert_ne!(
-            path_identity_key_with(Path::new("\u{130}.rs"), false, true, false),
-            path_identity_key_with(Path::new("i.rs"), false, true, false)
-        );
-        assert!(super::super::path_unicode::table_is_sorted_and_unique());
-    }
-
-    #[test]
-    fn one_way_case_folds_never_merge_distinct_windows_names() {
-        // NTFS keeps these pairs distinct; folding them would merge files.
-        for (left, right) in [
-            ("\u{212a}.rs", "k.rs"),
-            ("\u{2126}.rs", "\u{3c9}.rs"),
-            ("\u{212b}.rs", "\u{e5}.rs"),
-            ("\u{1e9e}.rs", "\u{df}.rs"),
-        ] {
-            for norm in [false, true] {
-                assert_ne!(
-                    path_identity_key_with(Path::new(left), true, true, norm),
-                    path_identity_key_with(Path::new(right), true, true, norm),
-                    "{left} vs {right} norm={norm}"
-                );
-            }
-        }
-        // U+0130 has a multi-code-point lowercase: without normalization it
-        // stays itself and never merges with `i` + combining dot; with the
-        // canonical rule it is `I` + dot, which is a true equivalence.
-        let dotted = Path::new("\u{130}.rs");
-        let spelled = Path::new("i\u{307}.rs");
-        assert_ne!(
-            path_identity_key_with(dotted, true, true, false),
-            path_identity_key_with(spelled, true, true, false)
-        );
-        assert_eq!(
-            path_identity_key_with(dotted, true, true, true),
-            path_identity_key_with(spelled, true, true, true)
-        );
-        // Known conservative miss: NTFS `$UpCase` treats sigma and final
-        // sigma as one name; we keep them apart (a missed merge, never a
-        // wrong one).
-        assert_ne!(
-            path_identity_key_with(Path::new("\u{3c3}.rs"), true, true, false),
-            path_identity_key_with(Path::new("\u{3c2}.rs"), true, true, false)
-        );
-    }
-
-    /// The host-default entry point must pick the macOS rule through
-    /// `host_paths_normalization_insensitive`; only macOS CI can observe it.
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn host_default_key_folds_nfc_nfd_on_macos() {
-        assert!(super::host_paths_normalization_insensitive());
-        assert_eq!(
-            path_identity_key_on(Path::new("caf\u{e9}"), false, true),
-            path_identity_key_on(Path::new("cafe\u{301}"), false, true)
-        );
-    }
-
-    #[test]
-    fn reversible_non_ascii_case_pairs_fold() {
-        for (upper, lower) in [
-            ("\u{393}.rs", "\u{3b3}.rs"),
-            ("\u{3a3}.rs", "\u{3c3}.rs"),
-            ("\u{416}.rs", "\u{436}.rs"),
-            ("\u{c9}.rs", "\u{e9}.rs"),
-        ] {
-            assert_eq!(
-                path_identity_key_with(Path::new(upper), false, true, false),
-                path_identity_key_with(Path::new(lower), false, true, false)
-            );
-            assert_ne!(
-                path_identity_key_with(Path::new(upper), false, false, false),
-                path_identity_key_with(Path::new(lower), false, false, false)
-            );
-        }
-    }
-
-    #[test]
-    fn normalization_folding_is_independent_of_case_and_stays_partial() {
-        // case=false + norm=true: canonical equivalence folds, case does not.
-        assert_eq!(
-            path_identity_key_with(Path::new("\u{e9}.rs"), false, false, true),
-            path_identity_key_with(Path::new("e\u{301}.rs"), false, false, true)
-        );
-        assert_ne!(
-            path_identity_key_with(Path::new("\u{c9}.rs"), false, false, true),
-            path_identity_key_with(Path::new("\u{e9}.rs"), false, false, true)
-        );
-        // Deep decomposition: U+1E69 = s + dot below + dot above.
-        assert_eq!(
-            path_identity_key_with(Path::new("\u{1e69}"), false, true, true),
-            path_identity_key_with(Path::new("s\u{323}\u{307}"), false, true, true)
-        );
-        // Greek tonos and Cyrillic short i.
-        assert_eq!(
-            path_identity_key_with(Path::new("\u{3ac}"), false, true, true),
-            path_identity_key_with(Path::new("\u{3b1}\u{301}"), false, true, true)
-        );
-        assert_eq!(
-            path_identity_key_with(Path::new("\u{419}"), false, true, true),
-            path_identity_key_with(Path::new("\u{438}\u{306}"), false, true, true)
-        );
-        // Singleton canonical decomposition (U+0374 -> U+02B9) is folded.
-        assert_eq!(
-            path_identity_key_with(Path::new("\u{374}"), false, false, true),
-            path_identity_key_with(Path::new("\u{2b9}"), false, false, true)
-        );
-        // Outside the table (Hangul syllable vs jamo, Devanagari composition
-        // exclusion, Angstrom sign) stays distinct: partial coverage fails
-        // closed.
-        for (left, right) in [
-            ("\u{ac00}", "\u{1100}\u{1161}"),
-            ("\u{958}", "\u{915}\u{93c}"),
-            ("\u{212b}", "A\u{30a}"),
-        ] {
-            assert_ne!(
-                path_identity_key_with(Path::new(left), false, true, true),
-                path_identity_key_with(Path::new(right), false, true, true),
-                "{left} vs {right}"
-            );
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn path_identity_key_keeps_distinct_non_utf8_paths_distinct() {
-        use std::ffi::OsStr;
-        use std::os::unix::ffi::OsStrExt;
-        let first = Path::new(OsStr::from_bytes(b"/w/a\xFF"));
-        let second = Path::new(OsStr::from_bytes(b"/w/a\xFE"));
-        assert_ne!(
-            path_identity_key_on(first, false, false),
-            path_identity_key_on(second, false, false)
-        );
-        assert_ne!(
-            path_identity_key_on(first, true, true),
-            path_identity_key_on(Path::new("/w/a\u{fffd}"), true, true)
-        );
-    }
+    use std::path::{Path, PathBuf};
 
     use super::{
-        display_path, display_path_for_host, display_path_text, human_path_text,
-        path_identity_key_on, path_identity_key_with, repository_display_path,
+        CheckoutAnchor, display_path, display_path_for_host, display_path_on, display_path_text,
+        human_path_text, prose_path_text, repository_display_path,
         repository_relative_path_text_on, same_output_leaf,
     };
 
@@ -777,7 +691,22 @@ mod tests {
 
     #[test]
     fn display_path_normalizes_backslashes() {
-        assert_eq!(display_path(Path::new("a\\b\\c")), "a/b/c");
+        // A backslash is a separator on Windows and a file-name byte, spelled
+        // `%5C`, on Unix (#15908); the host-explicit form folds it anywhere.
+        let expected = if cfg!(unix) { "a%5Cb%5Cc" } else { "a/b/c" };
+        assert_eq!(display_path(Path::new("a\\b\\c")), expected);
+        assert_eq!(display_path_on(Path::new("a\\b\\c"), true), "a/b/c");
+    }
+
+    #[test]
+    fn prose_path_text_keeps_one_line_and_ordinary_paths() {
+        assert_eq!(prose_path_text("src/lib.rs"), "src/lib.rs");
+        assert_eq!(prose_path_text("src/a\\b.rs"), "src/a\\b.rs");
+        assert_eq!(
+            prose_path_text("src/x\n```\necho forged\r\t.rs"),
+            "src/x\\n```\\necho forged\\r\\t.rs"
+        );
+        assert!(!prose_path_text("a\nb\rc").contains(['\n', '\r']));
     }
 
     #[test]
@@ -823,6 +752,138 @@ mod tests {
             repository_display_path(Path::new("crates/app"), Path::new("crates/app/src/lib.rs")),
             "crates/app/src/lib.rs"
         );
+    }
+
+    #[test]
+    fn anchored_display_path_names_the_file_from_the_checkout_top_level() {
+        // A member root two levels below the top level, in every spelling a
+        // CI step or a developer uses: absolute, `.` from inside the member,
+        // a relative path with a `..` detour, and `..` from a sibling.
+        let member = CheckoutAnchor::below_top_level(PathBuf::from("crates/app"));
+        let absolute = std::env::temp_dir().join("ripr-anchor").join("crates/app");
+        let spellings = [
+            (absolute.clone(), absolute.join("src/lib.rs")),
+            (PathBuf::from("."), PathBuf::from("./src/lib.rs")),
+            (
+                PathBuf::from("crates/../crates/app"),
+                PathBuf::from("crates/../crates/app/src/lib.rs"),
+            ),
+            (PathBuf::from("../app"), PathBuf::from("../app/src/lib.rs")),
+        ];
+        for (root, file) in &spellings {
+            assert_eq!(
+                member.display_path(root, file),
+                "crates/app/src/lib.rs",
+                "root {} file {}",
+                root.display(),
+                file.display()
+            );
+        }
+        // Without an anchor the same spellings keep the root-relative
+        // rendering (the pre-anchor behavior), so the anchor is what moves
+        // them: an absolute member root used to annotate `src/lib.rs`.
+        assert_eq!(
+            CheckoutAnchor::unknown().display_path(&absolute, &absolute.join("src/lib.rs")),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            CheckoutAnchor::unknown().display_path(
+                Path::new("crates/../crates/app"),
+                Path::new("crates/../crates/app/src/lib.rs")
+            ),
+            "crates/../crates/app/src/lib.rs"
+        );
+        // The top level itself anchors with an empty prefix: unchanged text.
+        let top = CheckoutAnchor::below_top_level(PathBuf::new());
+        assert_eq!(
+            top.display_path(Path::new("."), Path::new("./src/lib.rs")),
+            "src/lib.rs"
+        );
+        assert_eq!(
+            top.display_path(Path::new("crates/app"), Path::new("crates/app/src/lib.rs")),
+            "src/lib.rs"
+        );
+    }
+
+    #[test]
+    fn anchored_paths_never_climb_or_invent_a_location() {
+        let member = CheckoutAnchor::below_top_level(PathBuf::from("crates/app"));
+        // A plain relative file that does not repeat the root's spelling is
+        // root-relative (the preview-language convention): it joins under
+        // the prefix whatever the root spelling.
+        for root in ["crates/app", ".", "/checkout/crates/app"] {
+            assert_eq!(
+                member.display_path(Path::new(root), Path::new("src/app.py")),
+                "crates/app/src/app.py",
+                "root {root}"
+            );
+        }
+        // A `..` remainder keeps the unanchored spelling instead of being
+        // joined under the prefix.
+        assert_eq!(
+            member.display_path(Path::new("."), Path::new("./../escape.rs")),
+            repository_display_path(Path::new("."), Path::new("./../escape.rs"))
+        );
+        // The root itself is not a file under it.
+        assert_eq!(
+            member.display_path(Path::new("."), Path::new(".")),
+            repository_display_path(Path::new("."), Path::new("."))
+        );
+        // Root-relative seam files join under the prefix; climbing or
+        // rooted paths stay as given.
+        assert_eq!(
+            member.root_relative_path(Path::new("src/lib.rs")),
+            PathBuf::from("crates/app/src/lib.rs")
+        );
+        assert_eq!(
+            member.root_relative_path(Path::new("../x.rs")),
+            PathBuf::from("../x.rs")
+        );
+        assert_eq!(
+            CheckoutAnchor::unknown().root_relative_path(Path::new("src/lib.rs")),
+            PathBuf::from("src/lib.rs")
+        );
+    }
+
+    #[test]
+    fn checkout_anchor_discovers_a_member_root_below_the_git_top_level() -> Result<(), String> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|err| format!("clock: {err}"))?
+            .as_nanos();
+        let top = std::env::temp_dir().join(format!("ripr-anchor-{}-{stamp}", std::process::id()));
+        std::fs::create_dir_all(&top).map_err(|err| format!("mkdir: {err}"))?;
+        // A root that does not exist cannot be placed: no invented prefix.
+        assert_eq!(
+            CheckoutAnchor::discover(&top.join("missing")),
+            CheckoutAnchor::unknown()
+        );
+        crate::git::run_git(&top, &["init", "-q", "repo"])
+            .map_err(|err| format!("git init: {err}"))?;
+        let repo = top.join("repo");
+        let repo_member = repo.join("crates").join("app");
+        std::fs::create_dir_all(&repo_member).map_err(|err| format!("mkdir: {err}"))?;
+        // A root Git ignores (a scratch fixture under `target/`) is not part
+        // of the checkout: it keeps the root-relative spelling.
+        std::fs::write(repo.join(".gitignore"), "target/\n")
+            .map_err(|err| format!("write .gitignore: {err}"))?;
+        let ignored_member = repo.join("target").join("fx");
+        std::fs::create_dir_all(&ignored_member).map_err(|err| format!("mkdir: {err}"))?;
+        let at_member = CheckoutAnchor::discover(&repo_member);
+        let at_top = CheckoutAnchor::discover(&repo);
+        let at_ignored = CheckoutAnchor::discover(&ignored_member);
+        let _ = std::fs::remove_dir_all(&top);
+        assert_eq!(at_ignored, CheckoutAnchor::unknown());
+        assert_eq!(
+            at_member,
+            CheckoutAnchor::below_top_level(PathBuf::from("crates").join("app"))
+        );
+        assert_eq!(at_top, CheckoutAnchor::below_top_level(PathBuf::new()));
+        assert_eq!(
+            at_member.display_path(&repo_member, &repo_member.join("src/lib.rs")),
+            "crates/app/src/lib.rs"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1082,7 +1143,8 @@ mod tests {
                 Path::new(&root_text),
                 Path::new(&verbatim_looking)
             ),
-            verbatim_looking.replace('\\', "/")
+            // A backslash is a file-name byte here, spelled `%5C` (#15908).
+            verbatim_looking.replace('\\', "%5C")
         );
     }
 
@@ -1114,13 +1176,15 @@ mod tests {
     }
 
     #[test]
-    fn host_predicate_matches_target_platform() {
+    fn invocation_directory_below_root_rewrites_only_the_dot_slash_form() {
+        use super::relative_to_invocation_dir as rel;
         assert_eq!(
-            super::host_paths_case_insensitive(),
-            cfg!(any(windows, target_os = "macos"))
+            rel("./crates/core/src/lib.rs", 1),
+            "../crates/core/src/lib.rs"
         );
-        if cfg!(target_os = "linux") {
-            assert!(!super::host_paths_case_insensitive());
-        }
+        assert_eq!(rel("./a.rs", 2), "../../a.rs");
+        // At the root, and for files outside the root, the text is unchanged.
+        assert_eq!(rel("./a.rs", 0), "./a.rs");
+        assert_eq!(rel("/elsewhere/a.rs", 1), "/elsewhere/a.rs");
     }
 }

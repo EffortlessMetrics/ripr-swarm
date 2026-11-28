@@ -1,0 +1,6 @@
+run_id,scenario,variant,context_bytes,rounds,discriminates
+inserted-guard-vanilla-r01,inserted-guard,vanilla,1178,1,yes
+inserted-guard-ripr-tool-r01,inserted-guard,ripr-tool,5004,1,yes
+flipped-comparison-vanilla-r01,flipped-comparison,vanilla,1099,1,yes
+flipped-comparison-ripr-tool-r01,flipped-comparison,ripr-tool,4254,1,yes
+silent-return-ripr-tool-r02,silent-return,ripr-tool,4794,1,yes

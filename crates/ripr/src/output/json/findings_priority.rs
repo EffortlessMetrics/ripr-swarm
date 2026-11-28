@@ -10,6 +10,7 @@
 //! currentness or any other field of a finding.
 
 use crate::domain::{ExposureClass, Finding, SourceCurrentness};
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -43,9 +44,12 @@ fn class_rank(class: &ExposureClass) -> u8 {
 
 /// Indices of `findings` in render-priority order. A stable sort, so findings
 /// with equal keys keep their (deterministic) position in `findings`.
-pub(super) fn priority_order(findings: &[Finding]) -> Vec<usize> {
+///
+/// Generic over owned and borrowed findings so the human `Hidden:` window
+/// chooses its bounded rows with this same order instead of a second ranking.
+pub(crate) fn priority_order<F: Borrow<Finding>>(findings: &[F]) -> Vec<usize> {
     let mut order: Vec<usize> = (0..findings.len()).collect();
-    order.sort_by_key(|&index| priority_key(&findings[index]));
+    order.sort_by_key(|&index| priority_key(findings[index].borrow()));
     order
 }
 

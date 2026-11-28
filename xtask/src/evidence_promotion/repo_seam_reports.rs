@@ -11,17 +11,21 @@
 //!
 //! Judged fields are the ones the corpus assertions and the honesty argument
 //! rest on: the set of seams, each seam's `grip_class` and stage states, and
-//! each related test's `oracle_strength` and `relation_reason`. Producer
+//! each related test's `oracle_strength` and `relation_reason`, and each
+//! static limitation's stage, state and category (#13278). Producer
 //! version, cache schema, timestamps and the absolute root are expected to
-//! differ between captures and are not judged.
+//! differ between captures and are not judged here; the cache schema is
+//! checked separately against `CACHE_SCHEMA_VERSION` by `report_cache_schema`
+//! (#12293).
 
 use super::{
     EVIDENCE_PROMOTION_HONESTY_CORPUS, capture_output_with_timeout, normalize_path,
     read_evidence_promotion_corpus, ripr_debug_binary, run,
 };
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 const REGENERATION_TIMEOUT: Duration = Duration::from_mins(2);
@@ -35,8 +39,11 @@ const REGENERATION_ARGS: [&str; 5] = [
 
 /// Assertion types that judge a repo-exposure report's seams. A case using any
 /// of them reads a stored capture, so each must be regenerable (#12188).
-const REPO_SEAM_ASSERTIONS: [&str; 2] =
-    ["expected_repo_seam_grip", "expected_repo_seam_related_test"];
+const REPO_SEAM_ASSERTIONS: [&str; 3] = [
+    "expected_repo_seam_grip",
+    "expected_repo_seam_related_test",
+    "expected_repo_seam_limitation",
+];
 
 /// A seam's identity within one report: file, line, column and kind. The
 /// `seam_id` hash is deliberately not the key, so a change to how ids are
@@ -52,12 +59,24 @@ struct JudgedSeam {
     expression: String,
     grip_class: String,
     stages: Vec<(String, String)>,
+    /// The per-stage `evidence_record.evidence_path` rows (stage, state,
+    /// confidence, summary). Read from the record, not the flat `evidence`
+    /// map: the two disagree on `discriminate` for weakly gripped seams
+    /// because the flat map is a projection (#14555).
+    evidence_path: Vec<EvidencePathRow>,
     related_tests: Vec<RelatedTest>,
+    static_limitations: Vec<StaticLimitation>,
 }
 
 /// A related test as judged: name, file, line, oracle strength, relation
 /// reason. File and line are kept so a test that moved is a difference.
 type RelatedTest = (String, String, u64, String, String);
+
+/// A named limitation as judged: stage, original state and category.
+type StaticLimitation = (String, String, String);
+
+/// One `evidence_path` stage as judged: stage, state, confidence, summary.
+type EvidencePathRow = (String, String, String, String);
 
 fn string_field(value: &Value, field: &str) -> String {
     value
@@ -67,7 +86,10 @@ fn string_field(value: &Value, field: &str) -> String {
         .to_string()
 }
 
-fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String> {
+fn judged_seams(
+    report: &Value,
+    judge_evidence_path: bool,
+) -> Result<BTreeMap<SeamKey, JudgedSeam>, String> {
     let Some(seams) = report.get("seams").and_then(Value::as_array) else {
         return Err("report has no `seams` array".to_string());
     };
@@ -109,12 +131,24 @@ fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String>
             })
             .unwrap_or_default();
         related_tests.sort();
+        let mut static_limitations = limitation_rows(seam)?.unwrap_or_default();
+        static_limitations.sort();
+        let evidence_path = if judge_evidence_path {
+            evidence_path_rows(seam)?.unwrap_or_default()
+        } else {
+            // A pinned capture is tolerated whole: its rows are not read, so a
+            // shape the current analyzer would reject cannot red a capture the
+            // pin exists to keep (#14555).
+            Vec::new()
+        };
         let entry = JudgedSeam {
             owner: string_field(seam, "owner"),
             expression: string_field(seam, "expression"),
             grip_class: string_field(seam, "grip_class"),
             stages,
+            evidence_path,
             related_tests,
+            static_limitations,
         };
         if judged.insert(key.clone(), entry).is_some() {
             return Err(format!(
@@ -128,12 +162,27 @@ fn judged_seams(report: &Value) -> Result<BTreeMap<SeamKey, JudgedSeam>, String>
 
 /// Judged-field differences between a committed capture and a regeneration of
 /// its subject. Empty means the capture still says what the analyzer says.
+/// `current_generation` decides whether the per-stage `evidence_path` summaries
+/// are judged: that comparison is only meaningful where the capture was taken
+/// at the analyzer's current cache generation, so an intentionally pinned older
+/// capture stays tolerated (#14555). The decision is taken here rather than by
+/// the caller, so a test that supplies a capture at a generation gets the real
+/// switch and not a flag it had to remember to set.
 pub(super) fn compare_reports(
     case_label: &str,
     committed: &Value,
     regenerated: &Value,
+    current_generation: &str,
 ) -> Vec<String> {
-    let (committed, regenerated) = match (judged_seams(committed), judged_seams(regenerated)) {
+    let judge_evidence_path =
+        match super::report_cache_schema::judges_evidence_path(committed, current_generation) {
+            Ok(judge) => judge,
+            Err(error) => return vec![format!("{case_label}: committed report: {error}")],
+        };
+    let (committed, regenerated) = match (
+        judged_seams(committed, judge_evidence_path),
+        judged_seams(regenerated, judge_evidence_path),
+    ) {
         (Ok(committed), Ok(regenerated)) => (committed, regenerated),
         (Err(error), _) => return vec![format!("{case_label}: committed report: {error}")],
         (_, Err(error)) => return vec![format!("{case_label}: regenerated report: {error}")],
@@ -171,10 +220,23 @@ pub(super) fn compare_reports(
                 stored.stages, fresh.stages
             ));
         }
+        if judge_evidence_path && stored.evidence_path != fresh.evidence_path {
+            violations.push(format!(
+                "{case_label}: seam at {location} committed evidence_path (stage, state, confidence, summary) {:?} differ from the current analyzer's {:?}",
+                stored.evidence_path, fresh.evidence_path
+            ));
+        }
         if stored.related_tests != fresh.related_tests {
             violations.push(format!(
                 "{case_label}: seam at {location} committed related tests (name, file, line, oracle_strength, relation_reason) {:?} differ from the current analyzer's {:?}",
                 stored.related_tests, fresh.related_tests
+            ));
+        }
+        if stored.static_limitations != fresh.static_limitations {
+            violations.push(format!(
+                "{case_label}: seam at {location} committed static limitations \
+                 (stage, state, category) {:?} differ from the current analyzer's {:?}",
+                stored.static_limitations, fresh.static_limitations
             ));
         }
     }
@@ -190,7 +252,7 @@ pub(super) fn compare_reports(
 }
 
 /// The cases that must be regenerable: every case that pins a repo seam, by
-/// grip or by related test. A
+/// grip, related test or named limitation. A
 /// case without `report_subject` would be judged from a stored file nothing
 /// can refresh, which is the gap this guard closes, so it fails rather than
 /// being skipped.
@@ -225,11 +287,443 @@ pub(super) fn repo_seam_cases(
                 regenerable.push((id.to_string(), report.to_string(), subject.to_string()));
             }
             _ => violations.push(format!(
-                "evidence promotion case `{id}`: a case with `expected_repo_seam_grip` or `expected_repo_seam_related_test` needs `source_report` and `report_subject` (the Cargo subject the report was captured from), so the report can be regenerated and checked for staleness (#12144)"
+                "evidence promotion case `{id}`: a case with `expected_repo_seam_grip`, `expected_repo_seam_related_test` or `expected_repo_seam_limitation` needs `source_report` and `report_subject` (the Cargo subject the report was captured from), so the report can be regenerated and checked for staleness (#12144)"
             )),
         }
     }
     regenerable
+}
+
+/// Judge a typed limitation independently of the seam's unchanged grip class.
+/// A missing selector or malformed evidence is never a successful absence.
+/// Match the whole expression so a field cannot also select its enclosing return.
+pub(super) fn expected_limitation_violations(
+    case_label: &str,
+    report: &Value,
+    owner: &str,
+    expression: &str,
+    category: &str,
+    present: bool,
+) -> Vec<String> {
+    let Some(seams) = report.get("seams").and_then(Value::as_array) else {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires a `seams` array"
+        )];
+    };
+    let expression = normalized_seam_expression(expression);
+    if expression.is_empty() {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires a nonempty expression \
+             after trimming whitespace and one optional comma"
+        )];
+    }
+    let matched: Vec<&Value> = seams
+        .iter()
+        .filter(|seam| {
+            seam.get("owner").and_then(Value::as_str) == Some(owner)
+                && seam
+                    .get("expression")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| normalized_seam_expression(text) == expression)
+        })
+        .collect();
+    if matched.len() != 1 {
+        return vec![format!(
+            "{case_label}: `expected_repo_seam_limitation` requires exactly one seam with \
+             owner `{owner}` and expression equal to `{expression}`, matched {}",
+            matched.len()
+        )];
+    }
+    let mut violations = Vec::new();
+    for seam in matched {
+        let seam_label = string_field(seam, "seam_id");
+        let limits = match limitation_rows(seam) {
+            Ok(Some(limits)) => limits,
+            Ok(None) => {
+                violations.push(format!(
+                    "{case_label}: seam `{seam_label}` must carry a static_limitations array"
+                ));
+                continue;
+            }
+            Err(error) => {
+                violations.push(format!("{case_label}: {error}"));
+                continue;
+            }
+        };
+        let count = limits
+            .iter()
+            .filter(|(_, _, actual)| actual == category)
+            .count();
+        let expected = usize::from(present);
+        if count != expected {
+            violations.push(format!(
+                "{case_label}: seam `{seam_label}` has {count} limitation rows for \
+                 `{category}`, but the corpus pins {expected}"
+            ));
+        }
+    }
+    violations
+}
+
+fn normalized_seam_expression(expression: &str) -> &str {
+    let expression = expression.trim();
+    expression
+        .strip_suffix(',')
+        .unwrap_or(expression)
+        .trim_end()
+}
+
+/// Older trimmed captures may omit the evidence record. An explicit malformed
+/// record is different from absence and cannot establish a fresh comparison.
+fn limitation_rows(seam: &Value) -> Result<Option<Vec<StaticLimitation>>, String> {
+    let Some(raw) = seam.pointer("/evidence_record/static_limitations") else {
+        return Ok(None);
+    };
+    let seam_label = string_field(seam, "seam_id");
+    let limits = raw
+        .as_array()
+        .ok_or_else(|| format!("seam `{seam_label}` has a malformed static_limitations array"))?;
+    let mut rows = Vec::new();
+    for (index, limit) in limits.iter().enumerate() {
+        let text = |field: &str| {
+            limit
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|text| !text.trim().is_empty())
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    format!(
+                        "seam `{seam_label}` static limitation {index} has no nonempty `{field}`"
+                    )
+                })
+        };
+        rows.push((text("stage")?, text("state")?, text("category")?));
+    }
+    Ok(Some(rows))
+}
+
+/// The per-stage `evidence_record.evidence_path` rows. Absence is tolerated:
+/// trimmed captures and the unit-test helper carry no record, so erroring
+/// there would judge an absence as staleness. A record whose `evidence_path`
+/// is present but not an object cannot establish a fresh comparison and is a
+/// violation - reading it as an array would yield empty on both sides and pass
+/// silently, which is the fail-open class this guard exists to close (#14555).
+/// A stage entry that is not an object, or whose `state`/`confidence`/`summary`
+/// is present but not a string, fails for the same reason one level down: it
+/// would read as empty on both sides and compare equal.
+fn evidence_path_rows(seam: &Value) -> Result<Option<Vec<EvidencePathRow>>, String> {
+    let Some(raw) = seam.pointer("/evidence_record/evidence_path") else {
+        return Ok(None);
+    };
+    let seam_label = string_field(seam, "seam_id");
+    let stages = raw.as_object().ok_or_else(|| {
+        format!("seam `{seam_label}` has a malformed evidence_record.evidence_path object")
+    })?;
+    let mut rows = Vec::new();
+    for (stage, entry) in stages {
+        if !entry.is_object() {
+            return Err(format!(
+                "seam `{seam_label}` has a malformed evidence_path entry for stage `{stage}`"
+            ));
+        }
+        let text = |field: &str| -> Result<String, String> {
+            match entry.get(field) {
+                None => Ok(String::new()),
+                Some(Value::String(state)) => Ok(state.clone()),
+                Some(_) => Err(format!(
+                    "seam `{seam_label}` has a non-string evidence_path `{field}` for stage `{stage}`, so it cannot be compared"
+                )),
+            }
+        };
+        rows.push((
+            stage.clone(),
+            text("state")?,
+            text("confidence")?,
+            text("summary")?,
+        ));
+    }
+    rows.sort();
+    Ok(Some(rows))
+}
+
+/// The producer's `raw_json_placeholder_v1` canonicalization: the digest is the
+/// sha256 of the file bytes with the stored `content_sha256` replaced by this
+/// placeholder.
+const CONTENT_DIGEST_CANONICALIZATION: &str = "raw_json_placeholder_v1";
+const CONTENT_DIGEST_PLACEHOLDER: &str =
+    "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Why one committed report's `artifact.content_sha256` cannot be trusted, or
+/// `None` when it verifies or the file makes no digest claim. A canonicalization
+/// this check does not know is a problem, not a pass: the digest is unknown.
+pub(super) fn report_digest_problem(label: &str, text: &str) -> Option<String> {
+    let Ok(report) = serde_json::from_str::<Value>(text) else {
+        return Some(format!(
+            "{label}: not JSON, so its digest cannot be checked"
+        ));
+    };
+    let artifact = report.get("artifact")?;
+    let stored = artifact.get("content_sha256").and_then(Value::as_str)?;
+    match artifact.get("canonicalization").and_then(Value::as_str) {
+        Some(CONTENT_DIGEST_CANONICALIZATION) => {}
+        other => {
+            return Some(format!(
+                "{label}: canonicalization {other:?} is not `{CONTENT_DIGEST_CANONICALIZATION}`, so its `content_sha256` is unknown (not verified)"
+            ));
+        }
+    }
+    let placeholder = text.replace(stored, CONTENT_DIGEST_PLACEHOLDER);
+    let actual = format!("sha256:{:x}", Sha256::digest(placeholder.as_bytes()));
+    (actual != stored).then(|| {
+        format!(
+            "{label}: `content_sha256` is {stored} but its bytes hash to {actual}; the file was edited after it was generated. Recapture it with `ripr check --mode draft --format repo-exposure-json` instead of editing it by hand"
+        )
+    })
+}
+
+/// A full `ripr check --format repo-exposure-json` capture, as opposed to a
+/// trimmed projection: it carries the producer's `artifact` block or the
+/// `source_subject.corpus` identity. Either marker alone makes the file a
+/// capture, so deleting just one of them still leaves the other to be judged.
+fn is_full_capture(report: &Value) -> bool {
+    report.get("artifact").is_some() || report.pointer("/source_subject/corpus").is_some()
+}
+
+/// Whether a full capture carries its producer `artifact.content_sha256`.
+fn carries_digest(report: &Value) -> bool {
+    report
+        .pointer("/artifact/content_sha256")
+        .and_then(Value::as_str)
+        .is_some_and(|digest| !digest.is_empty())
+}
+
+/// The reports the corpus names as intentionally unstamped, as
+/// `report path -> reason`. An entry without a report or a non-empty reason,
+/// or a duplicate, is itself a violation.
+fn read_digest_exemptions(
+    corpus: &Value,
+    violations: &mut Vec<String>,
+) -> BTreeMap<String, String> {
+    let mut exemptions = BTreeMap::new();
+    let Some(entries) = corpus
+        .get("report_digest_exemptions")
+        .and_then(Value::as_array)
+    else {
+        return exemptions;
+    };
+    for entry in entries {
+        let text = |field: &str| {
+            entry
+                .get(field)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("")
+        };
+        let (report, reason) = (text("report"), text("reason"));
+        if report.is_empty() || reason.is_empty() {
+            violations.push(format!(
+                "report_digest_exemptions entry `{report}`: needs `report` and a non-empty `reason` saying why this capture carries no `content_sha256` (#12745)"
+            ));
+            continue;
+        }
+        if exemptions
+            .insert(report.to_string(), reason.to_string())
+            .is_some()
+        {
+            violations.push(format!(
+                "report_digest_exemptions: `{report}` is listed twice (#12745)"
+            ));
+        }
+    }
+    exemptions
+}
+
+/// Fail closed on a full capture with no `artifact.content_sha256`, unless the
+/// corpus lists it in `report_digest_exemptions`. An exemption is judged too:
+/// it must name a capture that really is unstamped, so deleting the digest
+/// cannot hide behind an exemption written for another reason and an exemption
+/// cannot outlive the need for it (#12745).
+fn stamp_problems(
+    reports: &[(String, Value)],
+    exemptions: &BTreeMap<String, String>,
+    violations: &mut Vec<String>,
+) {
+    let mut used = Vec::new();
+    for (label, report) in reports {
+        if !is_full_capture(report) {
+            continue;
+        }
+        let exempt = exemptions.contains_key(label);
+        if exempt {
+            used.push(label.as_str());
+        }
+        match (carries_digest(report), exempt) {
+            (false, false) => violations.push(format!(
+                "{label}: a committed capture carries no `artifact.content_sha256`, so edits to it cannot be detected. Recapture it with `ripr check --mode draft --format repo-exposure-json`, or list it in `report_digest_exemptions` with a reason (#12745)"
+            )),
+            (true, true) => violations.push(format!(
+                "report_digest_exemptions: `{label}` carries a `content_sha256`; remove the exemption (#12745)"
+            )),
+            _ => {}
+        }
+    }
+    for report in exemptions.keys() {
+        if !used.contains(&report.as_str()) {
+            violations.push(format!(
+                "report_digest_exemptions: `{report}` names no committed capture; remove the exemption (#12745)"
+            ));
+        }
+    }
+}
+
+/// The reports the corpus requires to stay stamped, whatever markers the file
+/// still carries. Content alone cannot tell a stamped capture that lost both
+/// `artifact` and `source_subject.corpus` from a trimmed projection, so the
+/// ones that carry a digest today are listed (#12816). An entry that names no
+/// committed report, or a report without a digest, is a violation.
+fn required_digest_problems(
+    corpus: &Value,
+    reports: &[(String, Value)],
+    violations: &mut Vec<String>,
+) {
+    let Some(entries) = corpus
+        .get("report_digest_required")
+        .and_then(Value::as_array)
+    else {
+        violations.push(
+            "report_digest_required: the corpus must carry this key as an array of report paths; without it the stamped captures are unguarded (#12816)"
+                .to_string(),
+        );
+        return;
+    };
+    let mut listed = Vec::new();
+    for entry in entries {
+        let Some(path) = entry
+            .as_str()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        else {
+            violations.push(
+                "report_digest_required: every entry must be a non-empty report path (#12816)"
+                    .to_string(),
+            );
+            continue;
+        };
+        match reports.iter().find(|(label, _)| label == path) {
+            None => violations.push(format!(
+                "report_digest_required: `{path}` names no committed report; remove the entry (#12816)"
+            )),
+            Some((_, report)) if !carries_digest(report) => violations.push(format!(
+                "{path}: the corpus requires this capture to carry `artifact.content_sha256`, but it has none (the field or its `artifact` block was removed). Recapture it with `ripr check --mode draft --format repo-exposure-json` (#12816)"
+            )),
+            Some(_) => {}
+        }
+        listed.push(path);
+    }
+    // The list is a rule, not a snapshot: a stamped capture added later must
+    // join it, or deleting its markers would pass unnoticed.
+    for (label, report) in reports {
+        if carries_digest(report) && !listed.contains(&label.as_str()) {
+            violations.push(format!(
+                "{label}: this capture carries `artifact.content_sha256` but is not in `report_digest_required`; add it so a later edit cannot strip its markers (#12816)"
+            ));
+        }
+    }
+}
+
+/// The file-name family `.gitattributes` declares `linguist-generated`, so
+/// candidate admission does not count its lines (#12739, #12859).
+fn is_declared_generated_capture(label: &str) -> bool {
+    let name = label.rsplit('/').next().unwrap_or(label);
+    name.ends_with(".json")
+        && (name.starts_with("rust-inherent-") || name.starts_with("rust-repo-exposure-"))
+}
+
+/// The admission exemption is a file name, so the gate must make the name
+/// true: a report in the declared family either is the `source_report` of a
+/// case that regenerates it from a Cargo subject, or is a full capture the
+/// corpus pins at an older generation in `report_cache_schema_pins` (a visible,
+/// reasoned `corpus.json` edit). Anything else could be hand-written text
+/// that borrowed the name to skip the size cap.
+fn declared_family_problems(
+    reports: &[(String, Value)],
+    regenerable: &[String],
+    pinned: &[String],
+    violations: &mut Vec<String>,
+) {
+    for (label, report) in reports {
+        if !is_declared_generated_capture(label) {
+            continue;
+        }
+        let regenerated = regenerable.iter().any(|path| path == label);
+        let held = pinned.iter().any(|path| path == label) && is_full_capture(report);
+        if !regenerated && !held {
+            violations.push(format!(
+                "{label}: this name is declared generated in `.gitattributes`, so admission does not count its lines, but no corpus case regenerates it (`source_report` with `report_subject`) and it is not a pinned full capture. Add a case that reads it, or rename the file (#12859)"
+            ));
+        }
+    }
+}
+
+/// Verify the self-digest of every committed report in the corpus (#12602).
+/// The regeneration guard above judges seams only and ignores the producer
+/// stamps, so a hand edit of a stamp left the digest stale with every gate green.
+pub(super) fn check_report_digests(violations: &mut Vec<String>) -> Result<(), String> {
+    let reports = Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS)
+        .parent()
+        .map_or_else(|| PathBuf::from("reports"), |dir| dir.join("reports"));
+    let mut files: Vec<PathBuf> = Vec::new();
+    match std::fs::read_dir(&reports) {
+        Ok(entries) => {
+            for entry in entries {
+                let path = entry
+                    .map_err(|error| format!("failed to list {}: {error}", reports.display()))?
+                    .path();
+                if path.extension().is_some_and(|ext| ext == "json") {
+                    files.push(path);
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("failed to list {}: {error}", reports.display())),
+    }
+    files.sort();
+    let mut parsed = Vec::new();
+    for path in files {
+        let label = normalize_path(&path);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {label}: {error}"))?;
+        violations.extend(report_digest_problem(&label, &text));
+        if let Ok(report) = serde_json::from_str::<Value>(&text) {
+            parsed.push((label, report));
+        }
+    }
+    let corpus = read_evidence_promotion_corpus(Path::new(EVIDENCE_PROMOTION_HONESTY_CORPUS))?;
+    let exemptions = read_digest_exemptions(&corpus, violations);
+    stamp_problems(&parsed, &exemptions, violations);
+    required_digest_problems(&corpus, &parsed, violations);
+    super::digest_delta::check(&corpus, violations)?;
+    let mut ignored = Vec::new();
+    let regenerable: Vec<String> = corpus
+        .get("cases")
+        .and_then(Value::as_array)
+        .map(|cases| repo_seam_cases(cases, &mut ignored))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(_, report, _)| report)
+        .collect();
+    let pinned: Vec<String> = corpus
+        .get("report_cache_schema_pins")
+        .and_then(Value::as_array)
+        .map(|pins| {
+            pins.iter()
+                .filter_map(|pin| pin.get("report").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    declared_family_problems(&parsed, &regenerable, &pinned, violations);
+    Ok(())
 }
 
 fn regenerate(subject: &Path, binary: &Path) -> Result<Value, String> {
@@ -277,6 +771,14 @@ pub(super) fn check_regenerated_reports(violations: &mut Vec<String>) -> Result<
         format!("failed to build ripr to regenerate repo-seam reports: {error}")
     })?;
     let binary = ripr_debug_binary();
+    // Resolve the analyzer's cache generation once. A capture recorded at this
+    // generation has its `evidence_path` summaries judged; a capture a pin holds
+    // at an older generation stays tolerated, which leaves the pin's "judged
+    // seams are unchanged" reason unexercised until the corpus is recaptured
+    // (#14555). The exemption cannot widen to an unpinned capture: a capture
+    // older than the current generation that no pin holds is a violation in
+    // `check_report_cache_schemas`, which runs in the same pass.
+    let current_generation = super::report_cache_schema::current_generation()?;
     for (id, report_path, subject_path) in regenerable {
         let case_label = format!("evidence promotion case `{id}`");
         let subject = Path::new(&subject_path);
@@ -292,7 +794,8 @@ pub(super) fn check_regenerated_reports(violations: &mut Vec<String>) -> Result<
             .map_err(|error| format!("{case_label}: {report_path} is not JSON: {error}"))?;
         match regenerate(subject, &binary) {
             Ok(regenerated) => {
-                let found = compare_reports(&case_label, &committed, &regenerated);
+                let found =
+                    compare_reports(&case_label, &committed, &regenerated, &current_generation);
                 if !found.is_empty() {
                     violations.extend(found);
                     violations.push(format!(
@@ -313,8 +816,18 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The generation the test captures record themselves at. The switch under
+    /// test is the real `judges_evidence_path`, so a capture at this generation
+    /// is judged and one at an older generation is tolerated.
+    const CURRENT_GENERATION: &str = "1.999";
+
+    fn at_generation(report: &mut Value, version: &str) {
+        report["source_subject"] = json!({"corpus": {"cache_schema_version": version}});
+    }
+
     fn report(grip: &str, propagate: &str, strength: &str) -> Value {
         json!({
+            "source_subject": {"corpus": {"cache_schema_version": CURRENT_GENERATION}},
             "seams": [{
                 "seam_id": "a1",
                 "file": "src/lib.rs", "line": 5, "column": 8, "kind": "predicate_boundary",
@@ -332,6 +845,383 @@ mod tests {
         })
     }
 
+    fn with_field_limit(report: &mut Value, present: bool) {
+        report["seams"][0]["evidence_record"] = json!({
+            "static_limitations": if present {
+                json!([{
+                    "stage": "discriminate", "state": "weak",
+                    "category": "rust_framework_oracle_unresolved"
+                }])
+            } else {
+                json!([])
+            }
+        });
+    }
+
+    fn field_limit_violations(report: &Value, present: bool) -> Vec<String> {
+        expected_limitation_violations(
+            "field",
+            report,
+            "src/lib.rs::check",
+            "a > b",
+            "rust_framework_oracle_unresolved",
+            present,
+        )
+    }
+
+    #[test]
+    fn named_limitation_assertions_distinguish_identical_class_and_stages() {
+        let mut ordinary = report("weakly_gripped", "yes", "medium");
+        with_field_limit(&mut ordinary, false);
+        let mut marked = ordinary.clone();
+        with_field_limit(&mut marked, true);
+        assert_eq!(
+            ordinary["seams"][0]["grip_class"],
+            marked["seams"][0]["grip_class"]
+        );
+        assert_eq!(
+            ordinary["seams"][0]["evidence"],
+            marked["seams"][0]["evidence"]
+        );
+        assert!(field_limit_violations(&ordinary, false).is_empty());
+        assert!(field_limit_violations(&marked, true).is_empty());
+        assert_eq!(field_limit_violations(&ordinary, true).len(), 1);
+        assert_eq!(field_limit_violations(&marked, false).len(), 1);
+        let stale = compare_reports("field", &marked, &ordinary, CURRENT_GENERATION);
+        assert_eq!(stale.len(), 1, "{stale:?}");
+        assert!(stale[0].contains("static limitations"), "{stale:?}");
+        // Re-blessing the missing marker satisfies freshness but cannot
+        // satisfy the independent corpus assertion that requires it.
+        assert!(compare_reports("field", &ordinary, &ordinary, CURRENT_GENERATION).is_empty());
+        assert!(!field_limit_violations(&ordinary, true).is_empty());
+    }
+
+    #[test]
+    fn named_limitation_assertions_reject_missing_malformed_and_duplicate_rows() {
+        let mut marked = report("weakly_gripped", "yes", "medium");
+        with_field_limit(&mut marked, true);
+        for bad in [json!({}), json!({"seams": []})] {
+            assert!(!field_limit_violations(&bad, false).is_empty());
+        }
+        let mut wrong_owner = marked.clone();
+        wrong_owner["seams"][0]["owner"] = json!("other");
+        assert!(!field_limit_violations(&wrong_owner, true).is_empty());
+        let ambiguous = json!({"seams": [marked["seams"][0], marked["seams"][0]]});
+        assert!(!field_limit_violations(&ambiguous, true).is_empty());
+        let mut malformed = marked.clone();
+        malformed["seams"][0]["evidence_record"]["static_limitations"] = json!({});
+        assert!(!field_limit_violations(&malformed, false).is_empty());
+        malformed["seams"][0]["evidence_record"]["static_limitations"] = json!([{}]);
+        assert!(!field_limit_violations(&malformed, false).is_empty());
+        let row = marked["seams"][0]["evidence_record"]["static_limitations"][0].clone();
+        marked["seams"][0]["evidence_record"]["static_limitations"] = json!([row, row]);
+        assert!(!field_limit_violations(&marked, true).is_empty());
+    }
+
+    #[test]
+    fn named_limitation_assertions_select_fields_apart_from_enclosing_returns() {
+        let owner = "src/lib.rs::make_record";
+        let field = "items: items.iter().count()";
+        let returned = "Record {\n    items: items.iter().count(),\n}";
+        let category = "rust_framework_oracle_unresolved";
+        let report = json!({
+            "seams": [
+                {
+                    "seam_id": "returned", "owner": owner, "kind": "return_value",
+                    "expression": returned,
+                    "evidence_record": {"static_limitations": []}
+                },
+                {
+                    "seam_id": "field", "owner": owner, "kind": "field_construction",
+                    "expression": field,
+                    "evidence_record": {"static_limitations": [{
+                        "stage": "discriminate", "state": "weak", "category": category
+                    }]}
+                }
+            ]
+        });
+        let judge = |expression: &str, present| {
+            expected_limitation_violations(
+                "nested field",
+                &report,
+                owner,
+                expression,
+                category,
+                present,
+            )
+        };
+        for selector in [field.to_string(), format!("  {field},  ")] {
+            let violations = judge(&selector, true);
+            assert!(violations.is_empty(), "{violations:?}");
+            assert_eq!(judge(&selector, false).len(), 1);
+        }
+        assert!(judge(returned, false).is_empty());
+        assert_eq!(judge(returned, true).len(), 1);
+        assert!(!judge(&format!("{field},,"), true).is_empty());
+        let mut with_comma = report.clone();
+        with_comma["seams"][1]["expression"] = json!(format!("  {field},  "));
+        let violations = expected_limitation_violations(
+            "field with comma",
+            &with_comma,
+            owner,
+            field,
+            category,
+            true,
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+        let return_only = json!({"seams": [report["seams"][0]]});
+        let missing = expected_limitation_violations(
+            "missing field",
+            &return_only,
+            owner,
+            field,
+            category,
+            false,
+        );
+        assert!(!missing.is_empty());
+        let empty_expression = json!({"seams": [{
+            "seam_id": "empty", "owner": owner, "expression": "",
+            "evidence_record": {"static_limitations": []}
+        }]});
+        for selector in ["", " ", ",", " , "] {
+            let malformed = expected_limitation_violations(
+                "empty expression",
+                &empty_expression,
+                owner,
+                selector,
+                category,
+                false,
+            );
+            assert!(!malformed.is_empty());
+        }
+    }
+
+    #[test]
+    fn named_limitation_cases_require_explicit_presence_and_a_live_subject() -> Result<(), String> {
+        let mut assertion = json!({
+            "type": "expected_repo_seam_limitation",
+            "owner": "src/lib.rs::check", "expression": "a > b",
+            "category": "rust_framework_oracle_unresolved"
+        });
+        if super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_ok() {
+            return Err("missing `present` must be rejected".to_string());
+        }
+        assertion["present"] = json!("true");
+        if super::super::evidence_promotion_parse_assertion("field", 0, &assertion).is_ok() {
+            return Err("non-boolean `present` must be rejected".to_string());
+        }
+        assertion["present"] = json!(true);
+        super::super::evidence_promotion_parse_assertion("field", 0, &assertion)?;
+        let mut case = json!({"id": "field", "assertions": [assertion]});
+        let mut missing = Vec::new();
+        assert!(repo_seam_cases(&[case.clone()], &mut missing).is_empty());
+        assert_eq!(missing.len(), 1);
+        case["source_report"] = json!("reports/field.json");
+        case["report_subject"] = json!("subjects/field");
+        let mut valid = Vec::new();
+        assert_eq!(repo_seam_cases(&[case], &mut valid).len(), 1);
+        assert!(valid.is_empty());
+        Ok(())
+    }
+
+    /// A report whose `content_sha256` is computed the producer's way.
+    fn sealed_report(extra_stamp: &str) -> String {
+        let template = format!(
+            "{{\n  \"artifact\": {{\"canonicalization\": \"raw_json_placeholder_v1\", \"content_sha256\": \"{CONTENT_DIGEST_PLACEHOLDER}\"}},\n  \"stamp\": \"{extra_stamp}\"\n}}\n"
+        );
+        let digest = format!("sha256:{:x}", Sha256::digest(template.as_bytes()));
+        template.replace(CONTENT_DIGEST_PLACEHOLDER, &digest)
+    }
+
+    #[test]
+    fn a_sealed_report_verifies_and_a_hand_edit_of_a_stamp_does_not() {
+        let sealed = sealed_report("1.138");
+        assert_eq!(report_digest_problem("r.json", &sealed), None);
+        // The #12368 failure: a producer stamp changed, the digest left alone.
+        let edited = sealed.replace("1.138", "1.139");
+        let problem = report_digest_problem("r.json", &edited);
+        assert!(
+            problem
+                .as_deref()
+                .is_some_and(|text| text.contains("edited after it was generated")),
+            "{problem:?}"
+        );
+        // Restoring the stamp restores the pass.
+        assert_eq!(
+            report_digest_problem("r.json", &edited.replace("1.139", "1.138")),
+            None
+        );
+    }
+
+    #[test]
+    fn an_unknown_canonicalization_or_non_json_report_is_not_a_pass() {
+        let other =
+            r#"{"artifact": {"canonicalization": "other_v2", "content_sha256": "sha256:ab"}}"#;
+        let problem = report_digest_problem("r.json", other);
+        assert!(
+            problem
+                .as_deref()
+                .is_some_and(|text| text.contains("unknown")),
+            "{problem:?}"
+        );
+        assert!(report_digest_problem("r.json", "not json").is_some());
+        // No digest claim, no problem: such a file asserts nothing to verify.
+        assert_eq!(report_digest_problem("r.json", r#"{"seams": []}"#), None);
+        assert_eq!(
+            report_digest_problem("r.json", r#"{"artifact": {"generated_at": "unix_ms:1"}}"#),
+            None
+        );
+    }
+
+    fn capture(stamped: bool) -> Value {
+        if stamped {
+            json!({"artifact": {"content_sha256": "sha256:ab"}, "source_subject": {"corpus": {}}})
+        } else {
+            json!({"artifact": {"generated_at": "unix_ms:1"}, "source_subject": {"corpus": {}}})
+        }
+    }
+
+    fn stamp_violations(reports: &[(&str, Value)], exempt: &[&str]) -> Vec<String> {
+        let reports: Vec<(String, Value)> = reports
+            .iter()
+            .map(|(label, report)| ((*label).to_string(), report.clone()))
+            .collect();
+        let exemptions: BTreeMap<String, String> = exempt
+            .iter()
+            .map(|label| ((*label).to_string(), "pre-stamp capture".to_string()))
+            .collect();
+        let mut violations = Vec::new();
+        stamp_problems(&reports, &exemptions, &mut violations);
+        violations
+    }
+
+    #[test]
+    fn deleting_the_digest_from_a_capture_fails_unless_it_is_exempt() {
+        // The #12745 evasion: the field is removed, the file still reads as a capture.
+        let deleted = stamp_violations(&[("a.json", capture(false))], &[]);
+        assert!(
+            deleted.len() == 1
+                && deleted[0].contains("a.json")
+                && deleted[0].contains("content_sha256"),
+            "{deleted:?}"
+        );
+        // Removing the `artifact` block too leaves the corpus identity to judge.
+        let no_artifact = json!({"source_subject": {"corpus": {}}});
+        assert_eq!(stamp_violations(&[("b.json", no_artifact)], &[]).len(), 1);
+        // A stamped capture, an exempt unstamped one and a trimmed projection pass.
+        assert!(stamp_violations(&[("c.json", capture(true))], &[]).is_empty());
+        assert!(stamp_violations(&[("d.json", capture(false))], &["d.json"]).is_empty());
+        let projection = json!({"scope": {}, "seams": []});
+        assert!(stamp_violations(&[("e.json", projection)], &[]).is_empty());
+    }
+
+    #[test]
+    fn a_required_capture_cannot_lose_every_marker() {
+        let corpus = json!({"report_digest_required": ["a.json", "gone.json", ""]});
+        let stripped = json!({"scope": {}, "seams": []});
+        let reports = vec![("a.json".to_string(), stripped)];
+        let mut violations = Vec::new();
+        required_digest_problems(&corpus, &reports, &mut violations);
+        assert_eq!(violations.len(), 3, "{violations:?}");
+        // A missing key or a non-array value disables nothing silently.
+        for bad in [json!({}), json!({"report_digest_required": {}})] {
+            let mut missing = Vec::new();
+            required_digest_problems(&bad, &[], &mut missing);
+            assert_eq!(missing.len(), 1, "{missing:?}");
+        }
+        // A stamped capture left off the list is a violation.
+        let unlisted = vec![("new.json".to_string(), capture(true))];
+        let mut off_list = Vec::new();
+        required_digest_problems(
+            &json!({"report_digest_required": []}),
+            &unlisted,
+            &mut off_list,
+        );
+        assert!(
+            off_list.len() == 1 && off_list[0].contains("not in `report_digest_required`"),
+            "{off_list:?}"
+        );
+        // The same report with its digest passes.
+        let stamped = vec![("a.json".to_string(), capture(true))];
+        let mut clean = Vec::new();
+        required_digest_problems(
+            &json!({"report_digest_required": ["a.json"]}),
+            &stamped,
+            &mut clean,
+        );
+        assert!(clean.is_empty(), "{clean:?}");
+    }
+
+    #[test]
+    fn a_declared_family_name_needs_a_regenerating_case_or_a_pinned_capture() {
+        let hand_written = json!({"scope": {}, "seams": []});
+        let name = "fixtures/x/reports/rust-inherent-pad.json";
+        let run = |report: &Value, regenerable: &[&str], pinned: &[&str]| {
+            let mut violations = Vec::new();
+            declared_family_problems(
+                &[(name.to_string(), report.clone())],
+                &regenerable
+                    .iter()
+                    .map(|s| (*s).to_string())
+                    .collect::<Vec<_>>(),
+                &pinned.iter().map(|s| (*s).to_string()).collect::<Vec<_>>(),
+                &mut violations,
+            );
+            violations
+        };
+        // An unreferenced marker-less file borrowing the name fails.
+        let failed = run(&hand_written, &[], &[]);
+        assert!(
+            failed.len() == 1 && failed[0].contains("#12859"),
+            "{failed:?}"
+        );
+        // A pin does not launder a file that is not a full capture.
+        assert_eq!(run(&hand_written, &[], &[name]).len(), 1);
+        // A regenerating case, or a pinned full capture, satisfies it.
+        assert!(run(&hand_written, &[name], &[]).is_empty());
+        assert!(run(&capture(true), &[], &[name]).is_empty());
+        // A name outside the family is not this rule's business.
+        let mut other = Vec::new();
+        declared_family_problems(
+            &[("a/reports/rust-matches-x.json".to_string(), hand_written)],
+            &[],
+            &[],
+            &mut other,
+        );
+        assert!(other.is_empty());
+    }
+
+    #[test]
+    fn a_stale_exemption_fails() {
+        let stamped = stamp_violations(&[("a.json", capture(true))], &["a.json"]);
+        assert!(
+            stamped
+                .iter()
+                .any(|text| text.contains("remove the exemption")),
+            "{stamped:?}"
+        );
+        let missing = stamp_violations(&[], &["gone.json"]);
+        assert!(
+            missing
+                .iter()
+                .any(|text| text.contains("names no committed capture")),
+            "{missing:?}"
+        );
+    }
+
+    #[test]
+    fn a_malformed_exemption_entry_is_a_violation() {
+        let corpus = json!({"report_digest_exemptions": [
+            {"report": "a.json", "reason": "  "},
+            {"report": "b.json", "reason": "why"},
+            {"report": "b.json", "reason": "again"},
+        ]});
+        let mut violations = Vec::new();
+        let read = read_digest_exemptions(&corpus, &mut violations);
+        assert_eq!(read.len(), 1);
+        assert_eq!(violations.len(), 2, "{violations:?}");
+    }
+
     #[test]
     fn an_unchanged_capture_has_no_differences() {
         let committed = report("strongly_gripped", "yes", "strong");
@@ -339,7 +1229,7 @@ mod tests {
         // Fields outside the judged set are free to move between captures.
         regenerated["seams"][0]["seam_id"] = json!("b2");
         regenerated["artifact"] = json!({"generated_at": "unix_ms:2"});
-        assert!(compare_reports("case", &committed, &regenerated).is_empty());
+        assert!(compare_reports("case", &committed, &regenerated, CURRENT_GENERATION).is_empty());
     }
 
     #[test]
@@ -355,7 +1245,7 @@ mod tests {
             // oracle of a related test changes.
             (report("strongly_gripped", "yes", "none"), "related tests"),
         ] {
-            let found = compare_reports("case", &committed, &fresh);
+            let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
             assert_eq!(found.len(), 1, "{needle}: {found:?}");
             assert!(found[0].contains(needle), "{needle}: {found:?}");
         }
@@ -382,7 +1272,7 @@ mod tests {
         for (needle, edit) in edits {
             let mut fresh = committed.clone();
             edit(&mut fresh);
-            let found = compare_reports("case", &committed, &fresh);
+            let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
             assert_eq!(found.len(), 1, "{needle}: {found:?}");
             assert!(found[0].contains(needle), "{needle}: {found:?}");
         }
@@ -391,11 +1281,12 @@ mod tests {
     #[test]
     fn a_seam_present_on_only_one_side_is_a_difference() {
         let committed = report("strongly_gripped", "yes", "strong");
-        let empty = json!({"seams": []});
-        let gone = compare_reports("case", &committed, &empty);
+        let mut empty = committed.clone();
+        empty["seams"] = json!([]);
+        let gone = compare_reports("case", &committed, &empty, CURRENT_GENERATION);
         assert_eq!(gone.len(), 1, "{gone:?}");
         assert!(gone[0].contains("no longer produces"), "{gone:?}");
-        let added = compare_reports("case", &empty, &committed);
+        let added = compare_reports("case", &empty, &committed, CURRENT_GENERATION);
         assert_eq!(added.len(), 1, "{added:?}");
         assert!(added[0].contains("does not carry"), "{added:?}");
     }
@@ -403,9 +1294,176 @@ mod tests {
     #[test]
     fn a_report_without_seams_is_an_error_not_a_pass() {
         let committed = report("strongly_gripped", "yes", "strong");
-        let found = compare_reports("case", &committed, &json!({"findings": []}));
+        let found = compare_reports(
+            "case",
+            &committed,
+            &json!({"findings": []}),
+            CURRENT_GENERATION,
+        );
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].contains("no `seams` array"), "{found:?}");
+    }
+
+    /// The #14555 shape: the flat `evidence` map is a projection, so a weakly
+    /// gripped seam reads `discriminate: weak` there while the record says
+    /// `yes`. Both sides keep that divergence; only the record's summary moves.
+    fn with_evidence_path(report: &mut Value, summary: &str) {
+        report["seams"][0]["evidence"]["discriminate"] = json!("weak");
+        report["seams"][0]["evidence_record"] = json!({
+            "evidence_path": {
+                "discriminate": {
+                    "state": "yes",
+                    "confidence": "medium",
+                    "summary": summary
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn a_changed_evidence_path_summary_is_a_difference_when_judged() {
+        let mut committed = report("weakly_gripped", "yes", "strong");
+        at_generation(&mut committed, CURRENT_GENERATION);
+        with_evidence_path(
+            &mut committed,
+            "Strongest oracle for seam kind `predicate_boundary` is `strong` (kind-match true)",
+        );
+        let mut fresh = committed.clone();
+        with_evidence_path(
+            &mut fresh,
+            "Strongest oracle for seam kind `predicate_boundary` is `weak` (kind-match false)",
+        );
+        let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("evidence_path"), "{found:?}");
+        assert!(found[0].contains("discriminate"), "{found:?}");
+        // The flat map is identical on both sides, so a comparison that read it
+        // instead of the record would find nothing to report.
+        assert_eq!(
+            committed["seams"][0]["evidence"], fresh["seams"][0]["evidence"],
+            "the flat map must not be what moved"
+        );
+    }
+
+    #[test]
+    fn a_changed_evidence_path_summary_is_tolerated_for_a_pinned_capture() {
+        let mut committed = report("weakly_gripped", "yes", "strong");
+        at_generation(&mut committed, "1.176");
+        with_evidence_path(&mut committed, "committed summary");
+        let mut fresh = committed.clone();
+        with_evidence_path(&mut fresh, "regenerated summary");
+        assert!(
+            compare_reports("case", &committed, &fresh, CURRENT_GENERATION).is_empty(),
+            "a capture held at an older generation must stay tolerated"
+        );
+    }
+
+    #[test]
+    fn a_malformed_evidence_path_is_a_violation_not_a_pass() {
+        let mut committed = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut committed, CURRENT_GENERATION);
+        let mut fresh = committed.clone();
+        fresh["seams"][0]["evidence_record"] = json!({
+            "evidence_path": [{"stage": "discriminate", "summary": "an array, not an object"}]
+        });
+        let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].contains("malformed evidence_record.evidence_path"),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_non_string_evidence_path_field_is_a_violation_not_a_pass() {
+        let mut committed = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut committed, CURRENT_GENERATION);
+        let mut fresh = committed.clone();
+        fresh["seams"][0]["evidence_record"] = json!({
+            "evidence_path": {
+                "discriminate": {
+                    "state": "yes",
+                    "confidence": "medium",
+                    "summary": {"nested": "an object, not a string"}
+                }
+            }
+        });
+        let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].contains("non-string evidence_path `summary`"),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_pinned_capture_with_a_malformed_evidence_path_stays_tolerated() {
+        let mut committed = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut committed, "1.176");
+        let mut fresh = committed.clone();
+        fresh["seams"][0]["evidence_record"] = json!({
+            "evidence_path": [{"stage": "discriminate", "summary": "an array, not an object"}]
+        });
+        assert!(
+            compare_reports("case", &committed, &fresh, CURRENT_GENERATION).is_empty(),
+            "a pin tolerates the capture whole, including a shape the current analyzer rejects"
+        );
+    }
+
+    #[test]
+    fn an_absent_evidence_path_is_tolerated() {
+        let mut committed = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut committed, CURRENT_GENERATION);
+        let mut fresh = committed.clone();
+        fresh["seams"][0]["evidence_record"] = json!({"static_limitations": []});
+        assert!(
+            compare_reports("case", &committed, &fresh, CURRENT_GENERATION).is_empty(),
+            "absence is not staleness"
+        );
+    }
+
+    /// The switch reads the analyzer's own constant, so a capture recorded at
+    /// the generation in this tree is judged and one recorded at any other is
+    /// not. This is the oracle the caller lacked: forcing the comparison off
+    /// reds `a_changed_evidence_path_summary_is_a_difference_when_judged`.
+    #[test]
+    fn the_generation_switch_follows_the_analyzers_constant() -> Result<(), String> {
+        let source = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../crates/ripr/src/analysis/seam_cache.rs"
+        ))
+        .map_err(|error| format!("the analyzer source is in this tree: {error}"))?;
+        let current = super::super::report_cache_schema::current_cache_schema_version(&source)?;
+        let mut at_current = report("strongly_gripped", "yes", "strong");
+        at_generation(&mut at_current, &current);
+        assert!(super::super::report_cache_schema::judges_evidence_path(
+            &at_current,
+            &current
+        )?);
+        let mut pinned = at_current.clone();
+        at_generation(&mut pinned, "1.0");
+        assert!(!super::super::report_cache_schema::judges_evidence_path(
+            &pinned, &current
+        )?);
+        Ok(())
+    }
+
+    #[test]
+    fn regenerable_records_require_corpus_provenance() {
+        let fresh = report("strongly_gripped", "yes", "strong");
+        let mut committed = fresh.clone();
+        for version in ["1.176", CURRENT_GENERATION] {
+            at_generation(&mut committed, version);
+            assert!(compare_reports("case", &committed, &fresh, CURRENT_GENERATION).is_empty());
+        }
+        committed["source_subject"] = json!({});
+        let found = compare_reports("case", &committed, &fresh, CURRENT_GENERATION);
+        assert_eq!(
+            found,
+            [
+                "case: committed report: regenerable capture requires `source_subject.corpus.cache_schema_version` to check currentness"
+            ]
+        );
     }
 
     #[test]

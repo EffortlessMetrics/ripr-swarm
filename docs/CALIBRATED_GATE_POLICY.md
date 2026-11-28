@@ -178,11 +178,18 @@ Top-level statuses are:
 
 | Status | Meaning |
 | --- | --- |
-| `pass` | A configured non-advisory mode found no visible candidate decisions. |
-| `advisory` | Findings are visible but non-blocking. |
+| `pass` | An enforcing mode (`acknowledgeable`, `baseline-check`, `calibrated-gate`) recorded no advisory, suppressed, unknown-confidence, acknowledged, or blocking candidates and no warnings. Not reachable in `visible-only`. |
+| `advisory` | Either advisory evidence was recorded without a block or acknowledgement, or the mode is `visible-only`, which never blocks on findings and reads `advisory` for every completed run that an exception-policy violation does not block, including one that recorded nothing. |
 | `acknowledged` | At least one policy-eligible candidate was acknowledged by a configured label and none blocked. |
 | `blocked` | At least one policy-eligible candidate blocks under the explicit mode. |
 | `config_error` | Required input or policy configuration is invalid. |
+
+In `visible-only` mode the `advisory` token therefore does not say whether
+anything was found. Read the `summary` counts and `warnings` instead: a
+visible-only report with every count at zero and no warnings recorded nothing,
+and its Markdown report says so under the counts. To get an enforcing `pass` or
+`blocked` result, pass `--mode acknowledgeable`, `--mode baseline-check`, or
+`--mode calibrated-gate`.
 
 Candidate decisions are `blocking`, `acknowledged`, `advisory`, `suppressed`,
 or `not_applicable`. Review the per-candidate `gate_reason` before changing a

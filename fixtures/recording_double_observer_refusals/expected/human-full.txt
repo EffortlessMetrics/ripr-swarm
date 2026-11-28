@@ -3,11 +3,12 @@ mode: fast
 root: fixtures/recording_double_observer_refusals/input
 
 Summary: 16 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 16 static_unknown; 16 of 16 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 8 changed file(s), 16 changed line(s), 8 candidate line(s), 16 changed behavior(s) checked, 16 finding(s)
@@ -20,7 +21,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/assertion_message.rs::report_assertion_message
@@ -63,6 +64,7 @@ Limitation detail
 Next step
   `exact_line` (src/assertion_message.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_assertion_message.rs:call_deletion:24b7502f
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_assertion_message.rs:call_deletion:24b7502f
 
@@ -117,6 +119,7 @@ Limitation detail
 Next step
   `exact_line` (src/assertion_message.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_assertion_message.rs:side_effect:04fd9380
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_assertion_message.rs:side_effect:04fd9380
 
@@ -128,7 +131,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/dyn_inherent.rs::report_dyn_inherent
@@ -168,6 +171,7 @@ Limitation detail
 Next step
   `exact_line` (src/dyn_inherent.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_dyn_inherent.rs:call_deletion:44b421e2
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_dyn_inherent.rs:call_deletion:44b421e2
 
@@ -219,6 +223,7 @@ Limitation detail
 Next step
   `exact_line` (src/dyn_inherent.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_dyn_inherent.rs:side_effect:3993f2f3
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_dyn_inherent.rs:side_effect:3993f2f3
 
@@ -230,7 +235,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/let_else.rs::report_let_else
@@ -270,6 +275,7 @@ Limitation detail
 Next step
   `exact_line` (src/let_else.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_let_else.rs:call_deletion:fbb4d2a8
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_let_else.rs:call_deletion:fbb4d2a8
 
@@ -321,6 +327,7 @@ Limitation detail
 Next step
   `exact_line` (src/let_else.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_let_else.rs:side_effect:e3ecfb19
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_let_else.rs:side_effect:e3ecfb19
 
@@ -332,7 +339,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/owned_clone.rs::report_owned_clone
@@ -372,6 +379,7 @@ Limitation detail
 Next step
   `exact_line` (src/owned_clone.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_owned_clone.rs:call_deletion:832b944c
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_owned_clone.rs:call_deletion:832b944c
 
@@ -423,6 +431,7 @@ Limitation detail
 Next step
   `exact_line` (src/owned_clone.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_owned_clone.rs:side_effect:64c4dbe2
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_owned_clone.rs:side_effect:64c4dbe2
 
@@ -434,7 +443,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/push_dispatch.rs::report_push_dispatch
@@ -474,6 +483,7 @@ Limitation detail
 Next step
   `exact_line` (src/push_dispatch.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_push_dispatch.rs:call_deletion:cf682a63
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_push_dispatch.rs:call_deletion:cf682a63
 
@@ -525,6 +535,7 @@ Limitation detail
 Next step
   `exact_line` (src/push_dispatch.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_push_dispatch.rs:side_effect:da040992
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_push_dispatch.rs:side_effect:da040992
 
@@ -536,7 +547,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/raw_binding.rs::report_raw_binding
@@ -577,6 +588,7 @@ Limitation detail
 Next step
   `exact_line` (src/raw_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_raw_binding.rs:call_deletion:ef9b1af4
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_raw_binding.rs:call_deletion:ef9b1af4
 
@@ -629,6 +641,7 @@ Limitation detail
 Next step
   `exact_line` (src/raw_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_raw_binding.rs:side_effect:a6de246b
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_raw_binding.rs:side_effect:a6de246b
 
@@ -640,7 +653,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/raw_receiver.rs::report_raw_receiver
@@ -680,6 +693,7 @@ Limitation detail
 Next step
   `exact_line` (src/raw_receiver.rs:23) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_raw_receiver.rs:call_deletion:705f92d0
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_raw_receiver.rs:call_deletion:705f92d0
 
@@ -731,6 +745,7 @@ Limitation detail
 Next step
   `exact_line` (src/raw_receiver.rs:23) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_raw_receiver.rs:side_effect:33d3c050
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_raw_receiver.rs:side_effect:33d3c050
 
@@ -742,7 +757,7 @@ Changed
   after:  sink.send(format!("n={n}"))
 
 Change type
-  a call was removed
+  a line that makes a call changed
   family: call_deletion
   delta:  effect (changes a side effect)
   owner:  src/unicode_binding.rs::report_unicode_binding
@@ -783,6 +798,7 @@ Limitation detail
 Next step
   `exact_line` (src/unicode_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_unicode_binding.rs:call_deletion:cbcd6182
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_unicode_binding.rs:call_deletion:cbcd6182
 
@@ -835,5 +851,6 @@ Limitation detail
 Next step
   `exact_line` (src/unicode_binding.rs:19) passes the owner a test double and compares what the double recorded, and ripr does not follow the changed value through the double's own method into that field, so ripr does not report a gap. Check that the test's setup reaches the changed code and that its expectation differs between the old and the new behavior; add a test only if either fails
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast probe:src_unicode_binding.rs:side_effect:c1f54828
   ripr context --root <cwd>/fixtures/recording_double_observer_refusals/input --diff <cwd>/fixtures/recording_double_observer_refusals/diff.patch --mode fast --at probe:src_unicode_binding.rs:side_effect:c1f54828

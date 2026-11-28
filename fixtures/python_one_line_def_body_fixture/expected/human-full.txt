@@ -4,11 +4,12 @@ root: fixtures/python_one_line_def_body_fixture/input
 config: <cwd>/fixtures/python_one_line_def_body_fixture/input/ripr.toml
 
 Summary: 1 changed behavior(s) checked: 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 1 static_unknown; 1 of 1 finding(s) unsuppressed
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Changed file(s) by language: python = 1
 
@@ -34,6 +35,7 @@ Language
 
 Static exposure
   static_unknown (note, confidence 0.20)
+  Why capped: preview adapter: infection/propagation not modeled (Python); syntax-first, no type or import resolution; whether a test checks this behavior is not established. Preview score, not on the same scale as Rust confidence.
 
 Evidence
   - reach yes: 1 related Python test(s) found for owner `bulk_discount`
@@ -44,7 +46,7 @@ Evidence
   - related test tests/test_discount.py:4 test_bulk_discount_at_threshold uses strong exact value oracle: assert bulk_discount(quantity) == 0.1
 
 Weakness
-  - Static limit `unresolved_pytest_fixture`: a related pytest test depends on fixture-sourced values; syntax-first preview evidence cannot prove whether the fixture supplies the changed discriminator or expected value
+  - Static limit `unresolved_pytest_fixture`: a related pytest test uses a fixture, and static analysis cannot tell whether it supplies an input that exercises the change or the value the test expects
 
 Stop reasons:
   - ripr could not model this change well enough to classify it (static_probe_unknown)
@@ -52,10 +54,10 @@ Stop reasons:
 
 Static limitation
   unresolved_pytest_fixture — A pytest fixture could not be resolved, so ripr cannot statically connect the test setup to this change.
-  Next: Define the fixture by a static name in the test file or its `conftest.py`, or pass the input value inline in the test.
+  Next: Pass the input value inline in the test body. A fixture is read only when its whole body is one of the supported shapes (for example `return OwnerClass(<literals>)`); a fixture of another shape stays unread, including one defined in a `conftest.py`.
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/python_one_line_def_body_fixture/input --diff <cwd>/fixtures/python_one_line_def_body_fixture/diff.patch --mode fast probe:discount.py:python_preview:5ee0ee5a
   ripr context --root <cwd>/fixtures/python_one_line_def_body_fixture/input --diff <cwd>/fixtures/python_one_line_def_body_fixture/diff.patch --mode fast --at probe:discount.py:python_preview:5ee0ee5a
-
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

@@ -8,12 +8,12 @@ use super::*;
 const GLOBS: &str = "src/globs.rs";
 const SUITE: &str = "src/suite.rs";
 const SUITE_TESTS: &str = "src/suite/tests.rs";
+const INLINE_TESTS: &str = "src/suite/inline/tests.rs";
 const ROOT_LIB: &str = "mod globs;\nmod suite;\npub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
 const GLOB: &str =
     "use rayon::prelude::*;\npub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n";
 const PLAIN: &str = "pub fn drain(input: &mut Vec<u8>) {\n    input.clear();\n}\n";
-const SUITE_BODY: &str =
-    "use crate::weight;\n\n#[test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+const SUITE_BODY: &str = "use crate::weight;\n\n#[test]\nfn weighs() {\n    let _ = vec![0u8];\n    assert_eq!(weight(4), 12);\n}\n";
 
 fn refusal_of(index: &RustIndex, test_file: &str) -> Option<AssertionRefusal> {
     let test = index
@@ -56,19 +56,162 @@ fn a_sibling_modules_private_glob_does_not_block_the_test() {
 }
 
 #[test]
-fn a_glob_in_the_tests_own_file_or_an_ancestor_still_blocks_it() {
+fn a_glob_in_the_tests_own_file_still_blocks_it() {
     let own = format!("use rayon::prelude::*;\n{SUITE_BODY}");
     let index_own = index(&[(LIB, ROOT_LIB), (GLOBS, PLAIN), (SUITE, own.as_str())]);
     assert!(is_binding(&refusal_of(&index_own, SUITE)), "own file");
+}
+
+/// #13269: a private `use` is not inherited by a child module, so a crate-root
+/// glob (`use colored::*;` in `main.rs`) cannot rebind `assert_eq!` in a
+/// descendant that holds no glob of its own to carry it down.
+#[test]
+fn an_ancestor_glob_does_not_reach_a_descendant_with_no_glob_chain() {
     let lib = format!("use rayon::prelude::*;\n{ROOT_LIB}");
     let index_root = index(&[(LIB, lib.as_str()), (GLOBS, PLAIN), (SUITE, SUITE_BODY)]);
-    assert!(is_binding(&refusal_of(&index_root, SUITE)), "crate root");
+    assert_eq!(refusal_of(&index_root, SUITE), None, "crate root");
+    // Two levels down, with neither module carrying a glob.
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let child = "#[test]\nfn weighs() {\n    let _ = vec![0u8];\n    assert_eq!(2 + 2, 4);\n}\n";
+    let deep = index(&[(LIB, lib), (SUITE, "mod tests;\n"), (SUITE_TESTS, child)]);
+    assert_eq!(refusal_of(&deep, SUITE_TESTS), None, "two levels");
+    // A `use super::*` in the test module alone reaches `suite`, not the root.
+    let child = "use super::*;\n\n#[test]\nfn weighs() {\n    let _ = vec![0u8];\n    assert_eq!(2 + 2, 4);\n}\n";
+    let broken = index(&[(LIB, lib), (SUITE, "mod tests;\n"), (SUITE_TESTS, child)]);
+    assert_eq!(
+        refusal_of(&broken, SUITE_TESTS),
+        None,
+        "chain stops at suite"
+    );
+}
+
+/// Negative controls: every path that can carry the root glob down keeps the
+/// refusal, as does any composition ripr cannot establish.
+#[test]
+fn an_ancestor_glob_still_blocks_a_descendant_a_glob_chain_can_reach() {
+    let lib = format!("use rayon::prelude::*;\n{ROOT_LIB}");
+    // `use crate::*` in the test's own module reaches the root directly.
+    let via_crate = format!("use crate::*;\n{SUITE_BODY}");
+    let index_crate = index(&[
+        (LIB, lib.as_str()),
+        (GLOBS, PLAIN),
+        (SUITE, via_crate.as_str()),
+    ]);
+    assert!(is_binding(&refusal_of(&index_crate, SUITE)), "use crate::*");
+    let via_super = format!("use super::*;\n{SUITE_BODY}");
+    let index_super = index(&[
+        (LIB, lib.as_str()),
+        (GLOBS, PLAIN),
+        (SUITE, via_super.as_str()),
+    ]);
+    assert!(is_binding(&refusal_of(&index_super, SUITE)), "use super::*");
+    // Chained through the intermediate module and the test module.
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let child = "use super::*;\n\n#[test]\nfn weighs() {\n    let _ = vec![0u8];\n    assert_eq!(2 + 2, 4);\n}\n";
+    let chained = index(&[
+        (LIB, lib),
+        (SUITE, "use super::*;\nmod tests;\n"),
+        (SUITE_TESTS, child),
+    ]);
+    assert!(is_binding(&refusal_of(&chained, SUITE_TESTS)), "full chain");
+    // A macro call at item position could emit the glob.
+    let macro_suite = index(&[
+        (LIB, lib),
+        (SUITE, "emit_glob!();\nmod tests;\n"),
+        (SUITE_TESTS, child),
+    ]);
+    assert!(is_binding(&refusal_of(&macro_suite, SUITE_TESTS)), "macro");
+    // A file that does not parse cleanly may hold anything.
+    let broken = index(&[
+        (LIB, lib),
+        (SUITE, "mod tests;\nfn broken( {\n"),
+        (SUITE_TESTS, child),
+    ]);
+    assert!(is_binding(&refusal_of(&broken, SUITE_TESTS)), "unparsed");
+}
+
+#[test]
+fn a_deep_glob_can_skip_an_intermediate_module() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    for import in ["use crate::*;", "use super::super::*;", "use crate::{*};"] {
+        let child = format!(
+            "{import}\n#[test] fn weighs() {{ let _ = vec![0u8]; assert_eq!(2 + 2, 4); }}\n"
+        );
+        let indexed = index(&[(LIB, lib), (SUITE, "mod tests;\n"), (SUITE_TESTS, &child)]);
+        assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)), "{import}");
+    }
+    let inline = "mod inner { use crate::*; #[test] fn weighs() { let _ = vec![0u8]; assert_eq!(2 + 2, 4); } }";
+    let indexed = index(&[(LIB, lib), (SUITE, "mod tests;\n"), (SUITE_TESTS, inline)]);
+    assert!(
+        is_binding(&refusal_of(&indexed, SUITE_TESTS)),
+        "inline module"
+    );
+    let generated =
+        "emit_glob!(); #[test] fn weighs() { let _ = vec![0u8]; assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[
+        (LIB, lib),
+        (SUITE, "mod tests;\n"),
+        (SUITE_TESTS, generated),
+    ]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)), "item macro");
+}
+
+#[test]
+fn a_named_import_in_an_inline_module_can_reach_an_out_of_line_child() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "mod inline { use crate::assert_eq; mod tests; }";
+    let child = "use super::*; #[test] fn weighs() { let _ = vec![0u8]; assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (INLINE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, INLINE_TESTS)));
+}
+
+#[test]
+fn an_unknown_derive_may_emit_a_glob_into_an_intermediate_module() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "#[derive(inject::Emit)] struct Marker; mod tests;";
+    let child = "use super::*; #[test] fn weighs() { let _ = vec![0u8]; assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
+}
+
+#[test]
+fn a_shadowed_test_attribute_may_emit_an_intermediate_glob() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "use inject::test; #[test] fn marker() {} mod tests;";
+    let child = "use super::*; #[test] fn weighs() { let _ = vec![0u8]; assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
+}
+
+#[test]
+fn inert_attributes_do_not_create_a_glob_chain() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "/// documentation\n#[warn(dead_code)] #[derive(Debug, Clone, PartialEq, Eq)] struct Marker; mod tests;";
+    let child = "use super::*; #[test] fn weighs() { let _ = vec![0u8]; assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert_eq!(refusal_of(&indexed, SUITE_TESTS), None);
+    let nested = "#[derive(Debug)] struct Marker; mod tests { use super::*; #[test] fn weighs() { let _ = vec![0u8]; assert_eq!(2 + 2, 4); } }";
+    let indexed = index(&[(LIB, lib), (SUITE, "mod tests;"), (SUITE_TESTS, nested)]);
+    assert_eq!(
+        refusal_of(&indexed, SUITE_TESTS),
+        None,
+        "inline test module"
+    );
+}
+
+#[test]
+fn a_shadowed_debug_derive_may_emit_an_intermediate_glob() {
+    let lib = "use rayon::prelude::*;\nmod suite;\n";
+    let suite = "use inject::Debug; #[derive(Debug)] struct Marker; mod tests;";
+    let child = "use super::*; #[test] fn weighs() { let _ = vec![0u8]; assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
 }
 
 #[test]
 fn a_glob_reaches_a_child_test_module_file_through_use_super() {
     let parent = "use rayon::prelude::*;\nmod tests;\npub fn w() {}\n";
-    let child = "use super::*;\n\n#[test]\nfn weighs() {\n    assert_eq!(2 + 2, 4);\n}\n";
+    let child = "use super::*;\n\n#[test]\nfn weighs() {\n    let _ = vec![0u8];\n    assert_eq!(2 + 2, 4);\n}\n";
     let lib = "mod suite;\n";
     let blocked = index(&[(LIB, lib), (SUITE, parent), (SUITE_TESTS, child)]);
     assert!(is_binding(&refusal_of(&blocked, SUITE_TESTS)));
@@ -125,6 +268,32 @@ fn an_unresolved_include_anywhere_leaves_the_glob_workspace_wide() {
     assert!(is_binding(&refusal_of(&index, SUITE)));
 }
 
+/// RIPR-SPEC-0369 / #14116: named member re-exports do not turn a local
+/// module glob into a foreign glob, even while placement is unavailable.
+#[test]
+fn sibling_member_reexports_preserve_assertion_admission_with_an_include_limit() {
+    use crate::analysis::facts::RustIncludeLimitation;
+    let lib = "mod model;\nuse model::*;\npub(crate) use model::{A, B};\nmod suite;\npub fn weight(x: u32) -> u32 { x * 3 }\n";
+    for (model, admitted) in [
+        ("pub struct A; pub struct B;", true),
+        // A local module's real public macro import must still be seen.
+        (
+            "pub struct A; pub struct B; pub use foreign::assert_eq;",
+            false,
+        ),
+    ] {
+        let mut index = index(&[(LIB, lib), ("src/model.rs", model), (SUITE, SUITE_BODY)]);
+        index.include_limitations.push(RustIncludeLimitation {
+            parent: PathBuf::from("tests/unrelated.rs"),
+            line: 1,
+            expression: "include!(\"leaf.rs\")".to_string(),
+            reason_code: "rust_include_nested_module_context".to_string(),
+        });
+        assert!(TargetRoots::new(&index).disabled, "placement stays refused");
+        assert_eq!(refusal_of(&index, SUITE).is_none(), admitted, "{model}");
+    }
+}
+
 #[test]
 fn a_public_glob_is_not_confined() {
     let public = "pub use rayon::prelude::*;\n";
@@ -137,8 +306,15 @@ fn a_withheld_file_keeps_its_glob_workspace_wide() {
     let mut withheld = WithheldMacroBindings::default();
     let packages = BTreeSet::new();
     let drop_ins = DropInManifests::default();
-    withheld.absorb(Path::new(GLOBS), GLOB, &packages, &drop_ins);
-    assert!(withheld.any_name, "a withheld file has no module edges");
+    // The glob is not every-name (#16060): it leaves the fold open for a
+    // later binding of a core prelude name.
+    assert!(!withheld.absorb(Path::new(GLOBS), GLOB, &packages, &drop_ins));
+    assert!(
+        withheld.glob_any_name,
+        "a withheld file has no module edges"
+    );
+    assert!(withheld.trusted.contains("vec") && !withheld.trusted.contains("assert_eq"));
+    assert!(withheld.by_root.is_empty());
 }
 
 /// The retained lookup agrees with the reference scan for a test in a
@@ -165,7 +341,7 @@ fn the_refusal_site_names_the_glob_only_for_tests_it_reaches() {
     }
     let site = |file: &str| {
         syntax
-            .workspace_macro_site_for("assert_eq", root, Some(Path::new(file)), &index)
+            .workspace_macro_site_for("vec", root, Some(Path::new(file)), &index)
             .map(|(path, site)| (path, site.kind))
     };
     assert_eq!(site(SUITE), None);
@@ -175,7 +351,84 @@ fn the_refusal_site_names_the_glob_only_for_tests_it_reaches() {
     // The test's file is unknown: the glob keeps its crate-local reach.
     assert!(
         syntax
-            .workspace_macro_site_for("assert_eq", root, None, &index)
+            .workspace_macro_site_for("vec", root, None, &index)
             .is_some()
     );
+}
+
+#[test]
+fn review_macro_use_can_shadow_builtin_derive_in_ancestor() {
+    let lib = "#[macro_use] extern crate inject;\nuse rayon::prelude::*;\nmod suite;\n";
+    let suite = "#[derive(Debug)] struct Marker; mod tests;";
+    let child = "use super::*; #[test] fn weighs() { let _ = vec![0u8]; assert_eq!(2 + 2, 4); }";
+    let indexed = index(&[(LIB, lib), (SUITE, suite), (SUITE_TESTS, child)]);
+    assert!(is_binding(&refusal_of(&indexed, SUITE_TESTS)));
+}
+
+/// #14116: std's `thread_local!` in the file does not turn the file's own
+/// module glob (`mod inner; use inner::*;`) into a foreign glob, so a test in
+/// that file keeps its `assert_eq!` credit. A non-std item macro still refuses.
+#[test]
+fn a_thread_local_beside_a_sibling_module_glob_keeps_the_test_credited() {
+    let tests = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn weighs() {\n        let _ = vec![0u8];\n    assert_eq!(weight(4), 12);\n    }\n}\n";
+    let body = "pub fn weight(x: u32) -> u32 {\n    x * 3 + helper()\n}\n";
+    for (item_macro, admitted) in [
+        ("thread_local! { static C: u8 = 0; }", true),
+        ("std::thread_local! { static C: u8 = 0; }", true),
+        ("dep::items! {}", false),
+    ] {
+        let suite = format!("mod inner;\nuse inner::*;\n{item_macro}\n{body}{tests}");
+        let index = index(&[
+            (LIB, "mod suite;\n"),
+            (SUITE, suite.as_str()),
+            ("src/suite/inner.rs", "pub fn helper() -> u32 {\n    0\n}\n"),
+        ]);
+        assert_eq!(
+            refusal_of(&index, SUITE).is_none(),
+            admitted,
+            "{item_macro}"
+        );
+    }
+}
+
+/// #14116: `mod core; use core::*;` (ripr's own `cli/help.rs`) globs the
+/// module the file declares, because a declared item shadows the extern
+/// prelude. The standard-root rule declines the file for that module and the
+/// local-module rule used to decline the name, so the glob was foreign under
+/// both and blocked every plain `assert_eq!` in the file's tests.
+#[test]
+fn a_glob_of_a_declared_module_named_like_a_standard_crate_does_not_block_the_test() {
+    const CORE: &str = "src/suite/core.rs";
+    let lib = "mod suite;\n";
+    let tests = "\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn weighs() {\n        let _ = vec![0u8];\n    assert_eq!(weight(4), 12);\n    }\n}\n";
+    let weight = "pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    for root in ["core", "std", "alloc"] {
+        let member = format!("src/suite/{root}.rs");
+        let suite = format!("mod {root};\nuse {root}::*;\n{tests}");
+        let local = index(&[(LIB, lib), (SUITE, suite.as_str()), (&member, weight)]);
+        assert_eq!(refusal_of(&local, SUITE), None, "declared `{root}`");
+    }
+    // The module's own macro import is still reported at its file. The
+    // glob chain (`core::*`, then `super::*`) carries it to the test's call.
+    let suite = format!("mod core;\nuse core::*;\n{tests}");
+    let rebinding = format!("pub use dep::assert_eq;\n{weight}");
+    let rebound = index(&[
+        (LIB, lib),
+        (SUITE, suite.as_str()),
+        (CORE, rebinding.as_str()),
+    ]);
+    assert!(is_binding(&refusal_of(&rebound, SUITE)), "member import");
+    // An inline module scopes its imports, so its glob stays foreign.
+    let inline = format!("mod core {{ {weight} }}\nuse core::*;\n{tests}");
+    let inline = index(&[(LIB, lib), (SUITE, inline.as_str())]);
+    assert!(is_binding(&refusal_of(&inline, SUITE)), "inline module");
+    // A second binding of the name leaves the glob's target unread.
+    let aliased = format!("mod core;\nuse dep::core;\nuse core::*;\n{tests}");
+    let aliased = index(&[(LIB, lib), (SUITE, aliased.as_str()), (CORE, weight)]);
+    assert!(is_binding(&refusal_of(&aliased, SUITE)), "second binding");
+    // A gated declaration can be compiled out, so the glob may read the
+    // standard name's other holder.
+    let gated = format!("#[cfg(feature = \"local\")]\nmod core;\nuse core::*;\n{tests}");
+    let gated = index(&[(LIB, lib), (SUITE, gated.as_str()), (CORE, weight)]);
+    assert!(is_binding(&refusal_of(&gated, SUITE)), "gated declaration");
 }

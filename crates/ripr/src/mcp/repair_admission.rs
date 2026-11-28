@@ -24,7 +24,7 @@ use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::task_first::{
     RefusalKind, RefusalRoot, RepairSubjectOutcome, resolve_repair_subject_in,
 };
-use crate::domain::Finding;
+use crate::domain::{ExposureClass, Finding};
 use std::collections::HashMap;
 
 /// Typed reason: the shared gate names the seam and its existing tests
@@ -81,6 +81,31 @@ impl InventoryCompleteness {
         }
     }
 
+    /// #13340: a diff-scoped inventory whose evidence pass failed closed
+    /// carries opaque stand-in evidence for every seam, so completeness is not
+    /// established. Empty limitations leave the completeness untouched.
+    pub(crate) fn with_evidence_limitations(
+        self,
+        limitations: &[crate::analysis_outcome::AnalysisLimitation],
+    ) -> Self {
+        if limitations.is_empty() {
+            return self;
+        }
+        let detail = limitations
+            .iter()
+            .filter_map(|limitation| limitation.bounded_detail.as_deref())
+            .collect::<Vec<_>>()
+            .join("; ");
+        Self::Unverified(format!(
+            "the seam evidence pass failed during refresh and its seams carry no exposure claim{}",
+            if detail.is_empty() {
+                String::new()
+            } else {
+                format!(": {detail}")
+            }
+        ))
+    }
+
     pub(crate) fn refusal_detail(&self) -> Option<String> {
         match self {
             Self::Complete => None,
@@ -105,9 +130,23 @@ pub(crate) enum SeamVerdict {
     /// module (#5210, #5516). The edit cage confines the repair to that
     /// module; this carries the same module the CLI before phase captures.
     AdmittedInline { file: String, module: String },
+    /// Exactly one seam, admitted by the shared repair gate, whose edit target
+    /// is the existing related test in `file` (`recommended_test_for`, the
+    /// "test to extend" `ripr repair` names). The fix site must be that file.
+    AdmittedExisting { file: String },
+    /// Exactly one seam, admitted by the shared repair gate, whose only repair
+    /// target is the producer-owned new-test proposal (#13204). It carries the
+    /// shared projection so MCP names the same kind and file the card and
+    /// packet do; the admit-or-refuse decision is the one `Admitted` made.
+    AdmittedProposed(crate::analysis::new_test_target::SelectedProposal),
     /// The finding is not startable; `code` is the typed reason and
     /// `detail` the shared validator's own explanation.
     Refused { code: &'static str, detail: String },
+    /// The shared repair gate names exactly one seam and holds its start only
+    /// because that seam's inline test target `file` has uncommitted changes.
+    /// It is a `seam_gate_refused` refusal that also carries the typed file,
+    /// so no consumer parses the prose for it.
+    Held { file: String, detail: String },
 }
 
 /// Per-finding verdicts from the shared validator over one refresh's seam
@@ -179,12 +218,64 @@ impl SeamAdmission {
                         // emitted next command here; the sources are still
                         // read under it, so a refusal never offers a stub
                         // command that would itself refuse.
-                        let outcome = resolve_repair_subject_in(
+                        let mut outcome = resolve_repair_subject_in(
                             candidate_seams,
                             policy,
                             &finding.id,
                             RefusalRoot::implicit(Some(root)),
                         );
+                        // A `probe:` finding id re-mints from the seam's own
+                        // expression, which a changed line the seam parses
+                        // differently (an `Err(..)` return, a `let _ =`
+                        // predicate) never matches. The readable producer gap
+                        // id is the identity the card join and `ripr repair`
+                        // accept for the same item, so an unresolved finding
+                        // id retries once under it; the same resolver still
+                        // refuses an ambiguous or ineligible match.
+                        if matches!(outcome, RepairSubjectOutcome::Unknown)
+                            && let Some(gap) = &finding.canonical_gap
+                        {
+                            let retried = resolve_repair_subject_in(
+                                candidate_seams,
+                                policy,
+                                &gap.id,
+                                RefusalRoot::implicit(Some(root)),
+                            );
+                            // The gap id can name another finding's seam (a
+                            // compound predicate's id names its inner
+                            // comparison, #14719), so the retry stands only
+                            // when the resolved seam binds back to THIS
+                            // finding through the card's own join.
+                            let named_seam = match &retried {
+                                RepairSubjectOutcome::Seam(seam_id)
+                                | RepairSubjectOutcome::Ineligible { seam_id, .. } => {
+                                    Some(seam_id.as_str())
+                                }
+                                _ => None,
+                            };
+                            let binds_back = named_seam.is_some_and(|seam_id| {
+                                candidate_seams
+                                    .iter()
+                                    .find(|entry| entry.seam.id().as_str() == seam_id)
+                                    .is_some_and(|entry| {
+                                        crate::app::repair_card_handoff::finding_for_seam(
+                                            findings,
+                                            entry,
+                                            crate::analysis::repair_route::repair_packet_eligibility(
+                                                entry,
+                                            )
+                                            .readiness
+                                            .canonical_gap_id
+                                            .as_deref(),
+                                            candidate_seams,
+                                        )
+                                        .is_some_and(|bound| bound.id == finding.id)
+                                    })
+                            });
+                            if binds_back {
+                                outcome = retried;
+                            }
+                        }
                         // #11397: `ripr repair` also holds a start whose
                         // inline test target has uncommitted changes. Ask the
                         // same predicate so MCP names the CLI's cause instead
@@ -204,14 +295,14 @@ impl SeamAdmission {
                             _ => None,
                         };
                         match held {
-                            Some((seam_id, file)) => SeamVerdict::Refused {
-                                code: SEAM_GATE_REFUSED,
+                            Some((seam_id, file)) => SeamVerdict::Held {
+                                file: file.clone(),
                                 detail: format!(
                                     "the shared repair gate (`ripr repair`) names seam `{seam_id}` for this item and refuses it: {}",
                                     crate::app::task_first::held_inline_reason(&file)
                                 ),
                             },
-                            None => verdict_for(outcome, candidate_seams, &finding.id),
+                            None => verdict_for(outcome, candidate_seams, findings, finding),
                         }
                     }
                 };
@@ -246,31 +337,88 @@ impl SeamAdmission {
 /// module carries that module, read through the same predicate the CLI and
 /// packet surfaces ask (`recommended_inline_test_module`), so MCP states the
 /// confinement the edit cage will enforce rather than a parallel rule.
-fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
-    let inline = candidate_seams
+pub(crate) fn inline_verdict(seam_id: &str, candidate_seams: &[ClassifiedSeam]) -> SeamVerdict {
+    let Some(entry) = candidate_seams
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
-        .and_then(|entry| {
-            let recommended = crate::output::agent_seam_packets::recommended_test_for(entry);
-            crate::output::agent_seam_packets::recommended_inline_test_module(
-                entry,
-                &recommended.file,
-            )
-            .map(|module| (recommended.file.clone(), module.to_string()))
+    else {
+        return SeamVerdict::Admitted;
+    };
+    let recommended = crate::output::agent_seam_packets::recommended_test_for(entry);
+    // The producer-owned new-test proposal, through the one shared projection
+    // (#13204), is read first (#13538): an InlineUnit proposal's file is the
+    // seam's own production file, which also carries the owner's governed
+    // inline region, so the inline check below would otherwise report the
+    // proposal-only target as a plain inline module and the proposal fix site
+    // (module-confined, and distinct from an existing inline test) would be
+    // unreachable. Only a shared-gate `Proposed` target qualifies.
+    let proposed = entry
+        .evidence
+        .new_test_target
+        .as_ref()
+        .and_then(crate::analysis::new_test_target::SelectedProposal::from_admission)
+        .filter(|selected| {
+            matches!(
+                crate::analysis::repair_route::repair_packet_eligibility(entry)
+                    .readiness
+                    .target_selection,
+                crate::analysis::repair_route::RepairTargetSelection::Proposed(_)
+            ) && selected.file == recommended.file
         });
-    match inline {
-        Some((file, module)) => SeamVerdict::AdmittedInline { file, module },
-        None => SeamVerdict::Admitted,
+    if let Some(selected) = proposed {
+        return SeamVerdict::AdmittedProposed(selected);
     }
+    if let Some(module) =
+        crate::output::agent_seam_packets::recommended_inline_test_module(entry, &recommended.file)
+    {
+        return SeamVerdict::AdmittedInline {
+            file: recommended.file.clone(),
+            module: module.to_string(),
+        };
+    }
+    // The CLI edits the recommended *existing* related test; carry its file
+    // so the finding-level fix site cannot name a different test.
+    if recommended.target_kind
+        == crate::output::agent_seam_packets::RecommendedTestTargetKind::ExistingTest
+    {
+        return SeamVerdict::AdmittedExisting {
+            file: recommended.file,
+        };
+    }
+    SeamVerdict::Admitted
 }
 
 fn verdict_for(
     outcome: RepairSubjectOutcome,
     candidate_seams: &[ClassifiedSeam],
-    item: &str,
+    findings: &[Finding],
+    item: &Finding,
 ) -> SeamVerdict {
     match outcome {
-        RepairSubjectOutcome::Seam(seam_id) => inline_verdict(&seam_id, candidate_seams),
+        RepairSubjectOutcome::Seam(seam_id) => {
+            // The seam's target can build a packet while this changed
+            // occurrence has no established start. Refuse before projecting
+            // readiness into list, detail and the prepare transaction.
+            if item.class == ExposureClass::NoStaticPath
+                && let Some(entry) = candidate_seams
+                    .iter()
+                    .find(|entry| entry.seam.id().as_str() == seam_id)
+                && crate::app::repair_card_handoff::bound_no_path_start_refusal(
+                    findings,
+                    entry,
+                    candidate_seams,
+                )
+                .is_some_and(|bound| std::ptr::eq(bound, item))
+            {
+                return SeamVerdict::Refused {
+                    code: SEAM_GATE_REFUSED,
+                    detail: format!(
+                        "the changed code at seam `{seam_id}` has no static test path, and the analysis did not establish that its owner is unreferenced in the workspace"
+                    ),
+                };
+            }
+            inline_verdict(&seam_id, candidate_seams)
+        }
         RepairSubjectOutcome::Ineligible {
             seam_id,
             reason,
@@ -299,7 +447,7 @@ fn verdict_for(
             code: SEAM_NOT_FOUND,
             detail: format!(
                 "the shared repair gate (`ripr repair`) refuses this item: {}",
-                crate::app::task_first::unknown_repair_item_reason(None, item)
+                crate::app::task_first::unknown_repair_item_reason(None, &item.id)
             ),
         },
     }

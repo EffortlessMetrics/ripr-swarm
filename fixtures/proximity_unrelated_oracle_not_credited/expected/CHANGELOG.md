@@ -121,3 +121,84 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (11)
+
+Reason:
+RIPR-SPEC-0122: drill-in and repair-start command lines carry consumer labels naming their id domain (#12431)
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (12)
+
+Reason:
+RIPR-SPEC-0240 (#9167, #12671): the unrelated same-file assertion no longer lends the returned value an oracle, so ripr repair names the missing return-value assertion instead of judging the surrounding code exposed
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (13)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (14)
+
+Reason:
+RIPR-SPEC-0423: additive evidence_stages rows and agent stages= line; no test attribution; human rendering unchanged
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (15)
+
+Reason:
+RIPR-SPEC-0224 #14483: the JSON oracle summary and the Related test headline rank rows by the shared observation tier, so a no_call_path or assertion_not_observing row no longer speaks for the finding while a row that reaches the change is listed
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/check.json`
+
+## Pending — proximity_unrelated_oracle_not_credited (16)
+
+Reason:
+RIPR-SPEC-0122: the top-gap Safe next action points at the Next step the digest prints (#14173)
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — proximity_unrelated_oracle_not_credited (17)
+
+Reason:
+RIPR-SPEC-0122: #15336 unconfirmed-reach note severity, possible-gap State line, legend and Terms glosses
+
+Command:
+`cargo xtask goldens bless proximity_unrelated_oracle_not_credited --reason "..."`
+
+Updated:
+- `expected/human.txt`

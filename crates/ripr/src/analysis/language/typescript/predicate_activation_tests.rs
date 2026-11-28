@@ -76,6 +76,13 @@ const OWNER_SOURCE: &str = concat!(
     "export function resolveValue(input: unknown): unknown {\n",
     "  return typeof input !== \"function\" ? (input as any)() : input;\n",
     "}\n",
+    "\n",
+    "export function label(total: number): string {\n",
+    "  if (total >= 100) {\n",
+    "    return \"label(100)\";\n",
+    "  }\n",
+    "  return \"default\";\n",
+    "}\n",
 );
 
 /// A changed line of `OWNER_SOURCE`, with the owner it belongs to.
@@ -88,6 +95,11 @@ struct Change {
 const DISCOUNT: Change = Change {
     owner: "applyDiscount",
     line: 5,
+    text: "  if (total >= 100) {",
+};
+const LABEL: Change = Change {
+    owner: "label",
+    line: 64,
     text: "  if (total >= 100) {",
 };
 const FEE: Change = Change {
@@ -245,6 +257,7 @@ fn evaluate_in(
         workspace_root: Some(root),
         pin_facts: None,
         equality_negation,
+        reexport_index: None,
     };
     let activations: Vec<TypeScriptPredicateActivation> = candidates
         .iter()
@@ -303,6 +316,158 @@ fn exact_boundary_argument_is_witnessed() -> Result<(), String> {
     assert_eq!(evaluated.row("at boundary")?.1, R::DirectOwnerCall);
     assert_eq!(evaluated.activation("at boundary")?, A::Witnessed);
     assert!(evaluated.witnessed);
+    Ok(())
+}
+
+/// #16458: a boundary input that reaches the owner only inside a wrapper
+/// call (`Math.max(...)`) or a nested owner call does not witness the
+/// boundary. The wrapper may map both sides to one value, and a nested call
+/// asserts the outer result, which the inner input need not move. A helper
+/// in the owner's own arguments is not a wrapper, and the whole owner call
+/// keeps its witness after a wrapped boundary assertion.
+#[test]
+fn wrapped_or_nested_owner_call_does_not_witness() -> Result<(), String> {
+    let source = one_test(
+        "wrapped owner",
+        IMPORT_DISCOUNT,
+        "  expect(Math.max(applyDiscount(100), 100)).toBe(100);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(evaluated.row("wrapped owner")?.1, R::DirectOwnerCall);
+    assert_eq!(
+        evaluated.activation("wrapped owner")?,
+        A::ReachedWithoutDiscriminator,
+        "the boundary input reaches the owner, but the wrapper hides it"
+    );
+    assert!(!evaluated.witnessed);
+
+    let source = one_test(
+        "nested owner",
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(90, applyDiscount(100))).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(evaluated.row("nested owner")?.1, R::DirectOwnerCall);
+    assert_ne!(evaluated.activation("nested owner")?, A::Witnessed);
+    assert!(!evaluated.witnessed);
+
+    let source = one_test(
+        "same-named member wrapper",
+        IMPORT_DISCOUNT,
+        "  expect(other.applyDiscount(applyDiscount(100))).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(
+        evaluated.activation("same-named member wrapper")?,
+        A::ReachedWithoutDiscriminator,
+        "a same-named method on an unrelated receiver is still a wrapper"
+    );
+    assert!(!evaluated.witnessed);
+
+    for (title, import, body) in [
+        (
+            "generic nested owner",
+            IMPORT_DISCOUNT,
+            "  expect(applyDiscount<number>(90, applyDiscount(100))).toBe(90);",
+        ),
+        (
+            "namespace nested owner",
+            "import * as ns from '../src/pricing';",
+            "  expect(ns.applyDiscount(90, ns.applyDiscount(100))).toBe(90);",
+        ),
+    ] {
+        let evaluated = evaluate(&DISCOUNT, &one_test(title, import, body), true)?;
+        assert_ne!(evaluated.activation(title)?, A::Witnessed, "{title}");
+        assert!(!evaluated.witnessed, "{title}");
+    }
+
+    // Positive controls: a helper inside the owner's own arguments is not a
+    // wrapper, and a boundary wrapper before a direct whole call does not
+    // veto the later witness.
+    let source = one_test(
+        "argument helper",
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(100, getTier())).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(evaluated.activation("argument helper")?, A::Witnessed);
+    assert!(evaluated.witnessed);
+
+    let source = one_test(
+        "whole owner call",
+        IMPORT_DISCOUNT,
+        "  expect(Math.max(applyDiscount(100), 100)).toBe(100);\n  expect(applyDiscount(100)).toBe(90);",
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_eq!(
+        evaluated.activation("whole owner call")?,
+        A::Witnessed,
+        "a wrapped boundary assertion first does not veto the whole call"
+    );
+    assert!(evaluated.witnessed);
+    Ok(())
+}
+
+/// #16458: only an assertion's own expected side can veto its witness. A
+/// sibling with the same observed call and an owner-calling matcher
+/// (`toBeLessThan(applyDiscount(200))`, or a tautology) leaves the pinned
+/// assertion witnessed; an assertion whose own matcher calls the owner never
+/// witnesses, and a quoted expectation that spells a call is not one.
+#[test]
+fn only_the_assertions_own_expected_side_vetoes_its_witness() -> Result<(), String> {
+    for (title, body) in [
+        (
+            "sibling ordering matcher",
+            "  expect(applyDiscount(100)).toBe(100);\n  expect(applyDiscount(100)).toBeLessThan(applyDiscount(200));",
+        ),
+        (
+            "sibling tautology",
+            "  expect(applyDiscount(100)).toBe(90);\n  expect(applyDiscount(100)).toBe(applyDiscount(99));",
+        ),
+    ] {
+        let evaluated = evaluate(&DISCOUNT, &one_test(title, IMPORT_DISCOUNT, body), true)?;
+        assert_eq!(evaluated.activation(title)?, A::Witnessed, "{title}");
+        assert!(evaluated.witnessed, "{title}");
+    }
+
+    let title = "own expected side";
+    let source = one_test(
+        title,
+        IMPORT_DISCOUNT,
+        "  expect(applyDiscount(100)).toBe(applyDiscount(99));",
+    );
+    let tests = extract_tests(Path::new(TEST_FILE), &source);
+    assert_eq!(
+        tests
+            .iter()
+            .flat_map(|test| test.assertions.iter())
+            .map(|assertion| assertion.dynamic_expected_text.clone())
+            .collect::<Vec<_>>(),
+        vec![Some("applyDiscount(99)".to_string())],
+        "the extractor must carry the assertion's own expected side"
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    assert_ne!(evaluated.activation(title)?, A::Witnessed);
+    assert!(!evaluated.witnessed);
+
+    // A quoted expectation that spells an owner call is a string, not a
+    // call: it pins the boundary branch's return and keeps the witness.
+    for (title, imports, body) in [
+        (
+            "quoted expectation",
+            "import { label } from '../src/pricing';",
+            "  expect(label(100)).toBe(\"label(100)\");",
+        ),
+        (
+            "node assert quoted expectation",
+            "import assert from 'node:assert';\nimport { label } from '../src/pricing';",
+            "  assert.strictEqual(label(100), \"label(100)\");",
+        ),
+    ] {
+        let evaluated = evaluate(&LABEL, &one_test(title, imports, body), true)?;
+        assert_eq!(evaluated.activation(title)?, A::Witnessed, "{title}");
+        assert!(evaluated.witnessed, "{title}");
+    }
     Ok(())
 }
 
@@ -494,9 +659,10 @@ fn same_line_body_local_shadow_is_not_owner_activation() -> Result<(), String> {
 }
 
 /// Control 7: genuine owner calls through a namespace import or an import
-/// alias keep their real answer. The aggregate witness reads only the owner
-/// name, so an alias call at the boundary is present but not witnessed, and
-/// an alias call can never hide a boundary input from the miss check.
+/// alias keep their real answer. A renamed import of the owner is a bare
+/// call of the owner itself, so an alias call at the boundary witnesses it
+/// exactly like the owner's own spelling (#16452), and an alias call can
+/// never hide a boundary input from the miss check.
 #[test]
 fn namespace_and_alias_owner_calls_keep_their_answer() -> Result<(), String> {
     let namespace = "import * as pricing from '../src/pricing';";
@@ -524,19 +690,108 @@ fn namespace_and_alias_owner_calls_keep_their_answer() -> Result<(), String> {
     }
     let alias = "import { applyDiscount as discount } from '../src/pricing';";
     for (name, call, activation) in [
-        (
-            "alias at boundary",
-            "discount(100)",
-            A::ReachedWithoutDiscriminator,
-        ),
+        ("alias at boundary", "discount(100)", A::Witnessed),
         ("alias off boundary", "discount(150)", A::MissedBoundary),
     ] {
         let source = one_test(name, alias, &format!("  expect({call}).toBe(90);"));
         let evaluated = evaluate(&DISCOUNT, &source, true)?;
         assert_eq!(evaluated.row(name)?.1, R::ImportAliasOwnerCall, "{call}");
         assert_eq!(evaluated.activation(name)?, activation, "{call}");
-        assert!(!evaluated.witnessed, "{call}");
+        assert_eq!(
+            evaluated.witnessed,
+            activation == A::Witnessed,
+            "{call}: the finding-wide witness follows the alias row"
+        );
     }
+    Ok(())
+}
+
+/// #16452: every spelling of a renamed owner binding the test file resolves
+/// to the owner module witnesses the boundary like the owner's own name: an
+/// ESM `as` rename, a CommonJS destructuring rename, and the one-hop
+/// `const result = alias(...)` idiom. The same alias stays unwitnessed when
+/// the test body redeclares it, when the expected side calls it (a
+/// tautology), when the asserted value only wraps the alias call
+/// (`Math.max(discount(100), 100)`), when the call is a member of another
+/// receiver, or when an
+/// enclosing `describe` scope shadows it beside a real off-boundary call.
+#[test]
+fn renamed_owner_import_witnesses_like_the_owner_name() -> Result<(), String> {
+    let esm = "import { applyDiscount as discount } from '../src/pricing';";
+    let cjs = "const { applyDiscount: discount } = require('../src/pricing');";
+    for (name, imports, body) in [
+        ("esm alias", esm, "  expect(discount(100)).toBe(90);"),
+        ("cjs alias", cjs, "  expect(discount(100)).toBe(90);"),
+        (
+            "alias one hop",
+            esm,
+            "  const result = discount(100);\n  expect(result).toBe(90);",
+        ),
+    ] {
+        let source = one_test(name, imports, body);
+        let tests = extract_tests(Path::new(TEST_FILE), &source);
+        assert!(
+            tests.iter().any(|test| test
+                .imports_in_file
+                .iter()
+                .any(|import| import.local == "discount"
+                    && import.imported.as_deref() == Some("applyDiscount"))),
+            "{name}: the fixture must bind `discount` to `applyDiscount`"
+        );
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        assert_eq!(evaluated.activation(name)?, A::Witnessed, "{name}");
+        assert!(evaluated.witnessed, "{name}");
+    }
+    for (name, body) in [
+        (
+            "alias redeclared in the body",
+            "  const discount = (total: number) => total;\n  expect(discount(100)).toBe(90);",
+        ),
+        (
+            "alias on the expected side",
+            "  expect(discount(100)).toBe(discount(99));",
+        ),
+        (
+            "alias inside a wrapper",
+            "  expect(Math.max(discount(100), 100)).toBe(100);",
+        ),
+        (
+            "alias nested in its own call",
+            "  expect(discount(90, discount(100))).toBe(90);",
+        ),
+        (
+            "alias as a foreign member",
+            "  const cart = makeCart();\n  expect(cart.discount(100)).toBe(90);",
+        ),
+    ] {
+        let source = one_test(name, esm, body);
+        let evaluated = evaluate(&DISCOUNT, &source, true)?;
+        if let Ok(row) = evaluated.row(name) {
+            assert_ne!(row.2, A::Witnessed, "{name}");
+        }
+        assert!(!evaluated.witnessed, "{name}");
+    }
+    let name = "enclosing shadow";
+    let source = format!(
+        "import {{ applyDiscount }} from '../src/pricing';\n{esm}\n\
+         describe('pricing', () => {{\n\
+         \x20 const discount = (total: number) => total - 10;\n\
+         \x20 test('{name}', () => {{\n\
+         \x20   expect(applyDiscount(150)).toBe(135);\n\
+         \x20   expect(discount(100)).toBe(90);\n\
+         \x20 }});\n\
+         }});\n"
+    );
+    let evaluated = evaluate(&DISCOUNT, &source, true)?;
+    // The row carries the enclosing describe title.
+    let row_name = format!("pricing {name}");
+    assert_eq!(
+        evaluated.row(&row_name)?.1,
+        R::DirectOwnerCall,
+        "the real off-boundary call relates the test"
+    );
+    assert_ne!(evaluated.activation(&row_name)?, A::Witnessed, "{name}");
+    assert!(!evaluated.witnessed, "{name}");
     Ok(())
 }
 

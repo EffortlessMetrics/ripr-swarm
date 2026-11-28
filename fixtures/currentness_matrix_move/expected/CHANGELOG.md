@@ -325,3 +325,82 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_move (25)
+
+Reason:
+RIPR-SPEC-0156: a pure-deletion hunk now anchors the removed predicate at the next new-side line (#13098)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_move (26)
+
+Reason:
+union-head re-bless after main merge: additive evidence_stages rows (RIPR-SPEC-0429)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — currentness_matrix_move (27)
+
+Reason:
+RIPR-SPEC-0122: one blank line, not two, separates the More block from a trailing Note (#14318)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_move (28)
+
+Reason:
+RIPR-SPEC-0122: removed-code-only runs name the static evidence on the removed code in Safe next action (#15335)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_move (29)
+
+Reason:
+RIPR-SPEC-0122: removal-only runs name why nothing is selected in the State line (#15335)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_move (33)
+
+Reason:
+RIPR-SPEC-0122: a removal-only run lists the removed lines, their kind and what the static evidence on each shows (#15617)
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/human.txt`
+
+## Pending — currentness_matrix_move (30)
+
+Reason:
+RIPR-SPEC-0122: #15313 Summary names shared candidate lines and says No test gap when State reads no test gap found
+
+Command:
+`cargo xtask goldens bless currentness_matrix_move --reason "..."`
+
+Updated:
+- `expected/human.txt`

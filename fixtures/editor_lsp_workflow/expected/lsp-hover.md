@@ -14,7 +14,6 @@ Kind: `predicate_boundary`
 - discriminate: yes
 
 ## Missing value or check
-
 - `discount_threshold (equality boundary)` — observed values do not include the equality-boundary case for this predicate
 
 ## Related tests
@@ -23,15 +22,12 @@ Kind: `predicate_boundary`
 - `tests/pricing.rs::far_above_threshold_discounts`
 
 ## Suggested test shape
-
 - file: `tests/pricing.rs`
 - name: `discounted_total_boundary_discriminator`
 - candidate value: `discount_threshold (equality boundary)`
-- assertion shape: assert_eq!(discounted_total(/* boundary input where amount >= discount_threshold */), /* expected */)
-  (replace each /* ... */ comment with a real value from your test before using it)
+- assertion shape: assert_eq!(discounted_total(100, 100), 90)
 
 ## Handoff, verify, and receipt commands
-
 - repair (start here): `ripr agent repair --root <root> --seam-id 67fc764ba37d77bd --phase before`
 - packet: `ripr agent packet --root <root> --seam-id 67fc764ba37d77bd --json > <root>/target/ripr/agent/agent-packet.json`
 - brief: `ripr agent brief --root <root> --seam-id 67fc764ba37d77bd --json > <root>/target/ripr/agent/agent-brief.json`

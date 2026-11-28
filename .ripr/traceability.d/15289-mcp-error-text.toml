@@ -1,0 +1,6 @@
+# MCP protocol and argument errors say what to send (#15289).
+[[extend]]
+id = "RIPR-SPEC-0211"
+tests = [
+  "crates/ripr/tests/mcp_stdio.rs::error_text_names_the_fix_for_lifecycle_params_snapshot_and_limit_errors",
+]

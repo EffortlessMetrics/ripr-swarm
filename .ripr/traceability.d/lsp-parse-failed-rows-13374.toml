@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0127"
+tests = ["crates/ripr/src/lsp/tests.rs::parse_failed_file_with_multiple_findings_has_no_repair_rows_and_one_lens"]
+code = ["crates/ripr/src/lsp/diagnostics.rs", "crates/ripr/src/lsp/state.rs"]
+
+[[extend]]
+id = "RIPR-SPEC-0100"
+tests = ["crates/ripr/src/lsp/lens.rs::tests::parse_failure_lens_identity_is_one_file_marker"]
+code = ["crates/ripr/src/lsp/lens.rs"]

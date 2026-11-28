@@ -44,14 +44,14 @@ mod tests {
             start_line: 1,
             end_line: 4,
             body: "fn clamp() -> i32 { 1 }".into(),
-            calls: Vec::new(),
+            calls: crate::analysis::facts::SharedFactSlice::empty(),
             returns: Vec::new(),
-            literals: Vec::new(),
+            literals: crate::analysis::facts::SharedFactSlice::empty(),
             source_role: FunctionSourceRole::Production,
-            attrs: Vec::new(),
+            attrs: crate::analysis::facts::SharedFactSlice::empty(),
             impl_attrs: Vec::new(),
-            nested_fn_names: Vec::new(),
-            let_bindings: Vec::new(),
+            nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+            let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
             item: Default::default(),
             impl_context: Default::default(),
         };
@@ -60,6 +60,7 @@ mod tests {
             ..Default::default()
         });
         let probe = Probe {
+            before_condition: None,
             id: ProbeId("probe:include-owner".to_string()),
             location: SourceLocation::new("workspace/src/parser_fragment.rs", 2, 1),
             owner: Some(SymbolId("src/lib.rs::impl Parser::clamp".to_string())),

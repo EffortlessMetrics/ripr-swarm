@@ -65,6 +65,12 @@ project the same producer facts into the shared internal `TestEvidenceSummary`
 used by #1658/#3507 cargo-allow relevance work. Diff findings and repo
 `TestGripEvidence` share one constructor (`from_parts`) and fingerprint rules.
 
+For provider receipts (#11532), converting a row of this summary into
+`RiprProviderEvidenceEntryV1` preserves the test name, portable file path,
+source line, oracle kind and strength, relation reason, and target-presence
+flag. Receipt validation accepts the producer spelling `guarded_result_match`
+and rejects an unrecognized spelling with `MalformedIdentity`.
+
 The witness retains portable item identity, language and family, owner and
 normalized expression, required discriminator and expected sink, candidate
 versus established test relations, five stage records, selected target or
@@ -155,7 +161,7 @@ and named cross-language limits may explain a difference.
 - `crates/ripr/src/analysis/test_grip_evidence/summary.rs::exact_and_broad_oracles_produce_distinct_fingerprints`
 - `crates/ripr/src/analysis/test_grip_evidence/summary.rs::proximity_relation_stays_in_the_semantic_fingerprint`
 - `crates/ripr/src/analysis/test_grip_evidence/summary.rs::missing_discriminator_identity_changes_the_fingerprint`
-- `crates/ripr/src/domain/finding_test_evidence.rs::finding_projection_prefers_canonical_identity_and_does_not_invent_targets`
+- `crates/ripr-contract/src/domain/finding_test_evidence.rs::finding_projection_prefers_canonical_identity_and_does_not_invent_targets`
 
 ## Implementation Mapping
 
@@ -164,7 +170,7 @@ and named cross-language limits may explain a difference.
 - `crates/ripr/src/analysis/witness/relations.rs` — candidate versus established split
 - `crates/ripr/src/analysis/witness/adapters.rs` — finding and classified-seam adapters plus production retain hooks
 - `crates/ripr/src/analysis/test_grip_evidence/summary.rs` — repo `TestGripEvidence` → `TestEvidenceSummary` projection (#1658)
-- `crates/ripr/src/domain/finding_test_evidence.rs` — diff `Finding` → `TestEvidenceSummary` projection (#3507)
+- `crates/ripr-contract/src/domain/finding_test_evidence.rs` — diff `Finding` → `TestEvidenceSummary` projection (#3507)
 - `crates/ripr/src/analysis/language/rust/mod.rs` — diff-path retain (`push_retained_finding`) at the classify call sites
 - `crates/ripr/src/analysis/seam_inventory.rs` — repo-path retain after classify
 

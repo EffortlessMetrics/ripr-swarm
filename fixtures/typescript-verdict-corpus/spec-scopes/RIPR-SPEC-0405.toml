@@ -1,0 +1,3 @@
+id = "RIPR-SPEC-0405"
+scope = "out"
+reason = "Julia preview evidence contract is normative spec law for #5862; runtime mutant proof lands in Julia judged corpora (epic #5593)"

@@ -1,0 +1,188 @@
+//! Shared near-miss wording for unrecognized enum-style values and flags.
+//!
+//! Owned below `cli` so inward layers (`output`, `app`) report an unknown
+//! value with the same suggestion logic without importing a CLI adapter
+//! (#5193). `cli::suggest` re-uses this authority for flag suggestions; it is
+//! not forked.
+
+/// Build the error for an unrecognized enum-style *value* (`--format yaml`).
+///
+/// Enumerates the accepted values and, when one is close enough, proposes it
+/// as a near-miss suggestion, so the same mistake names the fix on every
+/// command instead of only where a parser happens to inline the list.
+pub(crate) fn unknown_value(label: &str, value: &str, accepted: &[&str]) -> String {
+    match closest(value, accepted.iter().copied()) {
+        Some(suggestion) => format!(
+            "unknown {label} {value:?}. Did you mean `{suggestion}`? Accepted: {}.",
+            accepted.join(", ")
+        ),
+        None => format!(
+            "unknown {label} {value:?}. Accepted: {}.",
+            accepted.join(", ")
+        ),
+    }
+}
+
+/// Pick the best candidate for `input`, or nothing when none is close enough.
+///
+/// Leading dashes are stripped before comparing. Every flag shares the `--`
+/// prefix, so leaving it in inflates similarity between flags that have
+/// nothing else in common — that is how `--wat` came out as "did you mean
+/// `--base`?", which is worse than no suggestion at all.
+///
+/// A candidate the input is a prefix of always beats an edit-distance match,
+/// because a typed prefix is almost always an abbreviation rather than a typo
+/// (`--sea` means `--seam-id`, not `--base`). Among prefix matches the
+/// shortest completion wins; among typo matches the smallest distance wins.
+/// Ties break on the candidate name so the choice is deterministic.
+///
+/// A flag abbreviated word by word ranks between those two tiers: every
+/// dash-separated word of the input is a prefix of the matching word of the
+/// candidate, with the same number of words (`--out-dir` for `--output-dir`,
+/// the spelling `first-pr` uses, #15162). Only flag-shaped input gets this
+/// rule; enum values keep the stricter compound-value guard below.
+pub(crate) fn closest<'a>(
+    input: &str,
+    candidates: impl Iterator<Item = &'a str>,
+) -> Option<&'a str> {
+    let needle = input.trim_start_matches('-');
+    if needle.is_empty() {
+        return None;
+    }
+    let budget = typo_budget(needle);
+    let mut best: Option<(u8, usize, &'a str)> = None;
+    for candidate in candidates {
+        let hay = candidate.trim_start_matches('-');
+        let ranked = if hay.starts_with(needle) {
+            // Tier 0: abbreviation. Rank by how much is left to type.
+            (0u8, hay.chars().count() - needle.chars().count(), candidate)
+        } else if input.starts_with('-') && abbreviates_word_by_word(needle, hay) {
+            (1u8, hay.chars().count() - needle.chars().count(), candidate)
+        } else {
+            let distance = edit_distance(needle, hay);
+            if distance > budget {
+                continue;
+            }
+            // Compound enum values such as `gitlab-ci` are not near misses for
+            // the shorter accepted token `gitlab`; flag abbreviations like
+            // `--out-m` → `--out` must keep working.
+            if !input.starts_with('-')
+                && needle.len() > hay.len()
+                && needle.starts_with(hay)
+                && needle.as_bytes().get(hay.len()) == Some(&b'-')
+            {
+                continue;
+            }
+            (2u8, distance, candidate)
+        };
+        if best.is_none_or(|current| ranked < current) {
+            best = Some(ranked);
+        }
+    }
+    best.map(|(_, _, candidate)| candidate)
+}
+
+/// Whether each dash-separated word of `needle` is a prefix of the word in
+/// the same position of `hay`, with the same number of words and at least two
+/// of them. A single word is the whole-name prefix tier already.
+fn abbreviates_word_by_word(needle: &str, hay: &str) -> bool {
+    let mut needle_words = needle.split('-');
+    let mut hay_words = hay.split('-');
+    let mut words = 0usize;
+    loop {
+        match (needle_words.next(), hay_words.next()) {
+            (None, None) => return words >= 2,
+            (Some(short), Some(long)) if !short.is_empty() && long.starts_with(short) => {
+                words += 1;
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// How many edits to tolerate, scaled to the length actually being compared.
+///
+/// This runs on the dash-stripped name, so a three-character name like `wat`
+/// gets one edit rather than the three a `--`-inclusive length would have
+/// bought it.
+fn typo_budget(name: &str) -> usize {
+    match name.chars().count() {
+        0..=3 => 1,
+        4..=7 => 2,
+        _ => 3,
+    }
+}
+
+pub(crate) fn edit_distance(left: &str, right: &str) -> usize {
+    let right_chars: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right_chars.len()).collect();
+    let mut current = vec![0; right_chars.len() + 1];
+
+    for (left_idx, left_char) in left.chars().enumerate() {
+        current[0] = left_idx + 1;
+        for (right_idx, right_char) in right_chars.iter().enumerate() {
+            let substitution_cost = usize::from(left_char != *right_char);
+            let deletion = previous[right_idx + 1] + 1;
+            let insertion = current[right_idx] + 1;
+            let substitution = previous[right_idx] + substitution_cost;
+            current[right_idx + 1] = deletion.min(insertion).min(substitution);
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right_chars.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_flag_abbreviated_word_by_word_is_suggested() {
+        // #15162: `first-pr` spells it `--out-dir`; `check` spells it
+        // `--output-dir`. Edit distance 3 is over the 7-character budget.
+        let candidates = ["--output-dir", "--format", "--base"];
+        assert_eq!(
+            closest("--out-dir", candidates.iter().copied()),
+            Some("--output-dir")
+        );
+    }
+
+    #[test]
+    fn word_by_word_abbreviation_needs_matching_words() {
+        // Different word count, a non-prefix word, an empty word and a
+        // single word each fall through to the other tiers, which reject
+        // these inputs.
+        let candidates = ["--output-dir"];
+        for input in [
+            "--out-dir-x",
+            "--out",
+            "--put-dir",
+            "--out--dir",
+            "--outdir",
+        ] {
+            assert!(
+                !abbreviates_word_by_word(input.trim_start_matches('-'), "output-dir"),
+                "{input}"
+            );
+        }
+        assert_eq!(closest("--put-dir", candidates.iter().copied()), None);
+        assert_eq!(closest("--outdir", candidates.iter().copied()), None);
+    }
+
+    #[test]
+    fn whole_prefix_still_beats_word_by_word_and_values_do_not_use_it() {
+        // `--out-m` is a whole-name prefix of `--out-mode` and a word-by-word
+        // abbreviation of `--output-mode`; the whole-name prefix wins.
+        let flags = ["--output-mode", "--out-mode"];
+        assert_eq!(
+            closest("--out-m", flags.iter().copied()),
+            Some("--out-mode")
+        );
+        // Enum values are not flags: the word-by-word rule is flag-only.
+        assert_eq!(closest("p-s", ["pr-summary"].iter().copied()), None);
+        assert_eq!(
+            closest("--p-s", ["--pr-summary"].iter().copied()),
+            Some("--pr-summary")
+        );
+    }
+}

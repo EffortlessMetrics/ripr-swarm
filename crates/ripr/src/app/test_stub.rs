@@ -29,6 +29,7 @@ use crate::domain::{ExposureClass, Finding, LanguageId};
 use crate::output::agent_seam_packets::{
     recommended_test_for, recommended_test_is_repair_edit_target,
 };
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 /// Which gap the caller means.
@@ -65,9 +66,19 @@ impl TestStubSelector {
     }
 
     pub(crate) fn parse_at(value: &str) -> Result<Self, String> {
-        let (file, line) = value
-            .rsplit_once(':')
-            .ok_or_else(|| format!("--at expects FILE:LINE, got {value:?}"))?;
+        let (file, line) = value.rsplit_once(':').ok_or_else(|| {
+            format!("--at expects FILE:LINE (for example src/lib.rs:12), got {value:?}")
+        })?;
+        // `src/lib.rs:1:2` would split on the last `:` into a bogus path
+        // `src/lib.rs:1`; the line is the only `:`-suffixed number.
+        if let Some((_, tail)) = file.rsplit_once(':')
+            && !tail.is_empty()
+            && tail.bytes().all(|b| b.is_ascii_digit())
+        {
+            return Err(format!(
+                "--at expects FILE:LINE (for example src/lib.rs:12) with a single line number, got {value:?}"
+            ));
+        }
         let line = line.parse::<usize>().map_err(|_parse_err| {
             format!("--at expects FILE:LINE with a line number, got {value:?}")
         })?;
@@ -172,16 +183,38 @@ pub(crate) fn resolve_test_stub(
     selector: &TestStubSelector,
 ) -> Result<TestStubResolution, TestStubError> {
     match selector {
-        // A seam id is repo-wide, so it is looked up in the full inventory.
+        // A seam id is repo-wide, so it is located by the uncapped seam walk
+        // and then classified with its own file, the same file-scoped
+        // classification `ripr check` validates the printed command against
+        // (#14369). The capped workspace inventory held only a prefix of a
+        // large repository, so a changed seam past it was "not found" after a
+        // repo-wide evidence walk.
         TestStubSelector::SeamId(id) => {
-            let (classified, _) = analysis::inventory_classified_seams_at_with_config(root, config)
+            let not_found = || TestStubError::NotFound(format!("seam_id {id} was not found"));
+            let location = analysis::locate_seam_file_at_with_config(root, config, id)
+                .map_err(TestStubError::Operational)?
+                .ok_or_else(not_found)?;
+            let scoped =
+                analysis::inventory_file_guidance_at_with_config(root, config, &location.file)
+                    .map_err(TestStubError::Operational)?;
+            scoped
+                .require_complete_evidence("test stub")
                 .map_err(TestStubError::Operational)?;
-            let entry = classified
+            let entry = scoped
+                .classified
                 .iter()
                 .find(|entry| entry.seam.id().as_str() == id)
-                .ok_or_else(|| TestStubError::NotFound(format!("seam_id {id} was not found")))?;
+                .ok_or_else(not_found)?;
             let source = read_owner_source(root, &entry.seam)?;
-            Ok(resolution_for(root, config, entry, source))
+            let mut resolution = resolution_for(root, config, entry, source);
+            // `ripr agent repair --phase before` still reads the capped
+            // workspace inventory, so a repair start for a seam past the cap
+            // would be refused: the route cannot be established, so it is
+            // omitted (RIPR-SPEC-0287) while the stub itself stands.
+            if !location.within_inventory_limit {
+                resolution.next_repair = None;
+            }
+            Ok(resolution)
         }
         TestStubSelector::At { file, line, kind } => {
             let mut seam_index = None;
@@ -275,6 +308,11 @@ fn resolve_at_location(
                 &[],
             )
             .map_err(TestStubError::Operational)?;
+            // Stand-in seams from a failed evidence warm must not become a
+            // stub target (#13340).
+            scoped
+                .require_complete_evidence("test stub")
+                .map_err(TestStubError::Operational)?;
             resolve_at(
                 root,
                 config,
@@ -440,18 +478,7 @@ fn withheld_ambiguity(reason: &str) -> StubRouteDecision {
 /// What `ripr agent stub --seam-id <id>` does for one seam. This is the resolution `resolve_test_stub` runs for a seam
 /// ID (`resolution_for` over the classified inventory), not a second
 /// validator, so a command printed on `Ok` is a command that succeeds.
-fn seam_stub_refusal(
-    root: &Path,
-    config: &RiprConfig,
-    classified: &[ClassifiedSeam],
-    seam_id: &str,
-) -> SeamStubOutcome {
-    let Some(entry) = classified
-        .iter()
-        .find(|entry| entry.seam.id().as_str() == seam_id)
-    else {
-        return SeamStubOutcome::Missing;
-    };
+fn seam_stub_outcome(root: &Path, config: &RiprConfig, entry: &ClassifiedSeam) -> SeamStubOutcome {
     let source = match read_owner_source(root, &entry.seam) {
         Ok(source) => source,
         Err(error) => return SeamStubOutcome::Refused(format!("{error:?}")),
@@ -509,18 +536,10 @@ fn fold_seam_outcomes(
     }
 }
 
-/// #10710: an ambiguous `--at` line names several seams, but the finding
-/// changed one expression (`P { x: 1, y: 3 }` holds one seam per field and
-/// only `y: 3` changed). Narrow the choices to the seam whose own expression
-/// is the finding's changed expression, then keep only the seams whose
-/// `ripr agent stub --seam-id` command produces a stub (the classified
-/// resolution, `seam_stub_refusal`). One survivor becomes that command,
-/// several stay a choice among survivors, and none becomes the first refusal.
-/// No command is printed when the seams cannot be classified, or when more
-/// than `AMBIGUOUS_VALIDATION_LIMIT` seams share the line: validating each
-/// costs a classified resolution, and a long list is not a useful choice, so
-/// the refusal is shown instead of unchecked commands.
-fn narrowed_ambiguity(
+/// Narrow the choices on an ambiguous line to the changed expression when
+/// exactly one seam matches it (#10710). Classification is deferred until
+/// the displayed findings for this check have supplied their candidates.
+fn ambiguous_line(
     root: &Path,
     config: &RiprConfig,
     file: &str,
@@ -528,7 +547,7 @@ fn narrowed_ambiguity(
     reason: String,
     seam_ids: Vec<String>,
     seam_index: &mut Option<analysis::FileSeamIndex>,
-) -> StubRouteDecision {
+) -> AmbiguousLine {
     let squash = |text: &str| text.split_whitespace().collect::<String>();
     let wanted = squash(expression);
     let mut candidates = seam_ids.clone();
@@ -545,39 +564,154 @@ fn narrowed_ambiguity(
             narrowed = true;
         }
     }
-    validate_ambiguity(root, config, candidates, narrowed, reason, || {
-        analysis::inventory_classified_seams_at_with_config(root, config)
-            .map(|(classified, _)| classified)
-    })
+    AmbiguousLine {
+        file: scoped_file(root, file),
+        candidates,
+        narrowed,
+        reason,
+    }
 }
 
-/// The validation half of `narrowed_ambiguity`, with the classified inventory
-/// supplied by `load_inventory` so each withhold path is reachable on its own:
-/// too many candidates (the inventory is never loaded), an inventory that
-/// cannot be classified, and candidates the inventory does not hold (every
-/// outcome `Missing`).
-fn validate_ambiguity(
-    root: &Path,
-    config: &RiprConfig,
+struct AmbiguousLine {
+    file: Option<PathBuf>,
     candidates: Vec<String>,
     narrowed: bool,
     reason: String,
-    load_inventory: impl FnOnce() -> Result<Vec<ClassifiedSeam>, String>,
-) -> StubRouteDecision {
-    if candidates.len() > AMBIGUOUS_VALIDATION_LIMIT {
-        return withheld_ambiguity(&reason);
+}
+
+impl AmbiguousLine {
+    fn eligible(&self) -> bool {
+        self.candidates.len() <= AMBIGUOUS_VALIDATION_LIMIT
     }
-    let Ok(classified) = load_inventory() else {
-        return withheld_ambiguity(&reason);
-    };
-    let outcomes = candidates
+
+    fn decide(self, validated: Option<&BTreeMap<String, SeamStubOutcome>>) -> StubRouteDecision {
+        let Some(validated) = validated.filter(|_| self.eligible()) else {
+            return withheld_ambiguity(&self.reason);
+        };
+        let outcomes = self
+            .candidates
+            .into_iter()
+            .map(|id| {
+                let outcome = validated
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or(SeamStubOutcome::Missing);
+                (id, outcome)
+            })
+            .collect();
+        fold_seam_outcomes(outcomes, self.reason, self.narrowed)
+    }
+}
+
+enum PendingStubDecision {
+    Known(StubRouteDecision),
+    Ambiguous(AmbiguousLine),
+}
+
+struct PendingStubRoute {
+    finding_id: String,
+    hidden: bool,
+    decision: PendingStubDecision,
+}
+
+// One evidence evaluation per file, irrespective of how many displayed rows
+// need a subset of its seams. Keep each row's original order when folding.
+fn finish_stub_routes(
+    root: &Path,
+    config: &RiprConfig,
+    plans: Vec<PendingStubRoute>,
+    mut classify: impl FnMut(Option<&Path>, &BTreeSet<String>) -> Result<Vec<ClassifiedSeam>, String>,
+) -> Vec<StubRoute> {
+    let mut choices = BTreeMap::<Option<PathBuf>, BTreeSet<String>>::new();
+    for plan in &plans {
+        if let PendingStubDecision::Ambiguous(line) = &plan.decision
+            && line.eligible()
+        {
+            choices
+                .entry(line.file.clone())
+                .or_default()
+                .extend(line.candidates.iter().cloned());
+        }
+    }
+    let by_file: BTreeMap<_, _> = choices
         .into_iter()
-        .map(|seam_id| {
-            let outcome = seam_stub_refusal(root, config, &classified, &seam_id);
-            (seam_id, outcome)
+        .filter_map(|(file, ids)| {
+            let inventory = classify(file.as_deref(), &ids).ok()?;
+            // Upper layers need only these compact verdicts. Drop the complete
+            // classified payload before preparing another file and resolve each
+            // repeated ID once, preserving the first inventory match.
+            let mut outcomes = BTreeMap::new();
+            for entry in inventory {
+                let id = entry.seam.id().as_str();
+                if ids.contains(id) {
+                    outcomes
+                        .entry(id.to_owned())
+                        .or_insert_with(|| seam_stub_outcome(root, config, &entry));
+                }
+            }
+            Some((file, outcomes))
         })
         .collect();
-    fold_seam_outcomes(outcomes, reason, narrowed)
+    plans
+        .into_iter()
+        .filter_map(|plan| {
+            let decision = match plan.decision {
+                PendingStubDecision::Known(decision) => decision,
+                PendingStubDecision::Ambiguous(line) => {
+                    let validated = by_file.get(&line.file);
+                    line.decide(validated)
+                }
+            };
+            if plan.hidden
+                && matches!(
+                    decision,
+                    StubRouteDecision::Refused { .. } | StubRouteDecision::Withheld { .. }
+                )
+            {
+                return None;
+            }
+            Some(StubRoute {
+                finding_id: plan.finding_id,
+                decision,
+            })
+        })
+        .collect()
+}
+
+fn classify_stub_choices(
+    root: &Path,
+    config: &RiprConfig,
+    file: Option<&Path>,
+    ids: &BTreeSet<String>,
+) -> Result<Vec<ClassifiedSeam>, String> {
+    match file {
+        Some(file) => {
+            let inventory = analysis::inventory_stub_choices(root, config, file, ids)?;
+            inventory.require_complete_evidence("test stub")?;
+            Ok(inventory.classified)
+        }
+        None => analysis::inventory_classified_seams_at_with_config(root, config)
+            .map(|(classified, _)| classified),
+    }
+}
+
+/// One finding's route through the same batched completion `ripr check`
+/// uses; `stub_route_seam_choice` is the production caller.
+fn stub_route_for_finding(
+    root: &Path,
+    config: &RiprConfig,
+    finding: &Finding,
+    seam_index: &mut Option<analysis::FileSeamIndex>,
+) -> Option<StubRoute> {
+    let plan = PendingStubRoute {
+        finding_id: finding.id.clone(),
+        hidden: false,
+        decision: plan_stub_decision(root, config, finding, false, seam_index)?,
+    };
+    finish_stub_routes(root, config, vec![plan], |file, ids| {
+        classify_stub_choices(root, config, file, ids)
+    })
+    .pop()
 }
 
 /// A route decision bound to the finding it was computed for.
@@ -611,41 +745,143 @@ pub(crate) fn stub_route_location(
     ))
 }
 
+/// The selector arguments (`--at FILE:LINE --kind FAMILY`, or
+/// `--seam-id ID` when the location alone cannot pick one seam) for a stub
+/// command pointing at `seam`. A line that holds several seams of one kind
+/// (`Config { retries: 5, verbose: false }`) makes `--at` refuse with an
+/// ambiguity, so a hint built from the location would fail when run; the
+/// seam's own id always names the changed one.
+pub(crate) fn stub_selector_args(
+    root: Option<&Path>,
+    seam: &analysis::seams::RepoSeam,
+    family: &str,
+) -> String {
+    match stub_selector(root, seam, family) {
+        TestStubSelector::SeamId(id) => format!("--seam-id {}", shell_arg(&id)),
+        TestStubSelector::At { file, line, kind } => {
+            let at = shell_arg(&format!("{file}:{line}"));
+            match kind {
+                Some(kind) => format!("--at {at} --kind {kind}"),
+                None => format!("--at {at}"),
+            }
+        }
+    }
+}
+
+/// The selector [`stub_selector_args`] prints. The ambiguity probe runs the
+/// same resolver, with the same loaded configuration, that `agent stub` runs;
+/// a configuration that cannot be loaded falls back to the defaults, and a
+/// probe that finds no seams keeps the location form.
+pub(crate) fn stub_selector(
+    root: Option<&Path>,
+    seam: &analysis::seams::RepoSeam,
+    family: &str,
+) -> TestStubSelector {
+    let file = analysis::stable_path_text(seam.file());
+    let line = seam.display_line();
+    let ambiguous = root.is_some_and(|root| {
+        let config = crate::config::load_for_root(root).unwrap_or_default();
+        matches!(
+            resolve_at_location(root, &config, &file, line, Some(family), &mut None),
+            Err(TestStubError::Ambiguous { .. })
+        )
+    });
+    if ambiguous {
+        TestStubSelector::SeamId(seam.id().as_str().to_string())
+    } else {
+        TestStubSelector::At {
+            file,
+            line,
+            kind: Some(family.to_string()),
+        }
+    }
+}
+
+/// How a finding's MCP stub route command selects its seam.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum StubRouteSeamChoice {
+    /// `--at FILE:LINE --kind FAMILY` picks one seam.
+    Location,
+    /// `--at` would refuse as ambiguous; exactly one seam on the line produces
+    /// a stub (`StubRouteDecision::SeamStub`, the route `ripr check` renders),
+    /// so the command names `--seam-id ID`.
+    SeamId(String),
+    /// `--at` would refuse as ambiguous and no single seam id is validated,
+    /// so no runnable stub command exists.
+    Unrunnable,
+}
+
+/// The selector a finding's stub route must use, from the same route
+/// decision `ripr check` renders under the loaded configuration. Only an
+/// ambiguous `--at` line changes the location form: `SeamStub` names the
+/// validated seam, and every other outcome on an ambiguous line is
+/// unrunnable rather than a command that refuses.
+pub(crate) fn stub_route_seam_choice(root: &Path, finding: &Finding) -> StubRouteSeamChoice {
+    let config = crate::config::load_for_root(root).unwrap_or_default();
+    let mut index = None;
+    match stub_route_for_finding(root, &config, finding, &mut index).map(|route| route.decision) {
+        Some(StubRouteDecision::SeamStub { seam_id }) => StubRouteSeamChoice::SeamId(seam_id),
+        Some(StubRouteDecision::Ambiguous { .. } | StubRouteDecision::Withheld { .. }) => {
+            StubRouteSeamChoice::Unrunnable
+        }
+        Some(
+            StubRouteDecision::Stub { .. }
+            | StubRouteDecision::Refused { .. }
+            | StubRouteDecision::WeakOracle { .. },
+        )
+        | None => {
+            // A refused or weak-oracle fold, and a route the resolver could
+            // not build (an ambiguity that names no seam ids), can also come
+            // from an ambiguous line; re-ask the `--at` resolver.
+            let ambiguous = stub_route_location(finding, root).is_some_and(|(file, line, kind)| {
+                matches!(
+                    resolve_at_location(root, &config, &file, line, Some(kind), &mut index),
+                    Err(TestStubError::Ambiguous { .. })
+                )
+            });
+            if ambiguous {
+                StubRouteSeamChoice::Unrunnable
+            } else {
+                StubRouteSeamChoice::Location
+            }
+        }
+    }
+}
+
 /// The route decision for one finding, from the resolver
 /// `ripr agent stub --at` runs. `None` when the finding gets no route or the
 /// resolver finds no seam there; nothing is printed then.
-pub(crate) fn stub_route_for_finding(
+fn plan_stub_decision(
     root: &Path,
     config: &RiprConfig,
     finding: &Finding,
+    hidden: bool,
     seam_index: &mut Option<analysis::FileSeamIndex>,
-) -> Option<StubRoute> {
+) -> Option<PendingStubDecision> {
     let (file, line, kind) = stub_route_location(finding, root)?;
-    if let Some(name) = finding.probe.changed_const_name() {
-        let decision = const_consumer_route(root, config, &file, line, name, seam_index)?;
-        return Some(StubRoute {
-            finding_id: finding.id.clone(),
-            decision,
-        });
+    if hidden {
+        // Hidden rows offer only syntax ambiguities from a single scoped file.
+        analysis::seam_kind_for_probe_family(kind)?;
+        scoped_file(root, &file)?;
+    } else if let Some(name) = finding.probe.changed_const_name() {
+        return const_consumer_route(root, config, &file, line, name, seam_index)
+            .map(PendingStubDecision::Known);
     }
     let mut resolution =
         match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
-            Ok(resolution) => resolution,
+            Ok(resolution) if !hidden => resolution,
             Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
-                return Some(StubRoute {
-                    finding_id: finding.id.clone(),
-                    decision: narrowed_ambiguity(
-                        root,
-                        config,
-                        &file,
-                        &finding.probe.expression,
-                        message,
-                        seam_ids,
-                        seam_index,
-                    ),
-                });
+                return Some(PendingStubDecision::Ambiguous(ambiguous_line(
+                    root,
+                    config,
+                    &file,
+                    &finding.probe.expression,
+                    message,
+                    seam_ids,
+                    seam_index,
+                )));
             }
-            Err(_) => return None,
+            _ => return None,
         };
     // #10683: `agent stub` refuses a weak-oracle boundary seam (an existing
     // test already reaches it); never advertise a stub command it will refuse.
@@ -661,10 +897,9 @@ pub(crate) fn stub_route_for_finding(
                 .and_then(|(_, guidance)| guidance);
     }
     if let Some(guidance) = resolution.weak_oracle_guidance.take() {
-        return Some(StubRoute {
-            finding_id: finding.id.clone(),
-            decision: StubRouteDecision::WeakOracle { guidance },
-        });
+        return Some(PendingStubDecision::Known(StubRouteDecision::WeakOracle {
+            guidance,
+        }));
     }
     let decision = match resolution.outcome {
         // `--at` stubs the nearest gap when the finding's line holds none
@@ -684,10 +919,7 @@ pub(crate) fn stub_route_for_finding(
             reason: refusal.reason().to_string(),
         },
     };
-    Some(StubRoute {
-        finding_id: finding.id.clone(),
-        decision,
-    })
+    Some(PendingStubDecision::Known(decision))
 }
 
 /// The line to print for a substituted `--at` resolution: the seam's own line,
@@ -987,9 +1219,10 @@ fn names_identifier(text: &str, name: &str) -> bool {
 }
 
 /// Resolve the selected route plus typed ambiguities for the eligible rows
-/// inside the same bounded Hidden window the default human report displays.
-/// Uses the stub command's root config, disk guard and resolver. A shared seam
-/// index is reused when it covers a file; alternating files may replace it.
+/// from the first 20 omitted findings in report order, the stub-route cutoff
+/// rather than the displayed Hidden window. Uses the stub command's root
+/// config, disk guard and resolver. A shared seam index is reused when it
+/// covers a file; alternating files may replace it.
 pub(crate) fn check_stub_routes(
     root: &Path,
     check_config: &RiprConfig,
@@ -1003,61 +1236,25 @@ pub(crate) fn check_stub_routes(
     let Ok(config) = crate::config::load_for_root(root) else {
         return Vec::new();
     };
-    selected
+    let plans = selected
         .into_iter()
-        .map(|finding| (finding, true))
-        .chain(hidden.into_iter().map(|finding| (finding, false)))
-        .filter_map(|(finding, selected)| {
+        .map(|finding| (finding, false))
+        .chain(hidden.into_iter().map(|finding| (finding, true)))
+        .filter_map(|(finding, hidden)| {
             let (file, line, _) = stub_route_location(finding, root)?;
             if !finding_text_is_on_disk(root, &file, line, &finding.probe.expression) {
                 return None;
             }
-            if selected {
-                stub_route_for_finding(root, &config, finding, seam_index)
-            } else {
-                hidden_stub_ambiguity(root, &config, finding, seam_index)
-            }
+            Some(PendingStubRoute {
+                finding_id: finding.id.clone(),
+                hidden,
+                decision: plan_stub_decision(root, &config, finding, hidden, seam_index)?,
+            })
         })
-        .collect()
-}
-
-/// Hidden rows display only syntax ambiguity. Do not finish a unique route's
-/// classified inventory/weak-oracle lookup merely to discard its result.
-fn hidden_stub_ambiguity(
-    root: &Path,
-    config: &RiprConfig,
-    finding: &Finding,
-    seam_index: &mut Option<analysis::FileSeamIndex>,
-) -> Option<StubRoute> {
-    let (file, line, kind) = stub_route_location(finding, root)?;
-    // A changed constant has no seam of its own; its selected route may
-    // investigate consumers, but hidden syntax choices must not widen scope.
-    analysis::seam_kind_for_probe_family(kind)?;
-    // Keep this the single-file shape path. A missing/out-of-root file must
-    // not fall back to the resolver's repo-wide classified suffix lookup.
-    scoped_file(root, &file)?;
-    match resolve_at_location(root, config, &file, line, Some(kind), seam_index) {
-        Err(TestStubError::Ambiguous { message, seam_ids }) if !seam_ids.is_empty() => {
-            // #10710: a hidden row prints only choices that produce a stub; a
-            // row whose every choice refuses prints nothing.
-            match narrowed_ambiguity(
-                root,
-                config,
-                &file,
-                &finding.probe.expression,
-                message,
-                seam_ids,
-                seam_index,
-            ) {
-                StubRouteDecision::Refused { .. } | StubRouteDecision::Withheld { .. } => None,
-                decision => Some(StubRoute {
-                    finding_id: finding.id.clone(),
-                    decision,
-                }),
-            }
-        }
-        _ => None,
-    }
+        .collect();
+    finish_stub_routes(root, &config, plans, |file, ids| {
+        classify_stub_choices(root, &config, file, ids)
+    })
 }
 
 /// Whether the finding's expression is still on disk in the function the
@@ -1361,6 +1558,11 @@ fn resolve_at(
 
 /// Whether `inner`'s source span lies within `outer`'s.
 fn seam_spans_nest(outer: &RepoSeam, inner: &RepoSeam) -> bool {
+    // An arm's display text starts at the pattern, but its identity offset
+    // points at the arrow. Use parser ranges when both arms have them.
+    if outer.kind() == SeamKind::MatchArm && outer.span().is_some() && inner.span().is_some() {
+        return outer.strictly_encloses(inner);
+    }
     outer.byte_offset() <= inner.byte_offset()
         && inner.byte_offset() + inner.expression().len()
             <= outer.byte_offset() + outer.expression().len()
@@ -1368,7 +1570,10 @@ fn seam_spans_nest(outer: &RepoSeam, inner: &RepoSeam) -> bool {
 
 fn read_owner_source(root: &Path, seam: &RepoSeam) -> Result<String, TestStubError> {
     std::fs::read_to_string(root.join(seam.file())).map_err(|error| {
-        TestStubError::Operational(format!("failed to read {}: {error}", seam.file().display()))
+        TestStubError::Operational(format!(
+            "failed to read {}: {error}; check that the file still exists and is readable, then rerun",
+            seam.file().display()
+        ))
     })
 }
 
@@ -1416,7 +1621,7 @@ fn next_repair_for(
     stub: &RustTestStub,
 ) -> Option<StubNextRepair> {
     if AgentBriefPolicy::from_config(config)
-        .omission_reason_for_class(entry.class)
+        .omission_reason_for_class(entry.class, Some(entry.seam.file()))
         .is_some()
     {
         return None;
@@ -1455,6 +1660,53 @@ std::thread_local! {
     static INVENTORY_ENTRY_FACTS_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// What `ripr check` reads on the changed lines of a stubbed seam the
+/// inventory reads as strongly gripped (#15278). The stub's disclosure says
+/// "existing tests already discriminate it" from the whole-seam inventory;
+/// when check reads the changed code there as a gap or a limit, that sentence
+/// contradicts it. The seam's file is classified so the finding binds through
+/// the same location join the repair start uses, but only once the change
+/// check reads touches that file (#16082): a change elsewhere cannot touch
+/// the seam, so it costs no classification. Any step that cannot be
+/// established leaves the inventory's reading as it is.
+pub(crate) fn check_reading_of_gripped_stub_seam(
+    root: &Path,
+    config: &RiprConfig,
+    seam_id: &str,
+) -> super::task_first::CheckReadingOfGrippedSeam {
+    use super::task_first::CheckReadingOfGrippedSeam;
+    let Ok(Some(location)) = analysis::locate_seam_file_at_with_config(root, config, seam_id)
+    else {
+        return CheckReadingOfGrippedSeam::Stands;
+    };
+    let Some(files) = super::task_first::live_check_diff_files_touching(root, None, &location.file)
+    else {
+        return CheckReadingOfGrippedSeam::Stands;
+    };
+    let Ok(scoped) = analysis::inventory_file_guidance_at_with_config(root, config, &location.file)
+    else {
+        return CheckReadingOfGrippedSeam::Stands;
+    };
+    let Some(entry) = scoped
+        .classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)
+    else {
+        return CheckReadingOfGrippedSeam::Stands;
+    };
+    if entry.class != SeamGripClass::StronglyGripped {
+        return CheckReadingOfGrippedSeam::Stands;
+    }
+    super::task_first::check_reading_of_gripped_seam_on_change(
+        root,
+        None,
+        config,
+        entry,
+        &scoped.classified,
+        &files,
+    )
+}
+
 /// Inventory class for a seam selected from a file parse (`--at --kind`).
 /// Classification is not used to pick the seam (#5471); this lookup is
 /// disclosure only, plus the weak-oracle pointer (#10683). A failed or empty
@@ -1468,13 +1720,14 @@ fn inventory_entry_facts(
     #[cfg(test)]
     INVENTORY_ENTRY_FACTS_CALLS.with(|count| count.set(count.get() + 1));
     let relative = scoped_file(root, file)?;
-    let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
-        root,
-        config,
-        &[relative],
-        &[],
-    )
-    .ok()?;
+    // Only the selected seam receives evidence (#13884): its entry equals the
+    // whole-file inventory's, and the file's other seams are not classified
+    // merely to be discarded.
+    let scoped =
+        analysis::inventory_diff_scoped_seam_at_with_config(root, config, &[relative], seam_id)
+            .ok()?;
+    // Disclosure only: a failed warm's stand-in class is not a real class.
+    scoped.require_complete_evidence("test stub").ok()?;
     scoped
         .classified
         .iter()
@@ -1525,7 +1778,7 @@ pub(crate) fn write_test_stub(
         TestStubPlacement::ExistingInlineModule { offset, .. }
         | TestStubPlacement::NewInlineModule { offset, .. } => {
             let current = std::fs::read_to_string(&path)
-                .map_err(|error| format!("failed to read {}: {error}", relative.display()))?;
+                .map_err(|error| format!("failed to read {}: {error}; check that the file still exists and is readable, then rerun", relative.display()))?;
             if current != resolution.source {
                 return Err(format!(
                     "{} changed after the stub was computed; rerun `ripr agent stub`",
@@ -1544,7 +1797,7 @@ pub(crate) fn write_test_stub(
         }
         TestStubPlacement::ExistingIntegrationFile { .. } => {
             let current = std::fs::read_to_string(&path)
-                .map_err(|error| format!("failed to read {}: {error}", relative.display()))?;
+                .map_err(|error| format!("failed to read {}: {error}; check that the file still exists and is readable, then rerun", relative.display()))?;
             let separator = if current.ends_with('\n') || current.is_empty() {
                 ""
             } else {
@@ -1555,8 +1808,12 @@ pub(crate) fn write_test_stub(
         }
         TestStubPlacement::NewIntegrationFile { .. } => {
             if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    format!(
+                        "failed to create {}: {error}; check permissions on that path, then rerun",
+                        parent.display()
+                    )
+                })?;
             }
             crate::atomic_file::create_new(&path, stub.text.as_bytes()).map_err(|error| {
                 let error = match error {
@@ -1888,9 +2145,162 @@ pub(crate) fn run_command(
     }
 }
 
+/// The native command that runs one named Rust test in `test_file` (#14320),
+/// spelled exactly as `ripr agent stub` spells its run command: an
+/// integration file runs as `--test TARGET NAME` once its cargo target name
+/// is established and plain. `None` for everything else, including inline
+/// module tests: whether a by-name run reaches an inline file depends on
+/// `[lib] test`, `cfg` and feature gates, and `#[path]` resolution that a
+/// static walk cannot settle, so no command is offered rather than one that
+/// runs 0 tests and exits 0.
+pub(crate) fn focused_test_run_command(
+    root: &Path,
+    test_file: &str,
+    test_name: &str,
+) -> Option<String> {
+    let plain_name = !test_name.is_empty()
+        && test_name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !plain_name {
+        return None;
+    }
+    let resolved = focused_integration_target(root, test_file)?;
+    let integration = RustTestStub {
+        placement: TestStubPlacement::ExistingIntegrationFile {
+            file: resolved.file,
+        },
+        test_name: test_name.to_string(),
+        text: String::new(),
+        already_present: false,
+        fill_ins: Vec::new(),
+        derived_inputs: Vec::new(),
+        receiver_setup: None,
+        input_setup: None,
+    };
+    run_command(&resolved.manifest_arg, &integration, Some(&resolved.target))
+}
+
+/// The command that produces a new-test proposal's focused result (#16186):
+/// libtest JSON events for every test in the proposed integration file's own
+/// cargo target, run through its package manifest so a workspace member that
+/// is not a default member is still the package that runs. No test-name
+/// filter: the name the agent writes may differ from the suggested one, and
+/// a filter that matched nothing would yield a result with no counted test.
+/// Libtest JSON is unstable, so the command selects a nightly toolchain.
+/// `None` under the same conditions as [`focused_test_run_command`], so an
+/// inline test keeps the generic guidance.
+///
+/// The package is named explicitly (`-p`): a workspace root manifest that
+/// also defines a package selects the workspace's default members, not that
+/// package, when no package is given. A proposed flat file whose sibling
+/// directory target (`tests/NAME/main.rs`) already exists gets no command:
+/// creating the file makes that target name ambiguous to Cargo.
+pub(crate) fn focused_result_run_command(root: &Path, test_file: &str) -> Option<String> {
+    let resolved = focused_integration_target(root, test_file)?;
+    let file = root.join(&resolved.file);
+    if !file.exists() && file.with_extension("").join("main.rs").is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(root.join(&resolved.manifest)).ok()?;
+    let parsed = text.parse::<toml::Table>().ok()?;
+    let package = parsed.get("package")?.as_table()?.get("name")?.as_str()?;
+    if package.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "cargo +nightly test --manifest-path {} -p {} --test {} -- -Z unstable-options --format json",
+        resolved.manifest_arg,
+        shell_arg(package),
+        resolved.target
+    ))
+}
+
+/// A Rust integration test file's resolved package manifest and plain cargo
+/// target name.
+struct FocusedIntegrationTarget {
+    /// The file as the stub placement spells it.
+    file: PathBuf,
+    /// The package manifest, relative to the root.
+    manifest: PathBuf,
+    /// The manifest as a shell-ready argument.
+    manifest_arg: String,
+    target: String,
+}
+
+/// The shell-ready manifest and plain cargo target name of a Rust
+/// integration test file, with the file as the stub placement spells it.
+fn focused_integration_target(root: &Path, test_file: &str) -> Option<FocusedIntegrationTarget> {
+    let spelled = test_file.replace('\\', "/");
+    let file = PathBuf::from(spelled.strip_prefix("./").unwrap_or(&spelled));
+    if file.extension().and_then(std::ffi::OsStr::to_str) != Some("rs") {
+        return None;
+    }
+    let integration = RustTestStub {
+        placement: TestStubPlacement::ExistingIntegrationFile { file: file.clone() },
+        test_name: String::new(),
+        text: String::new(),
+        already_present: false,
+        fill_ins: Vec::new(),
+        derived_inputs: Vec::new(),
+        receiver_setup: None,
+        input_setup: None,
+    };
+    let manifest = package_manifest_for(root, &integration)?;
+    let target = match integration_target_lookup(root, &manifest, &integration) {
+        // A manifest `[[test]] name` is printed into a copyable command, so
+        // only a plain cargo target name is offered; anything else fails
+        // closed instead of being run by the developer's shell.
+        TargetLookup::Name(name)
+            if !name.starts_with('-')
+                && !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') =>
+        {
+            name
+        }
+        _ => return None,
+    };
+    let joined = root.join(&manifest);
+    // A literal `\` in a Unix checkout root is part of the path, so the
+    // manifest renders natively, as the repair start command renders it.
+    let display = root_path_display(joined.strip_prefix(".").unwrap_or(&joined));
+    Some(FocusedIntegrationTarget {
+        file,
+        manifest,
+        manifest_arg: shell_arg(&display),
+        target,
+    })
+}
+
 #[cfg(test)]
 mod tests {
+    fn narrowed_ambiguity(
+        root: &Path,
+        config: &RiprConfig,
+        file: &str,
+        expression: &str,
+        reason: String,
+        seam_ids: Vec<String>,
+        seam_index: &mut Option<analysis::FileSeamIndex>,
+    ) -> StubRouteDecision {
+        let line = ambiguous_line(root, config, file, expression, reason, seam_ids, seam_index);
+        let plan = PendingStubRoute {
+            finding_id: String::new(),
+            hidden: false,
+            decision: PendingStubDecision::Ambiguous(line),
+        };
+        finish_stub_routes(root, config, vec![plan], |file, ids| {
+            classify_stub_choices(root, config, file, ids)
+        })
+        .pop()
+        .map(|route| route.decision)
+        .unwrap_or_else(|| withheld_ambiguity("missing test route"))
+    }
+
     use super::*;
+    use crate::domain::DiscriminatorShape;
 
     #[test]
     fn code_lines_blank_strings_and_comments_but_keep_dereferences() {
@@ -2000,7 +2410,11 @@ mod tests {
             Path::new("src/lib.rs"),
             "./crates/a/src/lib.rs"
         ));
-        assert!(paths_match(Path::new("src\\lib.rs"), "src/lib.rs"));
+        // A backslash is a separator on Windows only (#15908).
+        assert_eq!(
+            paths_match(Path::new("src\\lib.rs"), "src/lib.rs"),
+            !cfg!(unix)
+        );
         assert!(!paths_match(Path::new("src/lib.rs"), "lib.rs.bak"));
         assert!(!paths_match(Path::new("src/mylib.rs"), "lib.rs"));
     }
@@ -2064,6 +2478,144 @@ mod tests {
         Ok(root)
     }
 
+    /// A stub hint for one of several same-kind seams on a line names the
+    /// seam id (the `--at` form refuses as ambiguous); a lone seam keeps the
+    /// location form. The id must be the changed field's, not its sibling's.
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn stub_hint_uses_the_seam_id_only_when_the_line_is_ambiguous() -> Result<(), String> {
+        let source = "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn new() -> Config {\n    Config { retries: 5, verbose: false }\n}\n\npub fn solo() -> u32 {\n    7\n}\n";
+        let root = scratch_stub_crate("hint-selector", source)?;
+        let config = RiprConfig::default();
+        let mut index = None;
+        let seams =
+            analysis::scoped_file_seams(&root, &config, &PathBuf::from("src/lib.rs"), &mut index)?;
+        let field = |needle: &str| {
+            seams
+                .iter()
+                .find(|seam| {
+                    seam.kind() == SeamKind::FieldConstruction && seam.expression().contains(needle)
+                })
+                .ok_or_else(|| format!("no field seam for {needle}"))
+        };
+        let retries = field("retries")?;
+        let verbose = field("verbose")?;
+        assert_ne!(retries.id(), verbose.id(), "precondition: two seams");
+        let hint = stub_selector_args(Some(&root), retries, "field_construction");
+        assert_eq!(hint, format!("--seam-id {}", retries.id().as_str()));
+        assert_ne!(hint, format!("--seam-id {}", verbose.id().as_str()));
+        let solo = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::ReturnValue)
+            .ok_or("no return seam")?;
+        let line = solo.display_line();
+        assert_eq!(
+            stub_selector_args(Some(&root), solo, "return_value"),
+            format!("--at src/lib.rs:{line} --kind return_value")
+        );
+        // The selectors the hints print are runnable: each resolves through
+        // the real stub resolver, and the ambiguous one targets retries.
+        let resolve = |seam: &analysis::seams::RepoSeam, family: &str| {
+            resolve_test_stub(&root, &config, &stub_selector(Some(&root), seam, family))
+                .map_err(|error| format!("the printed selector must resolve: {error:?}"))
+        };
+        let by_id = resolve(retries, "field_construction")?;
+        assert_eq!(by_id.seam_id, retries.id().as_str());
+        let by_at = resolve(solo, "return_value")?;
+        assert_eq!(by_at.seam_id, solo.id().as_str());
+        // Control: the location form for the ambiguous line really refuses.
+        let refused = resolve_test_stub(
+            &root,
+            &config,
+            &TestStubSelector::At {
+                file: "src/lib.rs".to_string(),
+                line: retries.display_line(),
+                kind: Some("field_construction".to_string()),
+            },
+        );
+        assert!(matches!(refused, Err(TestStubError::Ambiguous { .. })));
+        // Err fallback: no readable root keeps the location form.
+        assert!(matches!(
+            stub_selector(None, retries, "field_construction"),
+            TestStubSelector::At { .. }
+        ));
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())
+    }
+
+    /// The MCP stub route's seam choice comes from the route `ripr check`
+    /// renders: a changed field on a shared construction line names the
+    /// changed field's validated seam id, and a lone return seam keeps the
+    /// location form.
+    #[cfg(feature = "lang-rust")]
+    #[test]
+    fn stub_route_seam_choice_names_the_changed_field_on_an_ambiguous_line() -> Result<(), String> {
+        let root = scratch_stub_crate(
+            "route-seam-choice",
+            "pub struct Config {\n    pub retries: u32,\n    pub verbose: bool,\n}\n\npub fn new() -> Config {\n    Config { retries: 5, verbose: false }\n}\n",
+        )?;
+        let diff = root.join("change.patch");
+        std::fs::write(
+            &diff,
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -7 +7 @@\n-    Config { retries: 3, verbose: false }\n+    Config { retries: 5, verbose: false }\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let output = crate::app::check_workspace(crate::app::CheckInput {
+            root: root.clone(),
+            diff_file: Some(diff),
+            ..Default::default()
+        })?;
+        let config = RiprConfig::default();
+        let mut index = None;
+        let seams =
+            analysis::scoped_file_seams(&root, &config, &PathBuf::from("src/lib.rs"), &mut index)?;
+        let retries = seams
+            .iter()
+            .find(|seam| {
+                seam.kind() == SeamKind::FieldConstruction && seam.expression().contains("retries")
+            })
+            .ok_or("no retries field seam")?;
+        let field = output
+            .findings
+            .iter()
+            .find(|finding| {
+                stub_route_location(finding, &root)
+                    .is_some_and(|(_, _, kind)| kind == "field_construction")
+            })
+            .ok_or("no field_construction stub-routed finding")?;
+        // Precondition: the location form for this finding's line refuses.
+        let (file, line, kind) = stub_route_location(field, &root).ok_or("no route")?;
+        assert!(matches!(
+            resolve_at_location(&root, &config, &file, line, Some(kind), &mut None),
+            Err(TestStubError::Ambiguous { .. })
+        ));
+        assert_eq!(
+            stub_route_seam_choice(&root, field),
+            StubRouteSeamChoice::SeamId(retries.id().as_str().to_string())
+        );
+        // Unresolved ambiguity: an expression that narrows to neither field
+        // leaves both stubbable candidates, so no single id is validated and
+        // the route is unrunnable rather than the refusing `--at` form.
+        let mut unnarrowed = field.clone();
+        unnarrowed.probe.expression = "retries: 5, verbose: false".to_string();
+        assert_eq!(
+            stub_route_seam_choice(&root, &unnarrowed),
+            StubRouteSeamChoice::Unrunnable
+        );
+        for finding in output.findings.iter().filter(|finding| {
+            stub_route_location(finding, &root)
+                .is_some_and(|(_, _, kind)| kind != "field_construction")
+        }) {
+            let (file, line, kind) = stub_route_location(finding, &root).ok_or("no route")?;
+            if resolve_at_location(&root, &config, &file, line, Some(kind), &mut None).is_ok() {
+                assert_eq!(
+                    stub_route_seam_choice(&root, finding),
+                    StubRouteSeamChoice::Location
+                );
+            }
+        }
+        std::fs::remove_dir_all(&root).map_err(|error| error.to_string())
+    }
+
     /// #10710: the narrowed seam is only offered when `ripr agent stub
     /// --seam-id` itself produces a stub. Here the changed field's seam is
     /// already strongly gripped by a whole-value assertion, so the classified
@@ -2091,16 +2643,74 @@ mod tests {
                 .map(|seam| seam.id().as_str().to_string())
                 .collect::<Vec<_>>();
             assert!(ids.len() >= 2, "precondition, one seam per field: {ids:?}");
+            let workspace = analysis::WORKSPACE_CLASSIFIED_INVENTORIES.with(std::cell::Cell::get);
             let decision = narrowed_ambiguity(
                 &root,
                 &config,
                 "src/lib.rs",
                 "y: 3",
                 "several seams".to_string(),
-                ids,
+                ids.clone(),
                 &mut index,
             );
+            // A second ambiguous finding in the same file reuses the file's
+            // complete classified inventory instead of rebuilding the
+            // workspace index (#14369 review).
+            let (again, rebuilds) = analysis::index_build_probe::observe(|| {
+                narrowed_ambiguity(
+                    &root,
+                    &config,
+                    "src/lib.rs",
+                    "y: 3",
+                    "several seams".to_string(),
+                    ids.clone(),
+                    &mut index,
+                )
+            });
+            assert_eq!(again, decision, "the reused decision is the same");
+            assert_eq!(
+                rebuilds, 0,
+                "a repeated ambiguity reuses the file inventory"
+            );
+            // The printed `--seam-id` command, run as printed, must produce
+            // the same seam's stub; it is located by the uncapped seam walk
+            // (#14369). The seam-cap case runs as a subprocess in
+            // `agent_stub_compiles`, since the cap is process-wide.
+            let executed = match &decision {
+                StubRouteDecision::SeamStub { seam_id } => {
+                    let located = analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get);
+                    let resolved = resolve_test_stub(
+                        &root,
+                        &config,
+                        &TestStubSelector::SeamId(seam_id.clone()),
+                    );
+                    let walks = analysis::SEAM_FILE_LOCATIONS.with(std::cell::Cell::get) - located;
+                    Some((walks, resolved))
+                }
+                _ => None,
+            };
+            let workspace =
+                analysis::WORKSPACE_CLASSIFIED_INVENTORIES.with(std::cell::Cell::get) - workspace;
             let _ = std::fs::remove_dir_all(&root);
+            // #14369: candidates from one file are validated, and the seam id
+            // then resolved, against that file's classified seams, never a
+            // whole-workspace inventory.
+            assert_eq!(
+                workspace, 0,
+                "a file-scoped ambiguity must not classify the whole workspace"
+            );
+            if let (StubRouteDecision::SeamStub { seam_id }, Some((walks, resolved))) =
+                (&decision, executed)
+            {
+                assert_eq!(walks, 1, "a seam id is located by the uncapped seam walk");
+                let resolution = resolved.map_err(|error| format!("{error:?}"))?;
+                assert_eq!(&resolution.seam_id, seam_id, "the printed seam resolves");
+                assert!(
+                    resolution.outcome.is_ok() && resolution.weak_oracle_guidance.is_none(),
+                    "the printed seam-id command yields a stub: {:?}",
+                    resolution.outcome
+                );
+            }
             Ok(decision)
         };
         let decision = decide("narrow-weak", &weak)?;
@@ -2200,7 +2810,7 @@ mod tests {
         );
     }
 
-    /// Each withhold path of `validate_ambiguity` returns a plain reason with
+    /// Each withhold path of an ambiguous line returns a plain reason with
     /// no unvalidated seam IDs and no command, and each is pinned separately
     /// by injecting the inventory: too many candidates (the loader must not
     /// run), an inventory that cannot be classified, and candidates the
@@ -2223,14 +2833,26 @@ mod tests {
         ];
         for (label, count, inventory) in cases {
             let mut loaded = false;
-            let decision =
-                validate_ambiguity(root, &config, ids(count), false, raw.to_string(), || {
-                    loaded = true;
-                    inventory.unwrap_or_else(|| Err("must not load".to_string()))
-                });
+            let plan = PendingStubRoute {
+                finding_id: label.to_owned(),
+                hidden: false,
+                decision: PendingStubDecision::Ambiguous(AmbiguousLine {
+                    file: Some("src/lib.rs".into()),
+                    candidates: ids(count),
+                    narrowed: false,
+                    reason: raw.to_owned(),
+                }),
+            };
+            let result = finish_stub_routes(root, &config, vec![plan], |_, _| {
+                loaded = true;
+                inventory
+                    .clone()
+                    .unwrap_or_else(|| Err("must not load".to_string()))
+            });
+            let decision = result.into_iter().next().map(|r| r.decision);
             assert_eq!(loaded, label != "too many", "{label}: inventory load");
             let reason = match decision {
-                StubRouteDecision::Withheld { reason } => reason,
+                Some(StubRouteDecision::Withheld { reason }) => reason,
                 other => format!("UNEXPECTED {other:?}"),
             };
             assert!(
@@ -2383,6 +3005,8 @@ mod tests {
             already_present: false,
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
+            receiver_setup: None,
+            input_setup: None,
         };
         let inline = stub(TestStubPlacement::NewInlineModule {
             file: PathBuf::from("crates/a/src/lib.rs"),
@@ -2420,6 +3044,207 @@ mod tests {
     }
 
     #[test]
+    fn focused_test_run_command_names_the_target_or_refuses() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-focused-run-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        // Inline module files (declared or not) and bench files get no
+        // command: only an established integration target is exact.
+        std::fs::create_dir_all(root.join("src/tests")).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(root.join("benches")).map_err(|error| error.to_string())?;
+        for (path, text) in [
+            ("src/lib.rs", "pub fn f() {}\n#[cfg(test)]\nmod tests;\n"),
+            ("src/tests/mod.rs", "mod pricing;\n"),
+            ("src/tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
+            ("src/stray.rs", "#[test]\nfn t() {}\n"),
+            ("tests/pricing.rs", "#[test]\nfn equal_threshold() {}\n"),
+            ("benches/pricing.rs", "#[test]\nfn t() {}\n"),
+        ] {
+            std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
+        }
+        let manifest = shell_arg(&root_path_display(&root.join("Cargo.toml")));
+        assert_eq!(focused_test_run_command(&root, "src/stray.rs", "t"), None);
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} --test pricing equal_threshold"
+            ))
+        );
+        // A `./` spelling names the same target.
+        assert_eq!(
+            focused_test_run_command(&root, "./tests/pricing.rs", "equal_threshold"),
+            Some(format!(
+                "cargo test --manifest-path {manifest} --test pricing equal_threshold"
+            ))
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "src/lib.rs", "equal_threshold"),
+            None
+        );
+        // No exact command: a non-identifier name, a non-Rust file, or a
+        // file outside any package.
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "a b; rm"),
+            None
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "tests/test_pricing.py", "test_x"),
+            None
+        );
+        let orphan = root.join("orphan");
+        std::fs::create_dir_all(orphan.join("tests")).map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&orphan, "tests/pricing.rs", "t"),
+            None
+        );
+        // A `tests` directory under `src/` is an inline module file of the
+        // library, not an integration target (#14320 review), so it gets no
+        // `--test` command either.
+        assert_eq!(
+            focused_test_run_command(&root, "src/tests/pricing.rs", "equal_threshold"),
+            None
+        );
+        assert_eq!(
+            focused_test_run_command(&root, "benches/pricing.rs", "t"),
+            None
+        );
+        // A manifest target name with shell syntax is never printed.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n\n[[test]]\nname = \"p;touch x\"\npath = \"tests/pricing.rs\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "t"),
+            None
+        );
+        // `autotests = false` without an entry leaves the target unnamed.
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\nautotests = false\n",
+        )
+        .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_test_run_command(&root, "tests/pricing.rs", "t"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    /// #16186: a proposal's focused-result command runs the proposed file's
+    /// own target through its member manifest, even when that member is not a
+    /// workspace default member and the file is not written yet; an inline
+    /// file keeps the generic guidance.
+    #[test]
+    fn focused_result_run_command_names_the_member_target() -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-focused-result-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        for dir in ["alpha/src", "beta/src", "beta/tests"] {
+            std::fs::create_dir_all(root.join(dir)).map_err(|error| error.to_string())?;
+        }
+        for (path, text) in [
+            (
+                "Cargo.toml",
+                "[workspace]\nmembers = [\"alpha\", \"beta\"]\ndefault-members = [\"alpha\"]\nresolver = \"3\"\n",
+            ),
+            (
+                "alpha/Cargo.toml",
+                "[package]\nname = \"alpha\"\nedition = \"2024\"\n",
+            ),
+            ("alpha/src/lib.rs", ""),
+            (
+                "beta/Cargo.toml",
+                "[package]\nname = \"beta\"\nedition = \"2024\"\n",
+            ),
+            ("beta/src/lib.rs", "pub fn f() {}\n"),
+            ("beta/tests/smoke.rs", "#[test]\nfn smoke() {}\n"),
+        ] {
+            std::fs::write(root.join(path), text).map_err(|error| error.to_string())?;
+        }
+        let manifest = shell_arg(&root_path_display(&root.join("beta/Cargo.toml")));
+        assert_eq!(
+            focused_result_run_command(&root, "beta/tests/pricing.rs"),
+            Some(format!(
+                "cargo +nightly test --manifest-path {manifest} -p beta --test pricing -- -Z unstable-options --format json"
+            ))
+        );
+        assert_eq!(focused_result_run_command(&root, "beta/src/lib.rs"), None);
+        assert_eq!(
+            focused_result_run_command(&root, "beta/tests/pricing.py"),
+            None
+        );
+        // An existing directory target of the same name: creating the flat
+        // file would make `--test pricing` ambiguous, so nothing is printed.
+        std::fs::create_dir_all(root.join("beta/tests/pricing"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("beta/tests/pricing/main.rs"), "")
+            .map_err(|error| error.to_string())?;
+        assert_eq!(
+            focused_result_run_command(&root, "beta/tests/pricing.rs"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn focused_test_run_command_keeps_a_literal_backslash_unix_root() -> Result<(), String> {
+        // A literal `\` is part of a Unix directory name and must survive
+        // into the printed manifest path (#14320 review).
+        let root = std::env::temp_dir()
+            .join(format!(
+                "ripr-focused-root-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_nanos()
+            ))
+            .join(if cfg!(unix) { "team\\repo" } else { "repo" });
+        std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"price\"\nedition = \"2021\"\n",
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("tests/pricing.rs"),
+            "#[test]\nfn equal_threshold() {}\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let command = focused_test_run_command(&root, "tests/pricing.rs", "equal_threshold")
+            .ok_or("an established integration target must get a command")?;
+        assert!(
+            command.ends_with(" --test pricing equal_threshold"),
+            "{command}"
+        );
+        if cfg!(unix) {
+            assert!(command.contains("team\\repo"), "{command}");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
     fn integration_target_name_follows_cargo_target_registration() -> Result<(), String> {
         use crate::analysis::test_stub::TestStubPlacement;
         let root = std::env::temp_dir().join(format!(
@@ -2440,6 +3265,8 @@ mod tests {
             already_present: false,
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
+            receiver_setup: None,
+            input_setup: None,
         };
         let got = |tail: &str, file: &str| -> Result<Option<String>, String> {
             std::fs::write(
@@ -2787,6 +3614,168 @@ mod tests {
         assert_eq!(candidates[0].seam().display_line(), 2);
     }
 
+    /// #13884: the `--at` disclosure lookup (also run by `ripr check`'s stub
+    /// route) evaluates only the selected seam, not every seam in its file,
+    /// and returns that seam's whole-file class.
+    #[test]
+    fn inventory_entry_facts_evaluates_only_the_selected_seam() -> Result<(), String> {
+        let source = (0..6)
+            .map(|n| format!("pub fn over_{n}(value: i32) -> bool {{\n    value > {n}\n}}\n"))
+            .collect::<String>();
+        let config = RiprConfig::default();
+        let root = scratch_stub_crate("one-seam-facts", &source)?;
+        analysis::evaluation_probe::reset();
+        let full = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &[],
+        )?;
+        // The whole-file inventory the lookup used before evaluates every seam.
+        assert_eq!(
+            analysis::evaluation_probe::evaluated(),
+            full.classified.len()
+        );
+        assert!(
+            full.classified.len() >= 6,
+            "fixture must hold a seam per function"
+        );
+        let target = full
+            .classified
+            .get(3)
+            .ok_or("fixture must hold a fourth seam")?;
+        let target_id = target.seam.id().as_str().to_string();
+
+        analysis::evaluation_probe::reset();
+        let facts = inventory_entry_facts(&root, &config, "src/lib.rs", &target_id);
+        let evaluated = analysis::evaluation_probe::evaluated();
+        // An unchanged repeat lookup of the same seam reuses that result.
+        analysis::evaluation_probe::reset();
+        let repeat = inventory_entry_facts(&root, &config, "src/lib.rs", &target_id);
+        let repeat_evaluated = analysis::evaluation_probe::evaluated();
+        let _ = std::fs::remove_dir_all(&root);
+
+        assert_eq!(evaluated, 1);
+        assert_eq!(repeat_evaluated, 0);
+        assert_eq!(repeat, facts);
+        let (class, guidance) = facts.ok_or("selected seam must be found")?;
+        assert_eq!(class, target.class);
+        assert_eq!(
+            guidance,
+            super::super::task_first::weak_oracle_guidance(target)
+        );
+        Ok(())
+    }
+
+    /// #13340: a failed evidence warm leaves opaque stand-in seams, so the
+    /// scoped `--at` stub refuses (and the disclosure lookup stays empty)
+    /// instead of scaffolding from them. The unarmed control uses a separate
+    /// root so a cached healthy walk cannot answer.
+    #[test]
+    fn failed_evidence_warm_refuses_scoped_test_stub() -> Result<(), String> {
+        use crate::analysis::test_grip_evidence::WarmPanicGuard;
+        const SOURCE: &str =
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+        let config = RiprConfig::default();
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")?;
+
+        let control = scratch_stub_crate("warm-control", SOURCE)?;
+        let healthy = resolve_test_stub(&control, &config, &selector)
+            .map_err(|error| format!("{error:?}"))?;
+        assert!(healthy.outcome.is_ok(), "{:?}", healthy.outcome.err());
+        let seam_id = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+            &control,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &[],
+        )?
+        .classified
+        .first()
+        .map(|entry| entry.seam.id().as_str().to_string())
+        .ok_or("fixture must classify a seam")?;
+        assert!(inventory_entry_facts(&control, &config, "src/lib.rs", &seam_id).is_some());
+        // #14369: the seam-id stub and the ambiguity validator classify the
+        // file too, so they get the same guard; unarmed, both see the seam.
+        let by_id = TestStubSelector::SeamId(seam_id.clone());
+        let healthy =
+            resolve_test_stub(&control, &config, &by_id).map_err(|error| format!("{error:?}"))?;
+        assert!(healthy.outcome.is_ok(), "{:?}", healthy.outcome.err());
+        let ambiguity = |root: &Path| {
+            narrowed_ambiguity(
+                root,
+                &config,
+                "src/lib.rs",
+                "x >= 100",
+                "several seams".to_string(),
+                vec![seam_id.clone()],
+                &mut None,
+            )
+        };
+        let decision = ambiguity(&control);
+        assert!(
+            !matches!(decision, StubRouteDecision::Withheld { .. }),
+            "unarmed, the candidate is validated: {decision:?}"
+        );
+        let _ = std::fs::remove_dir_all(&control);
+
+        for point in [1u8, 2u8] {
+            let root = scratch_stub_crate(&format!("warm-{point}"), SOURCE)?;
+            let refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                resolve_test_stub(&root, &config, &selector)
+            };
+            match refused {
+                Err(TestStubError::Operational(message)) => {
+                    assert!(message.contains("test stub refused"), "{message}");
+                    assert!(message.contains("producer_failure"), "{message}");
+                }
+                other => return Err(format!("point {point}: expected refusal: {other:?}")),
+            }
+            let by_id_refused = {
+                let _armed = WarmPanicGuard::arm(point);
+                resolve_test_stub(&root, &config, &by_id)
+            };
+            let decision = {
+                let _armed = WarmPanicGuard::arm(point);
+                ambiguity(&root)
+            };
+            match by_id_refused {
+                Err(TestStubError::Operational(message)) => {
+                    assert!(message.contains("test stub refused"), "{message}");
+                }
+                other => {
+                    return Err(format!(
+                        "point {point}: expected seam-id refusal: {other:?}"
+                    ));
+                }
+            }
+            assert!(
+                matches!(decision, StubRouteDecision::Withheld { .. }),
+                "point {point}: stand-in seams must not validate a route: {decision:?}"
+            );
+            let facts = {
+                let _armed = WarmPanicGuard::arm(point);
+                let stand_in = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+                    &root,
+                    &config,
+                    &[PathBuf::from("src/lib.rs")],
+                    &[],
+                )?;
+                assert!(stand_in.evidence_incomplete(), "point {point}: not armed");
+                let stand_in_id = stand_in
+                    .classified
+                    .first()
+                    .map(|entry| entry.seam.id().as_str().to_string())
+                    .ok_or("stand-in seams must still be listed")?;
+                assert_eq!(stand_in_id, seam_id);
+                inventory_entry_facts(&root, &config, "src/lib.rs", &stand_in_id)
+            };
+            assert!(facts.is_none(), "point {point}: stand-in class leaked");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
     /// #7290: `--at --kind` selects from a file parse, so a strongly-gripped
     /// seam still yields a stub. The use case must still look up the
     /// inventory class so the CLI can disclose it.
@@ -2935,6 +3924,50 @@ impl Size {
             )),
         }
     }
+
+    /// #12713 (Option A): the direct `--kind return_value` stub for a probe
+    /// line with no inventory seam keeps the cfg-gated parent refusal the
+    /// shape path applies. An owner in `src/extra.rs`, declared from
+    /// `src/lib.rs` as `#[cfg(feature = "extra")] mod extra;`, refuses with
+    /// `owner_unsupported`; the same owner under a plain `mod extra;` stubs.
+    /// Passing no package root on the direct path makes the gated case stub.
+    #[test]
+    fn return_value_direct_stub_refuses_an_owner_under_a_cfg_gated_parent() -> Result<(), String> {
+        // Line 3, a match arm result, holds no inventory `return_value` seam,
+        // so `--at src/extra.rs:3 --kind return_value` takes the direct path.
+        const EXTRA: &str = "pub fn pick(a: i32) -> i32 {\n    match a {\n        0 => 5,\n        _ => a * 2,\n    }\n}\n";
+        let resolve = |label: &str, lib: &str| {
+            let root = scratch_stub_crate(label, lib)?;
+            std::fs::write(root.join("src/extra.rs"), EXTRA).map_err(|error| error.to_string())?;
+            let selector =
+                TestStubSelector::parse_at("src/extra.rs:3")?.with_kind("return_value")?;
+            let resolution = resolve_test_stub(&root, &RiprConfig::default(), &selector)
+                .map_err(|error| format!("{error:?}"));
+            let _ = std::fs::remove_dir_all(&root);
+            resolution
+        };
+        let gated = resolve(
+            "rv-gated-parent",
+            "#[cfg(feature = \"extra\")]\nmod extra;\n",
+        )?;
+        assert_eq!(gated.at_note, None, "the direct path never substitutes");
+        assert_eq!(gated.seam_line, 3);
+        match &gated.outcome {
+            Err(refusal) if refusal.as_str() == "owner_unsupported" => {}
+            other => {
+                return Err(format!(
+                    "an owner under a cfg-gated parent must refuse: {other:?}"
+                ));
+            }
+        }
+        let plain = resolve("rv-plain-parent", "mod extra;\n")?;
+        assert_eq!(plain.seam_line, 3);
+        if let Err(refusal) = &plain.outcome {
+            return Err(format!("the ungated control must stub: {refusal:?}"));
+        }
+        Ok(())
+    }
+
     /// class is not the strongly-gripped omission case.
     #[test]
     fn at_kind_stub_on_an_open_gap_is_not_strongly_gripped() -> Result<(), String> {
@@ -2989,6 +4022,8 @@ impl Size {
                 value: "x >= 100".to_string(),
                 reason: "observed values do not include the boundary case".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Other,
+                drafted_boundary: None,
             });
         entry.evidence.new_test_target = Some(NewTestTargetAdmission {
             proposal: Some(NewTestTargetProposal {
@@ -2996,6 +4031,7 @@ impl Size {
                 file: PathBuf::from("tests/clamp_tests.rs"),
                 owner: owner.to_string(),
                 provenance: NewTestProposalProvenance::ProducerOwned,
+                workspace_identity: String::new(),
             }),
             region: None,
             blocker: None,
@@ -3019,6 +4055,108 @@ impl Size {
     /// surface. A free crate-root owner takes the producer-admitted
     /// integration file, so the two independent derivations agree and no
     /// divergence is carried.
+    #[test]
+    fn ambiguous_rows_share_one_bounded_evaluation_and_match_whole_file_guidance()
+    -> Result<(), String> {
+        let config = RiprConfig::default();
+        let file = Path::new("src/lib.rs");
+        for functions in [8, 32] {
+            let source: String = (0..functions)
+                .map(|index| format!("pub fn enough_{index}(n: i32) -> bool {{ n >= {index} }}\n"))
+                .collect();
+            let root = scratch_stub_crate(&format!("stub-batch-{functions}"), &source)?;
+            let oracle = analysis::inventory_file_guidance_at_with_config(&root, &config, file)?;
+            oracle.require_complete_evidence("stub test oracle")?;
+            if oracle.classified.len() < functions {
+                return Err("fixture must contain unrelated classified seams".into());
+            }
+            let mut actual_ids = oracle
+                .classified
+                .iter()
+                .map(|entry| entry.seam.id().as_str().to_owned());
+            let a = actual_ids.next().ok_or("first fixture seam")?;
+            let b = actual_ids.next().ok_or("second fixture seam")?;
+            let missing = "absent-seam".to_owned();
+            let rows = || -> Vec<PendingStubRoute> {
+                [
+                    ("narrowed", true, vec![a.clone()]),
+                    ("ordered", false, vec![b.clone(), a.clone()]),
+                    ("missing", false, vec![missing.clone()]),
+                    (
+                        "over-cap",
+                        false,
+                        vec!["excluded".to_owned(); AMBIGUOUS_VALIDATION_LIMIT + 1],
+                    ),
+                ]
+                .into_iter()
+                .map(|(id, narrowed, candidates)| PendingStubRoute {
+                    finding_id: id.to_owned(),
+                    hidden: false,
+                    decision: PendingStubDecision::Ambiguous(AmbiguousLine {
+                        file: Some(file.to_owned()),
+                        candidates,
+                        narrowed,
+                        reason: "several seams".to_owned(),
+                    }),
+                })
+                .collect()
+            };
+            // Independent unbatched oracle: search the complete inventory
+            // in each row's original order, as the prior producer did.
+            let expected = rows()
+                .into_iter()
+                .map(|plan: PendingStubRoute| {
+                    let PendingStubDecision::Ambiguous(line) = plan.decision else {
+                        return Err("expected an ambiguous fixture row".to_owned());
+                    };
+                    let decision = if line.candidates.len() > AMBIGUOUS_VALIDATION_LIMIT {
+                        withheld_ambiguity(&line.reason)
+                    } else {
+                        let outcomes = line
+                            .candidates
+                            .into_iter()
+                            .map(|id| {
+                                let outcome = oracle
+                                    .classified
+                                    .iter()
+                                    .find(|entry| entry.seam.id().as_str() == id)
+                                    .map(|entry| seam_stub_outcome(&root, &config, entry))
+                                    .unwrap_or(SeamStubOutcome::Missing);
+                                (id, outcome)
+                            })
+                            .collect();
+                        fold_seam_outcomes(outcomes, line.reason, line.narrowed)
+                    };
+                    Ok(StubRoute {
+                        finding_id: plan.finding_id,
+                        decision,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let mut preparations = 0;
+            let selected = BTreeSet::from([a.clone(), b.clone(), missing.clone()]);
+            analysis::evaluation_probe::reset();
+            let result = finish_stub_routes(&root, &config, rows(), |path, choices| {
+                preparations += 1;
+                if path != Some(file) || choices != &selected {
+                    return Err("incorrect seam union".into());
+                }
+                classify_stub_choices(&root, &config, path, choices)
+            });
+            if result != expected
+                || preparations != 1
+                || analysis::evaluation_probe::evaluated() != 2
+            {
+                return Err(format!(
+                    "stub routes differed or repeated preparation for {functions} functions: {preparations} preparations, {} evaluated",
+                    analysis::evaluation_probe::evaluated()
+                ));
+            }
+            std::fs::remove_dir_all(root).map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn next_repair_names_the_start_and_the_agreeing_surface() -> Result<(), String> {
         let root = scratch_stub_crate("next-repair-agree", FREE_FN_SOURCE)?;
@@ -3179,6 +4317,8 @@ impl Size {
             already_present: false,
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
+            receiver_setup: None,
+            input_setup: None,
         };
         let resolution = TestStubResolution {
             seam_id: "seam".to_string(),
@@ -3222,6 +4362,8 @@ impl Size {
             already_present: false,
             fill_ins: Vec::new(),
             derived_inputs: Vec::new(),
+            receiver_setup: None,
+            input_setup: None,
         };
         let next = next_repair_for(root, &RiprConfig::default(), &entry, &stub)
             .ok_or("a repair-ready stub must name its repair journey")?;

@@ -13,7 +13,7 @@
   "changed_since_labeling": true,
   "observed_classifications": [
     "exposed",
-    "infection_unknown"
+    "propagation_unknown"
   ],
   "outcome": "ideal",
   "contradictions": [],

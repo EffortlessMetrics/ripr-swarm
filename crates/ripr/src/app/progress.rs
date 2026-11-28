@@ -5,6 +5,7 @@
 //! Unknown work totals stay unknown: this layer does not invent percentages.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::analysis::cancellation::AnalysisAbortKind;
@@ -24,12 +25,44 @@ pub(crate) enum AnalysisProgressStage {
     Failed,
 }
 
+impl AnalysisProgressStage {
+    /// Stable lowercase token: the `analyzing` in a `ripr progress:` line and
+    /// the `ripr: timing [scope] ...` phase lines printed under `-v` or
+    /// `RIPR_VERBOSE`.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::LoadingInput => "loading_input",
+            Self::Analyzing => "analyzing",
+            Self::BuildingOutput => "building_output",
+            Self::Completed => "completed",
+            Self::Cancelled => "cancelled",
+            Self::Failed => "failed",
+        }
+    }
+
+    const fn is_terminal_stage(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled | Self::Failed)
+    }
+}
+
 /// Mode identity without a checkout path or source text.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AnalysisProgressScope {
     Diff,
     Worktree,
     Repo,
+}
+
+impl AnalysisProgressScope {
+    /// Stable lowercase token for stderr: the `[worktree]` in a progress line
+    /// and the `scope = worktree` in the `-v` diagnostics are this value.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Diff => "diff",
+            Self::Worktree => "worktree",
+            Self::Repo => "repo",
+        }
+    }
 }
 
 /// One bounded, path-free progress observation.
@@ -80,6 +113,14 @@ pub(crate) trait AnalysisProgressSink {
     /// it does not read like an internal crash; the `Failed` event is still
     /// delivered, so protocol sinks keep their terminal. Default: no-op.
     fn user_fixable_failure(&self) {}
+
+    /// A `'static` seam-count emitter the inventory walk can capture onto
+    /// rayon workers (#8643). Default `None` keeps unknown totals unknown.
+    /// The returned function must not change analysis identity; a panic is
+    /// isolated by [`repo_inventory_with_progress`].
+    fn unit_emitter(&self) -> Option<Arc<dyn Fn(u64, u64) + Send + Sync>> {
+        None
+    }
 }
 
 pub(crate) struct ProgressRun<'a> {
@@ -87,6 +128,10 @@ pub(crate) struct ProgressRun<'a> {
     scope: AnalysisProgressScope,
     started: Instant,
     terminal: bool,
+    /// The last stage boundary and its elapsed time, recorded only under
+    /// `-v`/`RIPR_VERBOSE` so the phase-timing lines can name how long each
+    /// stage took. Off, it stays `None` and costs nothing.
+    phase_mark: Option<(AnalysisProgressStage, u64)>,
 }
 
 impl<'a> ProgressRun<'a> {
@@ -99,6 +144,7 @@ impl<'a> ProgressRun<'a> {
             scope,
             started: Instant::now(),
             terminal: false,
+            phase_mark: None,
         }
     }
 
@@ -133,7 +179,18 @@ impl<'a> ProgressRun<'a> {
         self.emit_now(stage);
     }
 
-    fn emit_now(&self, stage: AnalysisProgressStage) {
+    fn emit_now(&mut self, stage: AnalysisProgressStage) {
+        if crate::stderr_diagnostics() {
+            let now = elapsed_ms(self.started);
+            // Best effort, never `eprintln!`: this also runs from `Drop`
+            // during an unwind, where a closed stderr pipe must not turn
+            // into a second panic and an abort. The macro still closes an
+            // open in-place progress row before the line.
+            for line in phase_timing_lines(self.scope, self.phase_mark, stage, now) {
+                eprintln_best_effort!("{line}");
+            }
+            self.phase_mark = Some((stage, now));
+        }
         let Some(sink) = self.sink else {
             return;
         };
@@ -154,6 +211,35 @@ impl Drop for ProgressRun<'_> {
         };
         self.finish(stage);
     }
+}
+
+/// The `-v`/`RIPR_VERBOSE` phase-timing lines for one stage boundary: the
+/// previous stage's duration, and the run total when `stage` is terminal.
+/// Pure so the wording is testable without a clock or stderr capture.
+fn phase_timing_lines(
+    scope: AnalysisProgressScope,
+    previous: Option<(AnalysisProgressStage, u64)>,
+    stage: AnalysisProgressStage,
+    now_ms: u64,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some((previous_stage, started_ms)) = previous {
+        lines.push(format!(
+            "ripr: timing [{}] {} took {} ms",
+            scope.as_str(),
+            previous_stage.as_str(),
+            now_ms.saturating_sub(started_ms)
+        ));
+    }
+    if stage.is_terminal_stage() {
+        lines.push(format!(
+            "ripr: timing [{}] {} after {} ms total",
+            scope.as_str(),
+            stage.as_str(),
+            now_ms
+        ));
+    }
+    lines
 }
 
 fn elapsed_ms(started: Instant) -> u64 {
@@ -185,7 +271,14 @@ pub(crate) fn repo_inventory_with_progress<T, R>(
     let mut run = ProgressRun::new(sink, AnalysisProgressScope::Repo);
     run.emit(AnalysisProgressStage::LoadingInput);
     run.emit(AnalysisProgressStage::Analyzing);
-    let value = inventory()?;
+    let units_listener = sink
+        .and_then(AnalysisProgressSink::unit_emitter)
+        .map(|emit| {
+            Arc::new(move |completed: u64, total: u64| {
+                let _ = catch_unwind(AssertUnwindSafe(|| emit(completed, total)));
+            }) as Arc<dyn Fn(u64, u64) + Send + Sync>
+        });
+    let value = crate::analysis::inventory_progress::with_listener(units_listener, inventory)?;
     run.emit(AnalysisProgressStage::BuildingOutput);
     let assembled = assemble(value)?;
     run.complete();
@@ -200,17 +293,17 @@ mod tests {
     use crate::app::{CheckInput, Mode, OutputFormat};
     use crate::config::RiprConfig;
     use std::path::PathBuf;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     struct ProgressRecorder {
-        events: Mutex<Vec<AnalysisProgressEvent>>,
+        events: Arc<Mutex<Vec<AnalysisProgressEvent>>>,
     }
 
     impl ProgressRecorder {
         fn new() -> Self {
             Self {
-                events: Mutex::new(Vec::new()),
+                events: Arc::new(Mutex::new(Vec::new())),
             }
         }
 
@@ -228,6 +321,26 @@ mod tests {
                 Ok(mut events) => events.push(event),
                 Err(poisoned) => poisoned.into_inner().push(event),
             }
+        }
+
+        fn unit_emitter(&self) -> Option<Arc<dyn Fn(u64, u64) + Send + Sync>> {
+            let events = Arc::clone(&self.events);
+            Some(Arc::new(move |completed, total| match events.lock() {
+                Ok(mut events) => events.push(AnalysisProgressEvent {
+                    stage: AnalysisProgressStage::Analyzing,
+                    scope: AnalysisProgressScope::Repo,
+                    completed_units: Some(completed),
+                    total_units: Some(total),
+                    elapsed_ms: 0,
+                }),
+                Err(poisoned) => poisoned.into_inner().push(AnalysisProgressEvent {
+                    stage: AnalysisProgressStage::Analyzing,
+                    scope: AnalysisProgressScope::Repo,
+                    completed_units: Some(completed),
+                    total_units: Some(total),
+                    elapsed_ms: 0,
+                }),
+            }))
         }
     }
 
@@ -690,6 +803,47 @@ mod tests {
     }
 
     #[test]
+    fn repo_inventory_with_progress_forwards_honest_seam_units() -> Result<(), String> {
+        let recorder = ProgressRecorder::new();
+        let assembled = repo_inventory_with_progress(
+            Some(&recorder),
+            || {
+                crate::analysis::inventory_progress::report_units(500, 10_000);
+                Ok(41usize)
+            },
+            |value| Ok(value + 1),
+        )?;
+        assert_eq!(assembled, 42);
+        let events = recorder.events();
+        assert!(
+            events.iter().any(|event| {
+                event.stage == AnalysisProgressStage::Analyzing
+                    && event.scope == AnalysisProgressScope::Repo
+                    && event.completed_units == Some(500)
+                    && event.total_units == Some(10_000)
+            }),
+            "inventory unit reports must become analyzing events with both counts: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .all(|event| match (event.completed_units, event.total_units) {
+                    (None, None) => true,
+                    (Some(completed), Some(total)) => {
+                        completed <= total && event.stage == AnalysisProgressStage::Analyzing
+                    }
+                    _ => false,
+                }),
+            "units may only appear together on analyzing: {events:?}"
+        );
+        assert!(
+            !format!("{events:?}").to_ascii_lowercase().contains("eta"),
+            "unit events must not invent an ETA"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn repo_inventory_progress_fail_closes_without_completed_on_either_closure_error() {
         for (name, expected, failing) in [
             (
@@ -741,5 +895,81 @@ mod tests {
                 "{name} failure must never project completed"
             );
         }
+    }
+
+    #[test]
+    fn phase_timing_lines_name_the_previous_stage_duration_and_the_terminal_total() {
+        let scope = AnalysisProgressScope::Diff;
+        assert!(
+            phase_timing_lines(scope, None, AnalysisProgressStage::LoadingInput, 0).is_empty(),
+            "the first boundary has no previous stage to time"
+        );
+        assert_eq!(
+            phase_timing_lines(
+                scope,
+                Some((AnalysisProgressStage::LoadingInput, 5)),
+                AnalysisProgressStage::Analyzing,
+                17,
+            ),
+            vec!["ripr: timing [diff] loading_input took 12 ms".to_string()]
+        );
+        assert_eq!(
+            phase_timing_lines(
+                AnalysisProgressScope::Repo,
+                Some((AnalysisProgressStage::BuildingOutput, 40)),
+                AnalysisProgressStage::Completed,
+                43,
+            ),
+            vec![
+                "ripr: timing [repo] building_output took 3 ms".to_string(),
+                "ripr: timing [repo] completed after 43 ms total".to_string(),
+            ]
+        );
+        // A clock that reads earlier than the mark never underflows.
+        assert_eq!(
+            phase_timing_lines(
+                scope,
+                Some((AnalysisProgressStage::Analyzing, 9)),
+                AnalysisProgressStage::Failed,
+                4,
+            ),
+            vec![
+                "ripr: timing [diff] analyzing took 0 ms".to_string(),
+                "ripr: timing [diff] failed after 4 ms total".to_string(),
+            ]
+        );
+    }
+
+    const CAPTURE_HELPER: &str = "app::progress::tests::best_effort_capture_helper";
+    const CAPTURE_MARKER: &str = "ripr-15207-best-effort-marker";
+
+    /// Only meaningful as a child of the test below; ignored in ordinary runs.
+    #[test]
+    #[ignore = "child of best_effort_diagnostics_stay_inside_libtest_capture"]
+    fn best_effort_capture_helper() {
+        eprintln_best_effort!("{CAPTURE_MARKER}");
+    }
+
+    /// #15207: a raw stderr handle bypasses libtest capture and can join an
+    /// outcome row on one physical line. A passing child must show no marker.
+    #[test]
+    fn best_effort_diagnostics_stay_inside_libtest_capture() -> Result<(), String> {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let out = std::process::Command::new(exe)
+            .args(["--exact", CAPTURE_HELPER, "--ignored", "--test-threads=1"])
+            // An inherited no-capture request would print the marker by design.
+            .env_remove("RUST_TEST_NOCAPTURE")
+            .output()
+            .map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let row = format!("test {CAPTURE_HELPER} ... ok");
+        if !stdout.lines().any(|line| line == row) {
+            return Err(format!("child outcome row missing: {stdout}"));
+        }
+        if stdout.contains(CAPTURE_MARKER) || stderr.contains(CAPTURE_MARKER) {
+            return Err(format!("diagnostic escaped capture: {stdout} / {stderr}"));
+        }
+        Ok(())
     }
 }

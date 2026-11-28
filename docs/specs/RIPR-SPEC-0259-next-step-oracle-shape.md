@@ -6,7 +6,9 @@ Owner: product-analysis
 
 Created: 2026-10-13
 
-Linked issues: [#7393](https://github.com/EffortlessMetrics/ripr-swarm/issues/7393).
+Linked issues: [#7393](https://github.com/EffortlessMetrics/ripr-swarm/issues/7393),
+[#13037](https://github.com/EffortlessMetrics/ripr-swarm/issues/13037),
+[#15149](https://github.com/EffortlessMetrics/ripr-swarm/issues/15149).
 
 Support-tier impact: None
 
@@ -49,6 +51,30 @@ alone:
   can distinguish identical returns. When the finding carries a missing
   discriminator fact, the step appends it the way the predicate probe's
   evidence does (`Missing discriminator: \`...\``).
+- #13037 amendment: the same selection covers the families whose template
+  is "Strengthen the related assertion so it discriminates the changed
+  behavior" (`call_deletion`, `match_arm`, `field_construction`). An exact
+  assertion cannot be strengthened, so that template is not emitted when the
+  strongest eligible related oracle is already exact. The step names the test,
+  states that the gap is not the assertion shape, and names the link that is
+  not established: for `call_deletion`, whether the asserted value depends on
+  the changed call (if it does, the assertion may already notice the change,
+  which the static read could not confirm; if not, assert the effect the call
+  produces); for `match_arm`, whether the asserted value comes from the
+  changed arm (if it does, the same unconfirmed-observation sentence; if an
+  input selects the arm but its result is replaced before the assertion,
+  assert that result where it is still observable or test the arm
+  separately; if no related input selects the arm, add one and assert the
+  arm's exact value);
+  for `field_construction`, whether the asserted value includes the changed
+  field (if it does, the same sentence; if not, assert that field's exact
+  value). Each family states both branches so the reader is never left at a
+  dead end. The step claims no observation and the class stays
+  `weakly_exposed`. A related assertion that compares a value with a copy of
+  itself (`assert_eq!(b.0, b.0.clone())`, up to a trailing `.clone()`,
+  `.to_owned()`, `.to_vec()` or a leading borrow) never takes this step,
+  whatever strength the row carries: it cannot discriminate, so the family
+  template stands.
 - Only reach-establishing rows are eligible: the row's relation reason must
   establish reach to the changed owner
   (`RelationReason::establishes_reach`; `direct_owner_call`,
@@ -73,6 +99,32 @@ alone:
 - When the strongest related oracle is not exact (broad error check, smoke
   assertion, unreadable shape), or no related test row exists, the existing
   family template stands unchanged; that advice is honest for those shapes.
+- Boolean owners (#15149). For an owner that declares `-> bool`,
+  `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
+  `assert!(!owner(..))` is `assert_eq!(owner(..), false)`, so each already
+  checks the exact result, even though the oracle extractor grades the
+  bare `assert!` as a weak relational check. For a `return_value` probe of
+  such an owner, when every contributing reach-establishing row asserts the
+  owner call's result directly in one of those forms (plain, `std::` or
+  `core::` rooted, through an optional plain path, with optional message
+  arguments) and every matched row is listed, the "replace broad
+  assertions" template is not emitted: rewriting those assertions with
+  exact equality would check the same values. The step says the related
+  tests already assert the exact boolean result of the owner and asks for a
+  test with an input whose boolean result differs between the old and new
+  code. It names no input value, since the return-value finding carries no
+  deciding-input fact. Any other row on the owner (a compound condition, a
+  method receiver, a turbofish, a bound result, a double negation, a
+  closure call, an unreadable oracle, or a row annotated
+  `missing_exact_assertion`) keeps the family template. A row's relation
+  reason is test-level reach, so the asserted call itself must be the owner
+  (#15537 review): with a same-package rival the shared owner-call identity
+  (`OwnerCallIdentity::resolve_call`) must settle the spelled call on the
+  owner; with no such identity only a bare call, with no other same-named
+  function in the index, counts. A test that calls the owner but asserts a
+  same-named rival keeps the family template. `build_finding` asks the
+  exact-oracle step (#7393, #13037) first; the boolean-owner step is reached
+  only when that step declines, so the two never both apply to one finding.
 - Shapes with dedicated guidance are untouched: boxed wrapper-error seams
   keep the typed `wrapper_error_binding_unresolved` limitation step, and a
   changed `Err(...)` construction keeps the "reaches the changed error path"
@@ -97,14 +149,40 @@ reach-based eligibility refinement re-blesses
 `fixtures/owner_parameter_token_coincidence` under the same confinement: its
 `same_test_file` token-coincidence row no longer dictates the step.
 
+The boolean-owner step is covered by
+`bool_owner_exact_result_rows_name_the_deciding_input` and its controls
+`bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result`
+(a compound, wrapped, method-receiver, renamed, turbofish, bound-result,
+double-negation, closure, `debug_assert!` or `assert_ne!` row, a
+`missing_exact_assertion` row, a non-`bool` owner, a non-weak class, a
+predicate probe, no owner, no rows, an unreadable oracle, and a
+proximity-only row), and
+`bool_owner_step_needs_the_asserted_call_to_be_the_owner` plus
+`crates/ripr/tests/bool_owner_next_step.rs`
+(`the_owners_own_boolean_assertions_get_the_deciding_input_step`,
+`a_rivals_assertion_beside_an_owner_call_keeps_the_template`) cover the
+asserted-call identity end to end; the positive case covers the plain, `std::`, `core::`,
+`::std::` and `::core::` rooted forms, a message argument and a path-qualified
+call. It
+re-blesses `fixtures/rust_predicate_appended_int_arm_old_input`,
+`fixtures/rust_predicate_appended_str_arm_false_side_only`,
+`fixtures/rust_predicate_appended_char_arm_old_input` and
+`fixtures/guard_operand_dropped_agreement`, each confined to the
+`recommended_next_step` / `suggested_next_action` string and its human
+rendering. `fixtures/rust_nested_use_owner` keeps the family template: its
+`thr` owner has a same-named function in another package, so no shared
+owner-call identity settles the qualified asserted calls and the step fails
+closed.
+
 ## Non-Goals
 
 This spec does not change exposure classification, stage states, oracle
 admission, reach/observation evidence, or the Python/TypeScript preview
 adapters' own next-step producers. It does not attempt to derive the missing
 input from observed values when the finding carries no missing-discriminator
-fact, and it does not cover probe families outside `error_path` and
-`return_value`.
+fact, and it does not cover probe families outside `error_path`,
+`return_value`, `call_deletion`, `match_arm` and `field_construction`. The
+`predicate` and `side_effect` templates name a concrete action and stand.
 
 ## Acceptance Examples
 
@@ -116,6 +194,12 @@ fact, and it does not cover probe families outside `error_path` and
 - A `read_all` change whose only test asserts `assert_eq!(got.ok(), Some(10))`
   no longer advises replacing a nonexistent `is_err()`; the step asks for an
   input that executes the changed error arm.
+- A new `low_stock` method ending in `out.sort(); out`, pinned by
+  `assert_eq!(inv.low_stock(5), vec![..])`, no longer tells the user to
+  strengthen that assertion on the `out.sort()` finding; the step names the
+  test and asks whether the asserted value depends on the changed call. The
+  default human "Missing check" line reads "No assertion was tied to the
+  changed value".
 - A finding whose strongest related assertion is a bare `assert!(r.is_err())`
   keeps the "assert the exact error variant or payload instead of only
   is_err()" advice unchanged.
@@ -126,6 +210,9 @@ fact, and it does not cover probe families outside `error_path` and
   covers the error-path step with a missing discriminator.
 - `analysis::classify::decision::tests::exact_related_oracle_names_the_missing_input_for_return_value`
   covers the return-value step without one.
+- `analysis::classify::decision::tests::exact_related_oracle_replaces_the_strengthen_template`
+  covers the #13037 amendment for `call_deletion`, `match_arm` and
+  `field_construction`, with a downgraded exact oracle keeping the template.
 - `analysis::classify::decision::tests::non_exact_oracle_keeps_the_family_template`
   covers the broad-oracle, outranked, empty, and non-weak controls.
 - `analysis::classify::decision::tests::non_reach_rows_do_not_dictate_the_step`
@@ -137,6 +224,9 @@ fact, and it does not cover probe families outside `error_path` and
   eligible.
 - `analysis::classify::decision::tests::missing_exact_assertion_row_keeps_the_family_template`
   covers the `missing_exact_assertion` exclusion.
+- `analysis::classify::decision::tests::bool_owner_exact_result_rows_name_the_deciding_input`
+  and `analysis::classify::decision::tests::bool_owner_exact_result_step_needs_every_reaching_row_to_assert_the_owner_result`
+  cover the boolean-owner step and its controls (#15149).
 - `fixtures/human_full_shared_parse_port` and the re-blessed golden set
   cover the rendered output end to end.
 
@@ -149,6 +239,10 @@ fact, and it does not cover probe families outside `error_path` and
   only for `weakly_exposed` findings after the wrapper-seam and `Err(...)`
   construction special cases, passing the annotated related tests, the
   activation missing discriminators, and whether the owner is a function.
+- `crates/ripr/src/analysis/classify/decision.rs::bool_owner_exact_result_next_step`
+  owns the boolean-owner step; `build_finding` invokes it for
+  `weakly_exposed` findings of non-assertion-shaped owners after the exact
+  oracle step, only when every matched related row is listed.
 
 ## Metrics
 

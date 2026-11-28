@@ -82,8 +82,16 @@ before classification and metadata operations. A deadline records
 `limited_timeout` in `language_facts`, before owner indexing. It never truncates
 the inputs or the guidance silently.
 
-`RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` defaults to 1200, aligned with the
-current diff/repo family after #4972's measured self-repo growth beyond 800.
+When admission cannot inspect an unchanged directory, review guidance stops
+before owner attribution. The failed run receipt records
+`language_scope_unsupported` and names the missing evidence in its repair
+route. An unreadable scan root or directory covering a changed owner retains
+the discovery error.
+
+`RIPR_REVIEW_GUIDANCE_MAX_INDEX_FILES` defaults to 5000 (#12940). It was 1200
+while the guidance second stage evaluated every caller-file seam; with that
+stage bounded, ripr-swarm (2,646 indexed files) peaks at 0.99 to 1.87 GB for
+diffs of 3 to 238 files, and the default admits about twice that workspace.
 `RIPR_REVIEW_GUIDANCE_MAX_PAYLOAD_BYTES` defaults to 268435456 (256 MiB) and
 covers that source-byte total plus changed diff text. Exact equality is
 admitted. Both overrides must be positive integers for a real dispatch;
@@ -127,7 +135,8 @@ completed guidance for a large downstream workspace.
 
 ### Cooperative analysis budget
 
-`--timeout-ms` defaults to 120000ms. The default diff route consumes one
+`--timeout-ms` defaults to 600000ms, matching `ripr check`'s analysis
+budget (#12940). The default diff route consumes one
 monotonic budget: Git diff discovery uses the remaining duration, and canonical
 inventory observes the existing analysis cancellation token at safe boundaries.
 Evidence context construction checks between helper-map stages and in its test
@@ -272,6 +281,16 @@ advisory at the seam's own location, gives the reason that the seam is outside
 the pull request's changed lines, and names its owner and behavior without the
 "Changed" label. Seams placed by rules 1-3 stay block-eligible as before.
 
+A card placed by rule 2 or 3 sits on a changed line other than its gap, so its
+reviewer-facing text names the gap's own line and expression (#14303). Check
+annotations from `ripr reports ci-summary` and `ripr annotations` begin with
+"Gap at line N (expression) of this function: ". The inline comment body adds
+"Gap at line N of this function: expression. This comment sits on the nearest
+changed line." after its heading and keeps it in the visible lead of the
+compact body. The note is absent for rule 1 and whenever the gap line equals
+the placed line or is unknown (line 0).
+`review_comments/placement.rs::displaced_seam_location` owns that decision.
+
 ## JSON Shape
 
 The renderer writes:
@@ -391,8 +410,13 @@ The JSON report uses schema version `0.1`:
 - `summary.unchanged_tests` - `true` when the pull request did not change a
   nearby test for the selected recommendations. Diff-backed disclosure includes
   removals in default Cargo test layouts and edits inside locally resolved direct/inline
-  Rust test/helper function spans. Added lines use head-source spans; removed lines use
-  reconstructed old-source spans and old coordinates. These disclosure paths
+  Rust test/helper function spans, including an added module-level `#[crate::test]`
+  function whose wrapper alias lives in an unchanged crate root and path-bound
+  proc-macro crate (#10141). Companion crate-root and wrapper functions loaded
+  for alias authority do not match changed-file line numbers; wrapper identity
+  is the consumer `Cargo.toml` blob at the requested head. Added lines use
+  head-source spans; removed lines use reconstructed old-source spans and old
+  coordinates. These disclosure paths
   never become current-line placement targets or evidence of discrimination.
   Resolved diff attribution owns this flag, including a resolved empty test set;
   filename-based display grouping cannot add changed tests to that result.
@@ -457,7 +481,9 @@ annotations`, `ripr reports ci-packet`, the check renderer, and `cargo xtask
 ripr-annotations`) omits `file=` and `line=` for such a path and leads the
 message with `Location (file name has control characters, so not placed):
 <escaped path>:<line>.` The escaped form prints each character as `\u{XX}`
-(#6309).
+(#6309). A path with non-UTF-8 bytes (stable `%XX` text, which GitHub does
+not decode) is treated the same way and leads with `Location (file name is not
+valid UTF-8, so not placed): <stable path>:<line>.` (#13961).
 
 The `ripr annotations` comments loader determines file presence with one
 direct read (#1958): a `NotFound` outcome is the intended optional-comments
@@ -587,6 +613,21 @@ whole-test deletion with a surviving related test and shifted-coordinate control
 test-file and production-file deletions: uncertainty is explicit, the surviving
 recommendation and complete causal receipt remain, and the fourteen surviving-file
 controls above continue to require resolved attribution.
+`analysis/test_changes.rs::added_module_crate_test_is_a_test_edit` pins an added
+module-level `#[crate::test]` wrapper-alias function as a test edit; the sibling
+controls refuse a missing alias, a `#[crate::tests]` lookalike, and a foreign
+import, while ordinary `#[test]` still credits without companions.
+`overlapping_companion_test_line_does_not_credit_production_edit` refuses
+false credit from an unchanged crate-root test at the same line number.
+`dirty_worktree_missing_path_still_credits_head_wrapper` and
+`dirty_worktree_valid_path_does_not_credit_when_head_path_missing` pin
+head-blob wrapper identity against a dirty worktree manifest.
+
+`a_card_placed_on_another_changed_line_names_the_gap_line` (CI summary
+annotations), `a_displaced_card_annotation_names_the_gap_line`
+(`ripr annotations`), `inline_comment_body_names_the_gap_line_when_placed_elsewhere`
+and `a_displaced_card_names_its_gap_line_in_the_visible_lead` pin the
+displaced-gap note.
 
 Initial implementation should add tests for:
 

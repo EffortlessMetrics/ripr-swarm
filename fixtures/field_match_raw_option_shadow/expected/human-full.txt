@@ -3,11 +3,12 @@ mode: fast
 root: fixtures/field_match_raw_option_shadow/input
 
 Summary: 3 changed behavior(s) checked: 0 exposed, 3 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 3 of 3 finding(s) unsuppressed (2 base-side evidence, not candidate edit targets)
-Terms: exposed = tests appear to notice the change; weakly_exposed = tests reach it but check it
-  only loosely; reachable_unrevealed = tests reach it but nothing appears to notice a change;
-  no_static_path = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr
-  could not tell from the code (analysis limited, not a verdict); finding = one reported gap;
-  unsuppressed = not hidden by your suppression policy
+Terms: exposed = tests appear to notice the change; weakly_exposed = linked to a test, but checked
+  only loosely; reachable_unrevealed = linked to a test, but nothing appears to notice a change
+  (both can rest on a test link ripr could not confirm; the reach stage says which); no_static_path
+  = no test path found; infection_unknown, propagation_unknown, static_unknown = ripr could not tell
+  from the code (analysis limited, not a verdict); finding = one reported gap; unsuppressed = not
+  hidden by your suppression policy
 
 Analysis outcome: findings below (analysis complete; complete_with_findings)
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 3 changed behavior(s) checked, 3 finding(s)
@@ -37,10 +38,10 @@ Static exposure
 Evidence
   - reach yes: Related tests appear to reach charge: sibling_only
   - infection yes: Reachable tests can plausibly activate this changed behavior
-  - propagation yes: Changed behavior appears to influence match arm result: None =>
+  - propagation yes: Changed behavior appears to influence match arm result: 1
   - observation yes: A related test observes a value or effect near the changed behavior
   - discriminator weak: Discriminator unconfirmed: no assertion text references the changed expression
-  - local flow reaches match arm result: None => (line 6)
+  - local flow reaches match arm result: 1 (line 6)
   - related test src/lib.rs:15 sibling_only uses strong whole object equality oracle: assert_eq!(charge(&Lease { settled_elapsed_ms: None, timeout_sec: 600 }), 2); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
   - source assertion argument value 2 at line 16
   - source function argument value lease = 600 at line 16
@@ -57,6 +58,7 @@ Limitation detail
 Next step
   - Inspect `lease.settled_elapsed_ms` at the existing owner call and whether a related assertion observes that call's returned value; add or strengthen a test only if that inspection identifies a missing observation
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:23efc786
   ripr context --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:23efc786
 
@@ -85,6 +87,7 @@ Weakness
 Next step
   - Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast probe:src_lib.rs:match_arm:dd1110e0
   ripr context --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:match_arm:dd1110e0
 
@@ -113,5 +116,6 @@ Weakness
 Next step
   - Not a candidate edit target (base_deleted): the changed source is not current on the candidate side, so this finding recommends no test change
 Drill in:
+  (finding id, for explain/context)
   ripr explain --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast probe:src_lib.rs:return_value:e5ff3cbb
   ripr context --root <cwd>/fixtures/field_match_raw_option_shadow/input --diff <cwd>/fixtures/field_match_raw_option_shadow/diff.patch --mode fast --at probe:src_lib.rs:return_value:e5ff3cbb

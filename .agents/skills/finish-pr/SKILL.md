@@ -19,6 +19,20 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 - `finish_contract:duplicate_recheck`
 - `finish_contract:behind_only_no_restack`
 
+# Incident route markers
+
+When a current `admission_incident.v1` packet is available, route before opening a PR-local repair loop.
+
+- `incident_route:currentness_before_class`
+- `incident_route:candidate_escape_revoke_repair_ready`
+- `incident_route:candidate_escape_requires_proof_feedback`
+- `incident_route:integration_not_behind_main_only`
+- `incident_route:instrument_repair_before_retry`
+- `incident_route:infrastructure_same_subject_no_mutation`
+- `incident_route:superseded_no_h2_contamination`
+- `incident_route:not_proven_no_convenient_retry`
+- `incident_route:retain_incident_lineage`
+
 # Entry condition
 
 `finish-pr` owns publication, remote review/CI repair, merge, and reconciliation. It does not silently manufacture the substantive review pass.
@@ -26,6 +40,12 @@ The selected PR has an exact current head, a current `review-pr` disposition, al
 A committed candidate with `REVIEW_INCOMPLETE` may enter so the procedure can publish the PR and obtain remote evidence. Before authorizing landing through the applicable route, the exact published PR head must have a current `REVIEW_READY` result from `review-pr`. When the head changes materially, re-enter `review-pr` for affected currentness dimensions.
 
 Routine publication and convergence inside the selected repository claim—push ordinary branch, open/update PR, reply to review, repair CI, resolve addressed threads, use the applicable protected landing route, and clean lane-created state—do not require another owner approval. Separate authorization remains required for force-push/shared-history rewriting, settings/rulesets/secrets, public tags/releases/publication/signing/credentials, durable-evidence deletion, or work outside the selected goal.
+
+Preserve the separate [source attestation](../review-pr/SKILL.md#source-attestation-and-final-review)
+when final review awaits hosted or integration evidence. A later same-account
+native review replaces the earlier attestation in the installed consumer;
+put evidence-only follow-ups in Conversation comments. Material findings still
+withdraw readiness and require affected proof and review.
 
 # Procedure
 
@@ -35,9 +55,27 @@ Do not read protection or ruleset settings or credential values for routine
 PR progression. Inspect exact-head PR-visible checks, review and merge state;
 unknown checks are not passed. A settings-read 403 is not a blanket blocker or
 a reason to request broader access. An ordinary PR/check read failure is a
-separate evidence gap. After required proof and review, submit the normal
-expected-head squash merge and let GitHub enforce applicable requirements. Report
-a rejection without guessing its cause; never bypass enforcement or change settings.
+separate evidence gap. After required proof and review, the native merge queue is
+the installed landing route for ordinary PRs; landing is only via native enqueue.
+Direct expected-head squash and
+`.agents/skills/finish-pr/scripts/guarded_merge.py` are a refused
+historical route (#14247), not an alternative landing route, and must not be used
+after a rejection or for any other reason. Verify the current required
+Result and all other applicable checks. A session without the native enqueue
+call may use the auto-merge REST call as its enqueue under the
+[enqueue interface](../../../docs/MERGE_FLOW.md#enqueue-interface) conditions:
+every required result already green on the exact reviewed head and the final
+review marker posted and admitting. Never issue it as an armed wait while a
+required result is pending, and never retry without
+reconciling an uncertain outcome. Check observations and mutation are not
+atomic, so retain native enforcement. Report a rejection without guessing its
+cause; never bypass enforcement or change settings.
+
+Before retrying a terminal Result, inspect its original request and native
+run/attempt binding under [CI eligibility semantics](../../../docs/CI.md#merge-queue-request-cutover).
+A Result-only retry cannot reuse an older attempt's admission. Follow the
+installed recovery route; passing child jobs remain evidence, not permission
+to bypass binding or duplicate a queued/running current-subject request.
 
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
 2. Write a complete body:
@@ -68,9 +106,9 @@ a rejection without guessing its cause; never bypass enforcement or change setti
    - the ordinary squash result is the combined-tree subject.
 10. Do not update a behind-only branch. Unrelated movement on `main` is normal and does not require restacking, force-pushing, or rerunning unaffected proof. Reconcile only an actual conflict, explicit stack change, material prerequisite change, failed combined-tree proof, or exact-base policy that applies to this candidate.
 11. Before spending time on conflict repair, re-run the claim-identity search. When upstream or another PR already delivered the same claim, stop, compare for unique residuals, record the winning implementation, and close or disposition the duplicate rather than resolving a dead candidate.
-12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). For the installed legacy label route, apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. A Ready toggle requests nothing; never reapply the label over a queued or running current-subject run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After verified queue activation, use the native-queue procedure instead of requesting legacy label qualification.
+12. Select the applicable route in [merge flow](../../../docs/MERGE_FLOW.md). Apply the shared [Draft to Ready handoff](../../../docs/PR_AUTOMATION.md#draft-to-ready-handoff), retaining its PR-native continuation record. Only then inspect the existing request and run state for the exact head and subject, and follow the handoff before requesting qualification with `merge-ready`. Applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a merge authorization. Never reapply the label over a queued or running current-subject run. Before the first label on a head, allow about five minutes for bot review threads and resolve them: an unresolved thread at the Result recheck fails the whole run ([Result refused at the eligibility recheck](../../../docs/MERGE_FLOW.md#result-refused-at-the-eligibility-recheck)), and the repair is a relabel, not a re-run. A push or material finding returns through that same Draft repair wave, not an immediate re-toggle. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue.
 13. Do not infer review from an empty thread list, reviewer quota/unavailability, or green required checks. Do not infer a human approval requirement or exact cause from `mergeStateStatus: BLOCKED`; inspect available PR/check evidence and report what is known. Do not query settings for routine diagnosis.
-14. Follow [merge flow](../../../docs/MERGE_FLOW.md): the installed legacy label route remains operative until verified migration to native queue qualification of the actual composition. For the legacy route, inspect current required proof and findings, make the final integration judgment, and use protected expected-head squash; do not substitute generic auto-merge. Use the native-queue procedure only after verified activation, including its pre-enqueue judgment and conditional landing authorization. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
+14. Follow [merge flow](../../../docs/MERGE_FLOW.md): applying `merge-ready` requests the required PR qualification (`Ripr Rust Small Result`); it does not enqueue and is not a landing authorization. After that qualification is green, inspect current required proof and findings, make the pre-enqueue judgment, and enqueue the exact head through the native merge queue, using the [enqueue interface](../../../docs/MERGE_FLOW.md#enqueue-interface) the session actually has; the REST auto-merge call is an enqueue on an already-green reviewed head, never an armed wait. Before labelling and again before enqueue, confirm the [review marker](../../../docs/MERGE_FLOW.md#review-marker-read-by-admission) admits. Preserve required checks and approvals. When GitHub owns the next transition, return an in-flight result instead of polling unchanged state. The parent goal may advance another independent claim while this PR waits.
 15. Merge ordinary `ripr-swarm` development PRs with the repository's protected squash method. Exact history-preserving source-integration transactions are a separate controlled path and follow their governing issue instead of this rule.
 16. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.
 17. After deliberate closure or supersession, record the winning candidate and preserved residual work.
@@ -109,7 +147,11 @@ acceptance actually satisfied by the landed result.
 A new material finding withdraws readiness even on an unchanged head. If auto-merge
 is armed, disarm it through the available authorized GitHub operation and verify the
 readback before resolving the blocking thread. An unavailable or failed disarm is
-an integration-control blocker; do not claim the merge is contained. After repair,
+an integration-control blocker; do not claim the merge is contained. If the PR is
+already in the merge queue and the session has no native dequeue, follow the
+[enqueue interface](../../../docs/MERGE_FLOW.md#enqueue-interface) withdrawal:
+delete the auto-merge request, then convert the PR to Draft, and read back the
+queue removal. After repair,
 affected proof and cumulative rereview must restore `REVIEW_READY` before the final merge judgment.
 Old green, an unrelated later comment, or a completed agent run cannot restore it.
 
@@ -118,15 +160,29 @@ passive waiting; genuine remote waits name their owner and decision-changing eve
 without an idle polling worker. Batch related findings into one repair wave, preserve
 unaffected review, and do not force branch churn or a global intake freeze. These
 instructions govern agent decisions; they do not install branch protection.
-Until verified migration, the `merge-ready` label (#4986) is the installed hosted
-qualification request; being Ready for
-review is not REVIEW_READY or permission to arm auto-merge.
+Applying `merge-ready` is the request for the required PR qualification
+(`Ripr Rust Small Result`); it does not enqueue and is not a landing
+authorization. Enqueue through the native merge queue after that qualification
+is green. Being Ready for review is not REVIEW_READY or permission to arm
+auto-merge; the auto-merge call is permitted only as the immediate enqueue
+described in the [enqueue interface](../../../docs/MERGE_FLOW.md#enqueue-interface).
+
+Crate rehearsal for a release is `cargo xtask publish-dry-run`, run from the
+source root: it builds the publish stage and packages from it. The real publish
+then runs from that retained stage under `docs/RELEASE.md` and
+`docs/RELEASE_TRANSACTION.md`. A plain `cargo package` or
+`cargo publish --dry-run` of the checkout is not release evidence.
 
 # Release-scope law
 
 For a pinned release, treat the reviewed immutable pin receipt as the sole membership authority: qualification, source preflight, and finalization consume its exact ref, ancestry, ordered SHA digest, PR dispositions, and manifests unchanged. Ordinary `main` or swarm movement never repins or changes membership; repin only after a release-invalidating exact-candidate qualification or source-preflight failure, with an explicit superseding receipt. Do not close, draft, lock, relabel, retarget, or otherwise mutate unrelated PRs to freeze scope; they remain open and may evolve, and post-pin merges do not retarget the release. Close only this selected PR for its own evidence-backed terminal disposition—never close-now/reopen-after-release.
 
 # Review law
+
+Review and focused checks run in the owning session. Do not start an Actions
+review by publishing, toggling Ready, adding labels or posting a tool mention.
+The retained legacy qualification request is a staged protected-route dependency,
+not routine development feedback; #4838 owns its final queue-only replacement.
 
 The owning session performs directed inline review in its main context through `review-pr`, changing perspective with explicit criteria, targeted checks and counterexamples. Subagents and advisory bot input (for example `ub-review`; see `docs/CI.md`) are optional extra evidence, not mandatory reviewer identities. Preserve actual required reviews and protections and valid historical review; refresh affected or newly requested dimensions only. The same owner verifies, repairs and continues through the applicable protected finish without routine parent payload approval.
 

@@ -1,6 +1,7 @@
 use super::*;
 use crate::analysis::extract::extract_call_facts;
 use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
+use crate::domain::DiscriminatorShape;
 use crate::domain::MissingDiscriminatorFact;
 use std::path::PathBuf;
 
@@ -12,12 +13,13 @@ fn test_with_line_of(distinct: usize) -> TestSummary {
         start_line: 1,
         end_line: 3,
         body: body.as_str().into(),
-        calls: extract_call_facts(&body, 1),
+        calls: extract_call_facts(&body, 1).into(),
         assertions: Vec::new(),
-        literals: Vec::new(),
-        attrs: Vec::new(),
-        nested_fn_names: Vec::new(),
-        let_bindings: Vec::new(),
+        literals: crate::analysis::facts::SharedFactSlice::empty(),
+        attrs: crate::analysis::facts::SharedFactSlice::empty(),
+        nested_fn_names: crate::analysis::facts::SharedFactSlice::empty(),
+        let_bindings: crate::analysis::facts::SharedFactSlice::empty(),
+        generated: None,
     }
 }
 
@@ -52,6 +54,8 @@ fn evidence(states: [StageState; 5], missing: usize) -> TestGripEvidence {
                 value: "index == 100".to_string(),
                 reason: "not observed".to_string(),
                 flow_sink: None,
+                shape: DiscriminatorShape::Boundary,
+                drafted_boundary: None,
             })
             .collect(),
         statically_contradicted_related_tests: 0,
@@ -60,7 +64,9 @@ fn evidence(states: [StageState; 5], missing: usize) -> TestGripEvidence {
 }
 
 fn names_limit(stage: &StageEvidence) -> bool {
-    stage.state == StageState::Unknown && stage.summary.contains(LIMIT.as_str())
+    stage.state == StageState::Unknown
+        && stage.static_limit_kind == Some(LIMIT)
+        && stage.summary.contains(LIMIT.as_str())
 }
 
 #[test]

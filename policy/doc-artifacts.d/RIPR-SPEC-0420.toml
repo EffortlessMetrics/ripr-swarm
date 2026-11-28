@@ -1,0 +1,7 @@
+[[artifact]]
+id = "RIPR-SPEC-0420"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0420-verification-plan-corpus-pr-a.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #5173 PR A records the change-to-verification plan mechanics corpus: typed row validator, synthetic falsification matrix, check/report commands, and honest not_measured real safety denominators until Stage A rows land."
