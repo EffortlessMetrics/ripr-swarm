@@ -1,0 +1,9 @@
+[[extend]]
+id = "RIPR-SPEC-0224"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/predicate_activation_tests.rs::wrapped_or_nested_owner_call_does_not_witness",
+  "fixtures/typescript_vitest_wrapped_owner_call_boundary",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+]

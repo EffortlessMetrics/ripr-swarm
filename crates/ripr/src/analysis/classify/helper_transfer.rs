@@ -3629,24 +3629,59 @@ fn transparent_macro_name_rebound(caller_body: &str, index: &RustIndex) -> bool 
             !BODY_SCOPED_TRANSPARENT_MACROS.contains(name) || invokes_bare_macro(caller_body, name)
         })
         .collect();
-    caller_body.contains('!')
-        && index.files().iter().any(|(path, file)| {
-            if file
-                .macro_candidates
-                .as_deref()
-                .is_some_and(|candidates| names.iter().all(|name| !candidates.may_bind(name)))
-            {
-                return false;
-            }
-            !crate::analysis::syntax::trusted_macro_binding_sites(
-                &file.source,
-                index.macro_scope_crates(),
-                &names,
-                &|_, _| false,
-                &|krate| index.drop_in_manifests.verified_root(path, krate),
-            )
-            .is_empty()
-        })
+    if !caller_body.contains('!') {
+        return false;
+    }
+    let sites = |file: &crate::analysis::facts::FileData,
+                 path: &std::path::Path,
+                 requested: &[&str],
+                 context: &[&str]| {
+        crate::analysis::syntax::trusted_macro_binding_sites_in_context(
+            &file.source,
+            index.macro_scope_crates(),
+            requested,
+            context,
+            &|_, _| false,
+            &|krate| index.drop_in_manifests.verified_root(path, krate),
+        )
+    };
+    let may_bind_any = |file: &crate::analysis::facts::FileData, requested: &[&str]| {
+        file.macro_candidates
+            .as_deref()
+            .is_none_or(|candidates| requested.iter().any(|name| candidates.may_bind(name)))
+    };
+    // #16462: a transparent name the caller does not invoke still reads as
+    // its standard macro, so a verified `anyhow!(format!(..))` elsewhere is no
+    // `format` binding. That holds only while no indexed file binds the name:
+    // a parent module's `macro_rules!` reaches its out-of-line children, which
+    // a per-file scan cannot see. Those names, found once and only when the
+    // wider context changes a file's answer, stay opaque.
+    let extra: Vec<&str> = TRANSPARENT_STD_MACROS
+        .iter()
+        .copied()
+        .filter(|name| !names.contains(name))
+        .collect();
+    let bound_anywhere = std::cell::OnceCell::new();
+    index.files().iter().any(|(path, file)| {
+        if !may_bind_any(&file, &names) || sites(&file, path, &names, &names).is_empty() {
+            return false;
+        }
+        let bound: &BTreeSet<String> = bound_anywhere.get_or_init(|| {
+            index
+                .files()
+                .iter()
+                .filter(|(_, other)| may_bind_any(other, &extra))
+                .flat_map(|(other_path, other)| sites(&other, other_path, &extra, &extra))
+                .map(|(name, _)| name)
+                .collect()
+        });
+        let context: Vec<&str> = names
+            .iter()
+            .copied()
+            .chain(extra.iter().copied().filter(|name| !bound.contains(*name)))
+            .collect();
+        !sites(&file, path, &names, &context).is_empty()
+    })
 }
 
 /// Method-entry reach permits only evaluated assertion/collection macros.
