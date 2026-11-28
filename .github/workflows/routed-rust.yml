@@ -170,13 +170,40 @@ jobs:
     outputs:
       docs_only: ${{ steps.check.outputs.docs_only }}
     steps:
+      - name: Fetch exact docs comparison history without blobs
+        id: docs_history
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+        run: |
+          set -euo pipefail
+          # This public, read-only fast path needs no checkout, credentials,
+          # unrelated refs or blob data. Keep the original checkout on a miss.
+          [ "$SERVER_URL" = https://github.com ] && [ "$REPOSITORY" = EffortlessMetrics/ripr-swarm ] || exit 0
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 0
+          history="$(mktemp -d "$RUNNER_TEMP/ripr-docs-history.XXXXXX")" || exit 0
+          if git init --bare --quiet "$history" &&
+             timeout --kill-after=5s 120s git -C "$history" -c protocol.version=2 fetch --quiet --no-tags --filter=blob:none "$SERVER_URL/$REPOSITORY.git" "$BASE_SHA" "$HEAD_SHA" &&
+             [ "$(git -C "$history" rev-parse --is-shallow-repository)" = false ] &&
+             [ "$(git -C "$history" cat-file -t "$BASE_SHA" 2>/dev/null)" = commit ] &&
+             [ "$(git -C "$history" cat-file -t "$HEAD_SHA" 2>/dev/null)" = commit ] &&
+             git -C "$history" diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" >/dev/null; then
+            printf 'git_dir=%s\n' "$history" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Exact docs history unavailable; using the full checkout"
+          fi
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && !steps.docs_history.outputs.git_dir
         with:
           fetch-depth: 0
       - name: Check whether every changed file is docs/spec/markdown
         id: check
         env:
           EVENT_NAME: ${{ github.event_name }}
+          DOCS_GIT_DIR: ${{ steps.docs_history.outputs.git_dir }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
@@ -187,9 +214,10 @@ jobs:
             [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
             reason=invalid_identity
             [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || return 0
-            # Checkout stays on the integration commit. Full history is requested
-            # above; recover missing event objects with their ancestry, not depth 1.
+            # The fast path supplies the exact same commits and trees; the
+            # fallback checkout stays on the integration commit with full history.
             reason=unavailable_history
+            if [ -n "$DOCS_GIT_DIR" ]; then cd "$DOCS_GIT_DIR" || return 0; fi
             if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
               git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
             fi
