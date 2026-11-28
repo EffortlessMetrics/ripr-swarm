@@ -2156,6 +2156,11 @@ struct FoldPlan {
     widths: Vec<Option<(i128, i128)>>,
     fold_range: Option<(i128, i128)>,
     block: FoldPlanBlock,
+    /// Whether the token block holds a decimal integer literal with a type
+    /// suffix (`255u8`). The tokenizer drops the suffix, so under the
+    /// operand-width guard such a literal could compute in a narrower type
+    /// than the guard checks, and a guarded fold refuses (#16400).
+    suffixed_literal: bool,
 }
 
 /// What the owner's block folds through: its range-shaped tail when it is
@@ -2216,6 +2221,7 @@ impl FoldPlan {
             .ret_type()
             .and_then(|ret| declared_integer_range(&ret.syntax().text().to_string()));
         let block = function.body()?;
+        let mut suffixed_literal = false;
         let block = match RangeTail::of_block(&block) {
             Some(tail) => FoldPlanBlock::Tail(tail),
             None => {
@@ -2225,6 +2231,7 @@ impl FoldPlan {
                 let masked = crate::analysis::extract::mask_comments_and_strings(
                     &block.syntax().text().to_string(),
                 );
+                suffixed_literal = has_suffixed_decimal_literal(&masked);
                 FoldPlanBlock::Tokens(tokenize(&masked)?)
             }
         };
@@ -2233,6 +2240,7 @@ impl FoldPlan {
             widths,
             fold_range,
             block,
+            suffixed_literal,
         })
     }
 
@@ -2253,13 +2261,17 @@ impl FoldPlan {
             .cloned()
             .zip(arguments.iter().copied())
             .collect();
-        // The operand guard stands in only where no return width does. A
-        // range-shaped tail reads its bounds without a width check, so a
-        // guarded fold refuses it rather than fold it unguarded.
+        // The operand guard stands in only where no return width does. Of the
+        // range-shaped tails only membership is read under it: its endpoints
+        // are one literal or one parameter each, and a membership test cannot
+        // overflow. A reduction or match tail computes a value the guard does
+        // not check, so a guarded fold refuses it. A suffixed literal may
+        // compute in a narrower type than the guard, so it refuses too.
         let guarded = self.fold_range.is_none() && operand_range.is_some();
         let range = self.fold_range.or(operand_range);
         match &self.block {
-            FoldPlanBlock::Tail(_) if guarded => None,
+            FoldPlanBlock::Tail(tail) if guarded && !tail.is_membership() => None,
+            FoldPlanBlock::Tokens(_) if guarded && self.suffixed_literal => None,
             FoldPlanBlock::Tail(tail) => tail.fold(&environment, self.fold_range),
             FoldPlanBlock::Tokens(tokens) => {
                 let uniform = self
@@ -2435,6 +2447,11 @@ impl TailRange {
 }
 
 impl RangeTail {
+    /// Whether this tail is a membership test (`(lo..hi).contains(&x)`).
+    fn is_membership(&self) -> bool {
+        matches!(self, Self::Contains { .. })
+    }
+
     fn of_block(block: &ast::BlockExpr) -> Option<Self> {
         let list = block.stmt_list()?;
         if list.statements().next().is_some() {
@@ -2649,6 +2666,45 @@ enum Token {
 const INTEGER_SUFFIXES: [&str; 12] = [
     "u8", "u16", "u32", "u64", "u128", "usize", "i8", "i16", "i32", "i64", "i128", "isize",
 ];
+
+/// Whether `text` holds a decimal integer literal followed by a type
+/// suffix (`255u8`, `1_000i64`). Digits inside a name (`x1`) and radix
+/// literals, whose suffix the tokenizer already refuses, do not count.
+fn has_suffixed_decimal_literal(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if byte.is_ascii_alphabetic() || byte == b'_' {
+            while index < bytes.len()
+                && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+            {
+                index += 1;
+            }
+            continue;
+        }
+        if byte.is_ascii_digit() {
+            if byte == b'0' && matches!(bytes.get(index + 1), Some(b'x' | b'b' | b'o')) {
+                index += 2;
+                while index < bytes.len()
+                    && (bytes[index].is_ascii_alphanumeric() || bytes[index] == b'_')
+                {
+                    index += 1;
+                }
+                continue;
+            }
+            while index < bytes.len() && (bytes[index].is_ascii_digit() || bytes[index] == b'_') {
+                index += 1;
+            }
+            if index < bytes.len() && bytes[index].is_ascii_alphabetic() {
+                return true;
+            }
+            continue;
+        }
+        index += 1;
+    }
+    false
+}
 
 /// Tokenize masked Rust expression text. Any byte the fold grammar cannot
 /// mean (`?`, `|`, `.`, `:`), a non-suffix identifier glued to a number, or

@@ -1035,8 +1035,7 @@ fn a_tuple_bool_range_membership_at_an_agreeing_input_is_read_as_the_same_value(
 }
 
 #[test]
-fn a_tuple_bool_range_membership_at_the_separating_input_keeps_the_credit()
--> Result<(), String> {
+fn a_tuple_bool_range_membership_at_the_separating_input_keeps_the_credit() -> Result<(), String> {
     // Control: `10` is inside `0..=10` and outside `0..=9`.
     let findings = findings(
         PAIR_RANGE,
