@@ -14,9 +14,13 @@ use crate::domain::{Finding, LanguageId};
 
 /// The existing top-level reconciliation inputs, projected without policy.
 pub struct OutcomeReconciliationInput<'a> {
+    /// Top-level finding count the aggregate is checked against.
     pub finding_count: u64,
+    /// Top-level outcome kind label.
     pub kind: &'a str,
+    /// Whether the top-level outcome claims completeness.
     pub complete: bool,
+    /// Whether a typed unsupported-language limitation is present.
     pub has_unsupported_limitation: bool,
 }
 
@@ -33,6 +37,7 @@ const fn is_hard_blocker(status: LanguageOutcomeStatus) -> bool {
     )
 }
 
+/// Checks the aggregate, retained findings and top-level outcome agree.
 pub fn reconcile(
     aggregate: &LanguageAggregate,
     selected: &[LanguageId],

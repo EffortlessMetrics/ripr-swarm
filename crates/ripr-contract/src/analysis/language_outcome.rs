@@ -47,7 +47,9 @@ pub enum RepoLimitingStage {
 /// it is never derived from a disclosure string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RepoCapFired {
+    /// The producer's operator-visible bound name.
     pub name: &'static str,
+    /// The stage at which the bound first fired.
     pub stage: RepoLimitingStage,
     /// The numeric limit in force when the bound fired.
     pub limit: usize,
@@ -96,31 +98,43 @@ pub struct RepoFileAccounting {
 /// Producer-only harness, diagnostic and source-currentness records remain in
 /// the facade result; this view neither interprets nor discards their evidence.
 pub struct RepoOutcomeInput<'a> {
+    /// Findings the repo adapter produced.
     pub findings: &'a [Finding],
+    /// Production files the adapter analyzed.
     pub production_files: usize,
+    /// Files the adapter skipped, in its compatibility-count meaning.
     pub skipped_files: usize,
+    /// The adapter's typed partial disclosure, if the run was partial.
     pub partial_reason: Option<&'a str>,
+    /// Typed file accounting exactly as the producer reported it.
     pub file_accounting: RepoFileAccounting,
 }
 
 /// Immutable projection of precisely the diff-result fields consumed below.
 pub struct DiffOutcomeInput<'a> {
+    /// Findings the diff adapter produced.
     pub findings: &'a [Finding],
+    /// Files the adapter skipped.
     pub skipped_files: usize,
+    /// The pipeline's partial-run status label, if the run was partial.
     pub partial_run_status: Option<&'a str>,
 }
 
+/// Schema version of the `LanguageAnalysisOutcomeV1` record.
 pub const LANGUAGE_ANALYSIS_OUTCOME_SCHEMA_VERSION: &str = "1";
 
 /// Which analysis mode a digest binds. Repo digests keep their original
 /// spelling; diff digests additionally bind the selected diff scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutcomeMode {
+    /// A whole-repo adapter run.
     Repo,
+    /// A diff-scoped adapter run.
     Diff,
 }
 
 impl OutcomeMode {
+    /// Stable wire spelling of the mode.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Repo => "repo",
@@ -134,8 +148,11 @@ impl OutcomeMode {
 /// stubbed, failed or capped run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LanguageOutcomeStatus {
+    /// The adapter ran to its declared boundary with findings.
     Complete,
+    /// The adapter ran to its declared boundary and found nothing.
     CompleteZero,
+    /// The adapter ran but a bound or disclosure limited the result.
     Partial,
     /// The adapter could not run (no packet, feature off, read or parse error).
     Unavailable,
@@ -154,6 +171,7 @@ pub enum LanguageOutcomeStatus {
 }
 
 impl LanguageOutcomeStatus {
+    /// Stable wire spelling of the status.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Complete => "complete",
@@ -217,28 +235,37 @@ impl LanguageOutcomeStatus {
 /// disclosure string is never parsed and is not evidence that a bound fired.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LanguageResourceObservations {
+    /// Compatibility skipped-file count, when the producer measured it.
     pub files_skipped: Option<usize>,
+    /// Production files analyzed, when the producer measured it.
     pub production_files: Option<usize>,
     /// Typed file accounting and the first fired cap, exactly as the producer
     /// reported it. Per-language; never summed across languages.
     pub files: RepoFileAccounting,
 }
 
+/// Internal record of what one adapter did for one mode, including
+/// successful languages (#6396, #6468).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageAnalysisOutcomeV1 {
     /// Canonical language label. A `LanguageId` wire string for adapters, or
     /// the router's label for an unsupported language (`go`, `ruby`, ...).
     /// JavaScript is its own label, never folded into TypeScript.
     pub language: String,
+    /// The mode this outcome records.
     pub mode: OutcomeMode,
     /// Diff scope label the child ran over; `None` in repo mode.
     pub scope: Option<String>,
+    /// Closed per-language status of the run.
     pub status: LanguageOutcomeStatus,
     /// Findings by finding-level language wire string, so a TypeScript-family
     /// run keeps TypeScript and JavaScript counts separate.
     pub findings_by_language: BTreeMap<String, usize>,
+    /// Facts the producer actually measured.
     pub resources: LanguageResourceObservations,
+    /// Typed limitations disclosed for the run.
     pub limitations: Vec<String>,
+    /// Digest binding the outcome's semantic content.
     pub semantic_digest: String,
 }
 
@@ -522,6 +549,7 @@ impl LanguageAnalysisOutcomeV1 {
         )
     }
 
+    /// Builds an outcome and computes its semantic digest.
     pub fn new(
         language: String,
         mode: OutcomeMode,
@@ -545,6 +573,7 @@ impl LanguageAnalysisOutcomeV1 {
         outcome
     }
 
+    /// Total findings across every finding-level language label.
     pub fn finding_count(&self) -> usize {
         self.findings_by_language.values().sum()
     }

@@ -64,11 +64,16 @@ impl LanguageDisclosure {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+/// Read-only completeness projection owned by the aggregate, so no
+/// surface invents its own.
 pub struct LanguageCompletenessView {
+    /// The mode the aggregate ran in.
     pub mode: OutcomeMode,
+    /// Whole-diff completeness derived from the children.
     pub completeness: DiffCompleteness,
     /// One row per canonical language label, in label order.
     pub rows: Vec<LanguageCompletenessRow>,
+    /// Total findings across every row.
     pub total_findings: usize,
     /// The public `language_runs` compatibility projection of every row, in
     /// label order. Owned here so a surface cannot invent its own.
@@ -109,6 +114,7 @@ impl LanguageCompletenessView {
         })
     }
 
+    /// Projects the view from the aggregate's children, in label order.
     pub fn from_aggregate(aggregate: &LanguageAggregate) -> Self {
         let rows: Vec<LanguageCompletenessRow> = aggregate
             .outcomes

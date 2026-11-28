@@ -25,11 +25,14 @@ use std::fmt::Write as _;
 /// covers an aggregate with no child at all, which evidenced nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiffCompleteness {
+    /// Every child supports a whole-diff completeness claim.
     Complete,
+    /// At least one child blocks completeness, or there is no child.
     Incomplete,
 }
 
 impl DiffCompleteness {
+    /// Stable wire spelling of the completeness value.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Complete => "complete",
@@ -41,8 +44,11 @@ impl DiffCompleteness {
 /// The shared mixed-language aggregate shape (#6468 diff, #6470 repo).
 pub type DiffLanguageAggregate = LanguageAggregate;
 
+/// One outcome per canonical language label, with completeness derived
+/// from the children alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageAggregate {
+    /// The mode every child ran in.
     pub mode: OutcomeMode,
     /// Diff scope label every child must have run over; `None` in repo mode.
     pub scope: Option<String>,
@@ -59,10 +65,12 @@ pub struct LanguageAggregate {
     /// The completeness this aggregate asserts; `validate` rejects a claim the
     /// children do not support.
     pub claimed: DiffCompleteness,
+    /// Digest over the sorted child digests.
     pub semantic_digest: String,
 }
 
 impl LanguageAggregate {
+    /// A diff-mode aggregate over the given scope label.
     pub fn new(scope: String) -> Self {
         Self::with_scope(OutcomeMode::Diff, Some(scope))
     }
