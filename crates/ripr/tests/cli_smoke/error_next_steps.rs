@@ -385,3 +385,406 @@ fn help_text_matches_behavior() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+fn first_pr_spellings_own_their_usage_errors_and_help() -> TestResult {
+    let (root, _cleanup) = scratch("err-first-pr-usage")?;
+    let before = super::snapshot_tree(&root)?;
+    for (command, other) in [("first-pr", "start-here"), ("start-here", "first-pr")] {
+        let output = ripr(&root, &[command, "--gap-ledgr"])?;
+        let text = stderr(&output);
+        let label = format!("unknown {command} argument");
+        let help_command = format!("ripr {command} --help");
+        assert_eq!(output.status.code(), Some(2), "{text}");
+        assert!(output.stdout.is_empty(), "{}", stdout(&output));
+        assert!(text.contains(&label), "{text}");
+        assert!(text.contains("Did you mean `--gap-ledger`?"), "{text}");
+        assert!(text.contains(&format!("Run `{help_command}`.")), "{text}");
+        assert!(!text.contains(&format!("ripr {other} --help")), "{text}");
+
+        // A JSON request still produces the same typed refusal for the first
+        // rejected token. --json itself remains unsupported by this parser.
+        let output = ripr(&root, &[command, "--gap-ledgr", "--json"])?;
+        let refusal =
+            super::assert_cli_refusal(&output, "unknown_argument", "--gap-ledgr", &label)?;
+        let message = refusal["error"]["message"]
+            .as_str()
+            .ok_or("missing message")?;
+        assert!(message.contains(&label), "{message}");
+        assert_eq!(stderr(&output).trim_end(), format!("ripr: {message}"));
+        assert_eq!(refusal["error"]["next"]["command"], help_command);
+        assert_eq!(refusal["error"]["next"]["purpose"], "list_valid_arguments");
+
+        let help = ripr(&root, &[command, "--help"])?;
+        assert!(help.status.success(), "{}", stderr(&help));
+        assert!(stdout(&help).contains("--gap-ledger"), "{}", stdout(&help));
+
+        let output = ripr(&root, &[command, "--root", ".", "--root", "other"])?;
+        let text = stderr(&output);
+        assert_eq!(output.status.code(), Some(2), "{text}");
+        assert!(
+            text.contains(&format!("{command} takes --root once")),
+            "{text}"
+        );
+        assert!(
+            !text.contains(&format!("{other} takes --root once")),
+            "{text}"
+        );
+        assert!(output.stdout.is_empty(), "{}", stdout(&output));
+        for (args, diagnostic) in [
+            (
+                &[command, "--gap-ledger", ""][..],
+                "--gap-ledger requires a non-empty value",
+            ),
+            (
+                &[command, "--run-chain", "--check"][..],
+                "--run-chain cannot be combined with --check:",
+            ),
+            (
+                &[command, "--run-chain", "--check-output", "saved check.json"][..],
+                "--run-chain cannot be combined with --check-output:",
+            ),
+        ] {
+            let output = ripr(&root, args)?;
+            let text = stderr(&output);
+            assert_eq!(output.status.code(), Some(2), "{text}");
+            assert!(text.contains(&format!("{command} {diagnostic}")), "{text}");
+            assert!(!text.contains(&format!("{other} {diagnostic}")), "{text}");
+            assert!(output.stdout.is_empty(), "{}", stdout(&output));
+        }
+        assert_eq!(super::snapshot_tree(&root)?, before);
+    }
+    Ok(())
+}
+
+#[test]
+fn first_pr_spellings_recover_a_missing_check_packet() -> TestResult {
+    let (root, _cleanup) = scratch("err-first-pr-check")?;
+    init_producer_fixture_repo(&root)?;
+    for (command, other) in [("first-pr", "start-here"), ("start-here", "first-pr")] {
+        let output_dir = format!("{command} reports");
+        let output = ripr(
+            &root,
+            &[
+                command,
+                "--base",
+                "HEAD",
+                "--output-dir",
+                &output_dir,
+                "--check",
+            ],
+        )?;
+        let text = stderr(&output);
+        assert_eq!(output.status.code(), Some(2), "{text}");
+        assert!(
+            text.contains(&format!("{command} --check validates an existing")),
+            "{text}"
+        );
+        assert!(
+            !text.contains(&format!("{other} --check validates")),
+            "{text}"
+        );
+        assert!(text.contains("start-here.json"), "{text}");
+        assert!(!root.join(&output_dir).exists());
+        assert!(!root.join("target").exists());
+
+        let suggested = super::suggested_first_pr_write(&text)?;
+        assert_eq!(
+            suggested.first().map(String::as_str),
+            Some(command),
+            "{text}"
+        );
+        let args = suggested.iter().map(String::as_str).collect::<Vec<_>>();
+        let write = ripr(&root, &args)?;
+        assert!(write.status.success(), "{}", stderr(&write));
+        for name in ["start-here.json", "start-here.md"] {
+            assert!(root.join(&output_dir).join(name).is_file(), "{text}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn first_pr_spellings_protect_an_explicit_malformed_gap_ledger() -> TestResult {
+    let (scratch, _cleanup) = scratch("err-first-pr-malformed-ledger")?;
+    let root = scratch.join("fixture");
+    std::fs::create_dir(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let ledger_name = "malformed user ledger.json";
+    let ledger = root.join(ledger_name);
+    let original = b"{not valid JSON\n";
+    std::fs::write(&ledger, original)?;
+    let before = super::snapshot_tree(&root)?;
+    let advice = "Choose a new output path for the regenerated ledger";
+
+    for command in ["first-pr", "start-here"] {
+        let reports = scratch.join(format!("{command} reports"));
+        let reports_arg = reports.to_str().ok_or("fixture path must be UTF-8")?;
+        let args = [
+            command,
+            "--base",
+            "HEAD",
+            "--gap-ledger",
+            ledger_name,
+            "--output-dir",
+            reports_arg,
+        ];
+        let write = ripr(&root, &args)?;
+        assert!(write.status.success(), "{}", stderr(&write));
+        let text = stdout(&write);
+        assert!(text.contains(advice), "{text}");
+        assert!(!text.contains("Next command:"), "{text}");
+
+        let packet: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(reports.join("start-here.json"))?)?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "malformed_artifact");
+        assert_eq!(packet["selected"]["output_state"], "malformed_artifact");
+        assert_eq!(packet["inputs"]["gap_ledger"], ledger_name);
+        assert!(packet["selected"]["next_command"].is_null(), "{packet}");
+        assert!(packet["commands"].get("next").is_none(), "{packet}");
+        assert!(
+            packet["commands"].get("regenerate_gap_ledger").is_none(),
+            "{packet}"
+        );
+        let artifact = packet["artifacts"]
+            .as_array()
+            .and_then(|artifacts| artifacts.iter().find(|entry| entry["id"] == "gap_ledger"))
+            .ok_or("missing gap ledger artifact")?;
+        assert!(artifact["regeneration_command"].is_null(), "{artifact}");
+        let markdown = std::fs::read_to_string(reports.join("start-here.md"))?;
+        assert!(markdown.contains(advice), "{markdown}");
+        assert!(!markdown.contains("ripr reports gap-ledger"), "{markdown}");
+        assert_eq!(super::snapshot_tree(&reports)?.len(), 2);
+        assert_eq!(super::snapshot_tree(&root)?, before);
+        assert_eq!(std::fs::read(&ledger)?.as_slice(), original);
+
+        let reports_before_check = super::snapshot_tree(&reports)?;
+        let mut check_args = args.to_vec();
+        check_args.push("--check");
+        let check = ripr(&root, &check_args)?;
+        let diagnostic = stderr(&check);
+        assert_eq!(check.status.code(), Some(2), "{diagnostic}");
+        assert!(
+            diagnostic.contains(&format!("{command} --check:")),
+            "{diagnostic}"
+        );
+        assert!(
+            diagnostic.contains("blocked state `malformed_artifact`"),
+            "{diagnostic}"
+        );
+        assert!(stdout(&check).contains(advice), "{}", stdout(&check));
+        assert_eq!(super::snapshot_tree(&reports)?, reports_before_check);
+        assert_eq!(super::snapshot_tree(&root)?, before);
+        assert_eq!(std::fs::read(&ledger)?.as_slice(), original);
+    }
+    Ok(())
+}
+
+#[test]
+fn first_pr_spellings_withhold_uninspected_explicit_ledger_regeneration() -> TestResult {
+    let (scratch, _cleanup) = scratch("err-first-pr-uninspected-ledger")?;
+    let root = scratch.join("fixture");
+    std::fs::create_dir(&root)?;
+    init_producer_fixture_repo(&root)?;
+    let ledger = root.join("supplied ledger.json");
+    let original = b"{malformed JSON\n";
+    std::fs::write(&ledger, original)?;
+    let before = super::snapshot_tree(&root)?;
+    for command in ["first-pr", "start-here"] {
+        let reports = scratch.join(format!("{command} reports"));
+        let args = [
+            command,
+            "--base",
+            "origin/unavailable-review-base",
+            "--gap-ledger",
+            "supplied ledger.json",
+            "--output-dir",
+            reports.to_str().ok_or("fixture path must be UTF-8")?,
+        ];
+        let write = ripr(&root, &args)?;
+        assert_eq!(write.status.code(), Some(0), "{}", stderr(&write));
+        let packet: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(reports.join("start-here.json"))?)?;
+        assert_eq!(packet["selected"]["state"], "blocked_artifact");
+        let message = packet["selected"]["message"]
+            .as_str()
+            .ok_or("missing message")?;
+        assert!(
+            message.contains("does not resolve to a commit"),
+            "{message}"
+        );
+        assert!(message.contains("ledger was not inspected"), "{message}");
+        assert!(message.contains("choose a new output path"), "{message}");
+        assert!(packet["commands"].get("regenerate_gap_ledger").is_none());
+        let artifacts = packet["artifacts"].as_array().ok_or("missing artifacts")?;
+        let gap = artifacts
+            .iter()
+            .find(|entry| entry["id"] == "gap_ledger")
+            .ok_or("missing ledger artifact")?;
+        assert_eq!(gap["regeneration_command"], serde_json::Value::Null);
+        let markdown = std::fs::read_to_string(reports.join("start-here.md"))?;
+        assert!(
+            markdown.contains(&format!("ripr {command} --root")),
+            "{markdown}"
+        );
+        assert!(!markdown.contains("ripr reports gap-ledger"), "{markdown}");
+        let outputs = super::snapshot_tree(&reports)?;
+        assert_eq!(outputs.len(), 2);
+        let check = ripr(&root, &[&args[..], &["--check"]].concat())?;
+        assert_eq!(check.status.code(), Some(2), "{}", stderr(&check));
+        let diagnostic = stderr(&check);
+        assert!(
+            diagnostic.contains(&format!("{command} --check:"))
+                && diagnostic.contains("blocked state `missing_artifacts`"),
+            "{diagnostic}"
+        );
+        assert_eq!(packet["selected"]["output_state"], "missing_artifacts");
+        assert!(!stdout(&check).contains("ripr reports gap-ledger"));
+        assert!(!diagnostic.contains("ripr reports gap-ledger"));
+        assert_eq!(super::snapshot_tree(&reports)?, outputs);
+        assert_eq!(super::snapshot_tree(&root)?, before);
+        assert_eq!(std::fs::read(&ledger)?, original);
+    }
+
+    // A valid, parsed blocked ledger still gets its normal refresh command.
+    let valid = br#"{"status":"blocked","warnings":["valid blocked control"],"records":[]}"#;
+    std::fs::write(&ledger, valid)?;
+    let output = ripr(
+        &root,
+        &[
+            "start-here",
+            "--base",
+            "HEAD",
+            "--gap-ledger",
+            "supplied ledger.json",
+            "--output-dir",
+            "../valid-control",
+        ],
+    )?;
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let packet: serde_json::Value = serde_json::from_slice(&std::fs::read(
+        scratch.join("valid-control/start-here.json"),
+    )?)?;
+    assert_eq!(packet["selected"]["state"], "blocked_artifact");
+    assert!(
+        packet["selected"]["message"]
+            .as_str()
+            .is_some_and(|text| text.contains("valid blocked control"))
+    );
+    assert!(
+        packet["commands"]["regenerate_gap_ledger"].is_string(),
+        "{packet}"
+    );
+    assert_eq!(std::fs::read(&ledger)?, valid);
+    Ok(())
+}
+
+#[test]
+fn first_pr_spellings_name_themselves_in_saved_missing_report_markdown() -> TestResult {
+    let (root, _cleanup) = scratch("err-first-pr-missing-report-markdown")?;
+    init_producer_fixture_repo(&root)?;
+    for (command, other) in [("first-pr", "start-here"), ("start-here", "first-pr")] {
+        let reports = format!("{command} reports");
+        let output = ripr(
+            &root,
+            &[command, "--base", "HEAD", "--output-dir", &reports],
+        )?;
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        let markdown = std::fs::read_to_string(root.join(reports).join("start-here.md"))?;
+        assert!(
+            markdown.contains(&format!("Later steps (rerun `ripr {command}`")),
+            "{markdown}"
+        );
+        assert!(
+            !markdown.contains(&format!("Later steps (rerun `ripr {other}`")),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("Gap decision ledger; PR repair cards"),
+            "{markdown}"
+        );
+        assert!(stdout(&output).contains(&format!("Later steps (rerun `ripr {command}`")));
+    }
+    Ok(())
+}
+
+#[test]
+fn first_pr_spellings_name_themselves_in_unreadable_config_recovery() -> TestResult {
+    let (scratch, _cleanup) = scratch("err-first-pr-unreadable-config")?;
+    let root = scratch.join("fixture root");
+    std::fs::create_dir(&root)?;
+    init_producer_fixture_repo(&root)?;
+    std::fs::write(root.join("src/lib.rs"), "pub fn changed() {}\n")?;
+    super::run_git(&root, &["add", "src/lib.rs"])?;
+    super::run_git(
+        &root,
+        &[
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "commit",
+            "-m",
+            "change",
+        ],
+    )?;
+    let config = root.join("ripr.toml");
+    std::fs::create_dir(&config)?;
+    let before = super::snapshot_tree(&root)?;
+
+    for (command, other) in [("first-pr", "start-here"), ("start-here", "first-pr")] {
+        let reports = scratch.join(format!("{command} reports"));
+        let output = ripr(
+            &root,
+            &[
+                command,
+                "--base",
+                "HEAD~1",
+                "--head",
+                "HEAD",
+                "--output-dir",
+                reports.to_str().ok_or("fixture path must be UTF-8")?,
+            ],
+        )?;
+        assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+        let packet: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(reports.join("start-here.json"))?)?;
+        assert_eq!(packet["status"], "blocked");
+        assert_eq!(packet["selected"]["state"], "missing_artifact");
+        let preflight = &packet["preflight"];
+        assert_eq!(preflight["status"], "needs_attention");
+        let checks = preflight["checks"]
+            .as_array()
+            .ok_or("missing preflight checks")?;
+        for id in ["git_repo", "git_base", "git_head", "git_diff"] {
+            assert!(
+                checks
+                    .iter()
+                    .any(|check| check["id"] == id && check["status"] == "ok"),
+                "{checks:?}"
+            );
+        }
+        let check = checks
+            .iter()
+            .find(|check| check["id"] == "ripr_config")
+            .ok_or("missing config check")?;
+        assert_eq!(check["status"], "needs_attention");
+        assert_eq!(check["path"], config.to_string_lossy().replace('\\', "/"));
+        assert_eq!(check["message"], "ripr.toml is present but unreadable.");
+        let expected =
+            format!("Replace the unreadable ripr.toml with a readable file, then rerun {command}.");
+        assert_eq!(check["next_command"], expected);
+        assert_eq!(preflight["next_command"], expected);
+        let markdown = std::fs::read_to_string(reports.join("start-here.md"))?;
+        assert!(markdown.contains(&expected), "{markdown}");
+        assert!(
+            !markdown.contains(&format!("with a readable file, then rerun {other}.")),
+            "{markdown}"
+        );
+        assert_eq!(super::snapshot_tree(&reports)?.len(), 2);
+        assert!(config.is_dir());
+        assert_eq!(super::snapshot_tree(&root)?, before);
+    }
+    Ok(())
+}

@@ -16336,8 +16336,14 @@ Field contract:
   Optional `recovery_guidance` at the same check and preflight levels keeps
   prerequisite instructions separate from the commands (for example, commit
   PR work or select a head with changes before rerunning an empty diff).
-- `commands.regenerate_gap_ledger` is always present so missing, stale,
-  wrong-root, malformed, and timeout states can point to a known refresh path.
+- `commands.regenerate_gap_ledger` is optional and names a refresh command
+  when one is safe to offer. In ordinary artifact-read mode, an explicitly
+  supplied malformed ledger, or one left unread because root or Git preflight
+  blocked, has no in-place regeneration command. The key is omitted and the
+  corresponding `artifacts[]` entry has a null `regeneration_command`. The
+  packet tells the caller to preserve the input and use a fresh output path
+  if regeneration is needed. A preflight block still reports its own reason
+  and setup recovery.
 - `artifacts[]` records artifact id, label, path, `present` or `missing`
   status, and optional regeneration command.
 - `authority.boundary` preserves the gate boundary. This packet never becomes

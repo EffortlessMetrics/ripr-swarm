@@ -82,6 +82,7 @@ pub(super) fn validate_selected_command_root(packet: &Value, root: &Path) -> Res
 pub(super) fn validate_start_here_packet(
     json_path: &Path,
     markdown_path: &Path,
+    command: &str,
 ) -> Result<Value, String> {
     let text = fs::read_to_string(json_path)
         .map_err(|err| format!("missing or unreadable {}: {err}; regenerate the input with the command that wrote it, then rerun", json_path.display()))?;
@@ -125,7 +126,7 @@ pub(super) fn validate_start_here_packet(
         Ok(packet)
     } else {
         Err(format!(
-            "first-pr start-here contract violations:\n{}; regenerate the input with the command that wrote it, then rerun",
+            "{command} start-here contract violations:\n{}; regenerate the input with the command that wrote it, then rerun",
             violations
                 .iter()
                 .map(|violation| format!("- {violation}"))

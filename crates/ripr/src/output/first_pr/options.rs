@@ -9,6 +9,7 @@ use super::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct FirstPrOptions {
+    pub(crate) command: &'static str,
     pub(crate) root: String,
     pub(crate) base: String,
     /// `false` when `--base` was omitted: `base` then holds a placeholder
@@ -67,6 +68,7 @@ impl FirstPrOptions {
 impl Default for FirstPrOptions {
     fn default() -> Self {
         Self {
+            command: "first-pr",
             root: DEFAULT_ROOT.to_string(),
             base: DEFAULT_BASE.to_string(),
             base_explicit: false,

@@ -165,6 +165,7 @@ impl PreflightCheck {
 }
 
 pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> FirstPrPreflight {
+    let command = options.command;
     let mut checks = Vec::new();
     // #5252 item 4: every renderer-owned preflight spelling renders through
     // the shared human-path rule (#4378) so one document never mixes the
@@ -193,7 +194,7 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
             "Git head",
             &options.head,
             Some(format!(
-                "Check --head `{}` or fetch the branch, then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                "Check --head `{}` or fetch the branch, then rerun `ripr {command} --root {} --base {} --head {}`.",
                 options.head,
                 shell_arg(&options.command_root()),
                 shell_arg(&options.base),
@@ -206,7 +207,7 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
         preflight_diff_check(root, options, &mut checks);
     }
     checks.push(preflight_project_check(root));
-    checks.push(preflight_config_check(root));
+    checks.push(preflight_config_check(root, command));
     checks.push(preflight_output_check(root, options));
     checks.push(PreflightCheck::ok(
         "mode",
@@ -252,8 +253,9 @@ pub(super) fn first_pr_preflight(root: &Path, options: &FirstPrOptions) -> First
 /// Executable display commands are carried separately from recovery prose.
 /// Renderers can pair their shell forms without extracting code from a sentence.
 fn rerun_command(options: &FirstPrOptions) -> String {
+    let command = options.command;
     format!(
-        "ripr first-pr --root {} --base {} --head {}",
+        "ripr {command} --root {} --base {} --head {}",
         shell_arg(&options.command_root()),
         shell_arg(&options.base),
         shell_arg(&options.head)
@@ -416,6 +418,7 @@ fn preflight_git_ref_check(
 }
 
 fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<PreflightCheck>) {
+    let command = options.command;
     let range = format!("{}..{}", options.base, options.head);
     match run_git(
         root,
@@ -437,7 +440,7 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                 "Git diff",
                 format!("No file diff was found for `{range}`."),
                 Some(format!(
-                    "Pass the real PR base and rerun: `ripr first-pr --root {} --base {} --head {}` (replace `{}~1` with the commit before the work).",
+                    "Pass the real PR base and rerun: `ripr {command} --root {} --base {} --head {}` (replace `{}~1` with the commit before the work).",
                     shell_arg(&options.command_root()),
                     shell_arg(&format!("{}~1", options.head)),
                     shell_arg(&options.head),
@@ -460,10 +463,10 @@ fn preflight_diff_check(root: &Path, options: &FirstPrOptions, checks: &mut Vec<
                 command_problem(
                     &format!("Could not inspect diff range `{range}`."),
                     &output,
-                    "Check --base and --head, then rerun first-pr.",
+                    &format!("Check --base and --head, then rerun {command}."),
                 ),
                 Some(format!(
-                    "Check --base and --head, then rerun `ripr first-pr --root {} --base {} --head {}`.",
+                    "Check --base and --head, then rerun `ripr {command} --root {} --base {} --head {}`.",
                     shell_arg(&options.command_root()),
                     shell_arg(&options.base),
                     shell_arg(&options.head)
@@ -521,7 +524,7 @@ fn preflight_project_check(root: &Path) -> PreflightCheck {
     }
 }
 
-fn preflight_config_check(root: &Path) -> PreflightCheck {
+fn preflight_config_check(root: &Path, command: &str) -> PreflightCheck {
     let config = root.join(CONFIG_FILE_NAME);
     match std::fs::metadata(&config) {
         Ok(meta) if meta.is_file() => match crate::bounded_input::read_to_string(&config) {
@@ -531,9 +534,9 @@ fn preflight_config_check(root: &Path) -> PreflightCheck {
                 format!("{CONFIG_FILE_NAME} was found."),
             )
             .with_path(human_path(&config)),
-            Err(_) => unreadable_ripr_config(&config),
+            Err(_) => unreadable_ripr_config(&config, command),
         },
-        Ok(_) => unreadable_ripr_config(&config),
+        Ok(_) => unreadable_ripr_config(&config, command),
         Err(err)
             if err.kind() == std::io::ErrorKind::NotFound
                 && !crate::config::config_present_at_root(root) =>
@@ -545,17 +548,17 @@ fn preflight_config_check(root: &Path) -> PreflightCheck {
             )
             .with_path(human_path(&config))
         }
-        Err(_) => unreadable_ripr_config(&config),
+        Err(_) => unreadable_ripr_config(&config, command),
     }
 }
 
-fn unreadable_ripr_config(config: &Path) -> PreflightCheck {
+fn unreadable_ripr_config(config: &Path, command: &str) -> PreflightCheck {
     PreflightCheck::needs_attention(
         "ripr_config",
         "RIPR config",
         format!("{CONFIG_FILE_NAME} is present but unreadable."),
         Some(format!(
-            "Replace the unreadable {CONFIG_FILE_NAME} with a readable file, then rerun first-pr."
+            "Replace the unreadable {CONFIG_FILE_NAME} with a readable file, then rerun {command}."
         )),
     )
     .with_path(human_path(config))
@@ -629,7 +632,7 @@ mod tests {
         }
         let _cleanup = Cleanup(root.clone());
 
-        let absent = preflight_config_check(&root);
+        let absent = preflight_config_check(&root, "first-pr");
         if absent.status != "defaulted" || !absent.message.contains("built-in advisory defaults") {
             return Err(format!(
                 "an absent ripr.toml must stay defaulted built-in defaults: {} / {}; regenerate the input with the command that wrote it, then rerun",
@@ -645,7 +648,7 @@ mod tests {
             }
             Err(error) => error,
         };
-        let check = preflight_config_check(&root);
+        let check = preflight_config_check(&root, "first-pr");
         if !load_error.contains("ripr.toml") {
             return Err(format!(
                 "load_for_root must name ripr.toml for a dangling link: {load_error}; regenerate the input with the command that wrote it, then rerun"
@@ -713,7 +716,7 @@ mod tests {
             file: config.clone(),
         };
 
-        let readable = preflight_config_check(&root);
+        let readable = preflight_config_check(&root, "first-pr");
         if readable.status != "ok" {
             return Err(format!(
                 "a readable ripr.toml must stay ok, not {}: {}; regenerate the input with the command that wrote it, then rerun",
@@ -741,7 +744,7 @@ mod tests {
                 "load_for_root must name ripr.toml for a chmod-000 file: {load_error}; check that the config loader error includes the file path"
             ));
         }
-        let check = preflight_config_check(&root);
+        let check = preflight_config_check(&root, "first-pr");
         if check.status != "needs_attention" {
             return Err(format!(
                 "an unreadable regular ripr.toml must need attention, not {}: {}; regenerate the input with the command that wrote it, then rerun",
@@ -802,7 +805,7 @@ mod tests {
         if !file_type.is_fifo() {
             return Err("fixture must be a FIFO named ripr.toml; regenerate the input with the command that wrote it, then rerun".to_string());
         }
-        let check = preflight_config_check(&root);
+        let check = preflight_config_check(&root, "first-pr");
         if check.status != "needs_attention" {
             return Err(format!(
                 "a FIFO ripr.toml must need attention, not {}: {}; regenerate the input with the command that wrote it, then rerun",

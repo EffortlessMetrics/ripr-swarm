@@ -283,6 +283,13 @@ the process can still write output:
 | Missing git base | Explain the missing base and show the next safe command or config. |
 | Unreadable `ripr.toml` | Report the config as present but unreadable; do not say built-in defaults apply. |
 
+In ordinary artifact-read mode, preserve the preflight reason and its safe
+setup recovery. Do not offer in-place regeneration of an explicitly supplied
+gap ledger that is malformed or could not be inspected. Advise using a fresh
+output path.
+Git recovery reruns and the missing-artifact later-steps line in terminal
+and saved Markdown use the invoked spelling.
+
 These states may appear in CI summaries and report packets. They must not be
 treated as waived, suppressed, improved, clean, or gate-passing states.
 
