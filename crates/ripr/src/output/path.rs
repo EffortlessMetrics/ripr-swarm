@@ -474,19 +474,10 @@ pub(crate) fn display_path_text(path: &str) -> String {
     path.replace('\\', "/")
 }
 
-/// Spell a path for one line of human prose (#16455): a line break or tab in
-/// a tracked file name renders as `\\r`, `\\n` or `\\t`, so the name's tail
-/// cannot print as its own line that reads like `ripr` output or a command.
-/// Every other character, including `\\` on Unix, is kept, so an ordinary path
-/// renders byte for byte. Machine formats keep the raw value.
-pub(crate) fn prose_path_text(path: &str) -> String {
-    if !path.contains(['\r', '\n', '\t']) {
-        return path.to_string();
-    }
-    path.replace('\r', "\\r")
-        .replace('\n', "\\n")
-        .replace('\t', "\\t")
-}
+/// The one-line path spelling for human prose (#16455), defined beside the
+/// terminal escape so the analysis producers that write recovery prose can use
+/// it without importing the output layer.
+pub(crate) use crate::terminal_text::prose_path_text;
 
 /// Compare output destinations after collapsing `.` / `..` so `--out ./a.json`
 /// and `--out-jsonl a.json` are treated as the same file.

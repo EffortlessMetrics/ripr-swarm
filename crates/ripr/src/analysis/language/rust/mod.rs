@@ -3956,7 +3956,7 @@ fn workspace_index_spans_workspace(
 /// capped: a long path shortens the sentence, never fails the analysis.
 fn bounded_path_display(path: &Path, max_chars: usize) -> String {
     // Recovery prose stays on one line for a name with a line break (#16455).
-    let display = crate::output::path::prose_path_text(&path.to_string_lossy().replace('\\', "/"));
+    let display = crate::terminal_text::prose_path_text(&path.to_string_lossy().replace('\\', "/"));
     if display.chars().count() > max_chars {
         let kept = max_chars.saturating_sub(1);
         format!("{}…", display.chars().take(kept).collect::<String>())
