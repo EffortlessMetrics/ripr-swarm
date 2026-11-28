@@ -776,12 +776,13 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
         let check = format!("ripr check{root_flag}");
         let work_tree = output::doctor::work_tree_probe(root);
         let inside_git = matches!(work_tree, Some(output::doctor::WorkTreeProbe::Inside));
-        if plan.iter().any(|target| {
+        let project_mcp_planned = plan.iter().any(|target| {
             target
                 .path
                 .file_name()
                 .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
-        }) {
+        });
+        if project_mcp_planned {
             println!();
             // Offer the Cursor route only when this run does not already
             // plan `.cursor/mcp.json` (for example `--agents all`).
@@ -802,21 +803,19 @@ fn apply_init_plan(plan: &[InitTarget], root: &Path) -> Result<(), String> {
                 && target.action != InitAction::LeaveUnchanged
         }) {
             println!();
-            let mcp_planned = plan.iter().any(|target| {
-                target
-                    .path
-                    .file_name()
-                    .is_some_and(|name| name == MCP_CONFIG_FILE_NAME)
-                    && target.action != InitAction::LeaveUnchanged
-            });
-            println!(
-                "{}",
-                if mcp_planned {
-                    init_agents::FOLLOW_UP_WITH_MCP
-                } else {
-                    init_agents::FOLLOW_UP
+            println!("Commit the agent instruction file(s) so every session sees them.");
+            if !project_mcp_planned {
+                let claude_mcp = format!("ripr init --mcp{root_flag}");
+                let cursor_mcp = format!("ripr init --agents cursor --mcp{root_flag}");
+                println!(
+                    "MCP is optional. For Claude Code run `{claude_mcp}`; for Cursor run `{cursor_mcp}`. For Codex run `codex mcp add {MCP_SERVER_NAME} -- ripr mcp --stdio`."
+                );
+                for command in [&claude_mcp, &cursor_mcp] {
+                    if let Some(powershell) = output::markdown::powershell_text_variant(command) {
+                        println!("(PowerShell) {powershell}");
+                    }
                 }
-            );
+            }
         }
         if let Some((workflow, ci)) = plan.iter().find_map(|target| {
             [InitCi::Github, InitCi::Gitlab]

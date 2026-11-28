@@ -18232,34 +18232,141 @@ fn init_dry_run_prints_config_without_writing() -> Result<(), String> {
     ignore_remove_dir_all(&workspace);
     Ok(())
 }
-/// Without `--mcp` the follow-up still points at MCP registration, since the
-/// run did not register the server.
+/// Without `--mcp`, print copyable client setup without writing config
+/// or relying on paths that only exist in RIPR's source checkout.
 #[test]
-fn init_agents_without_mcp_keeps_the_register_mcp_follow_up() -> Result<(), String> {
+fn init_agents_without_mcp_offers_copyable_client_setup() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
     let root = workspace.display().to_string();
-    let out = run_ripr(&["init", "--root", &root, "--agents", "claude"]);
+    let out = run_ripr(&["init", "--root", &root, "--agents", "all"]);
     assert_success(&out);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Register the MCP server"), "{stdout}");
+    assert!(
+        stdout.contains("Commit the agent instruction file(s)"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("MCP is optional"), "{stdout}");
+    assert!(!stdout.contains("docs/AGENT_QUICKSTART.md"), "{stdout}");
+    assert!(
+        stdout.contains("codex mcp add ripr -- ripr mcp --stdio"),
+        "{stdout}"
+    );
+    assert!(!workspace.join(".mcp.json").exists());
+    assert!(!workspace.join(".cursor/mcp.json").exists());
+    assert!(!workspace.join("docs/AGENT_QUICKSTART.md").exists());
+    for file in ["CLAUDE.md", "AGENTS.md", ".cursor/rules/ripr.mdc"] {
+        let instructions =
+            std::fs::read_to_string(workspace.join(file)).map_err(|e| e.to_string())?;
+        assert!(instructions.contains("Do not read target/ripr/pilot/*.json"));
+        assert!(!instructions.contains("docs/OUTPUT_SCHEMA.md"));
+    }
+    let decoy = workspace.join("foreign cwd");
+    std::fs::create_dir(&decoy).map_err(|e| e.to_string())?;
+    for (prefix, config) in [
+        ("ripr init --mcp", ".mcp.json"),
+        ("ripr init --agents cursor --mcp", ".cursor/mcp.json"),
+    ] {
+        let bound = stdout
+            .split('`')
+            .find(|text| text.starts_with(prefix))
+            .ok_or_else(|| format!("missing {prefix}: {stdout}"))?;
+        assert!(bound.contains(" --root "), "{bound}");
+        assert_success(&replay_printed_ripr(bound, &decoy)?);
+        assert!(workspace.join(config).is_file());
+        assert!(!decoy.join(config).exists());
+    }
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
-/// An existing `ripr` entry in `.mcp.json` is left unchanged, so this run did
-/// not register anything and the register-the-server follow-up stays.
+/// Both optional MCP commands must carry an explicit root with shell-appropriate
+/// quoting and select that root when replayed from a different directory.
 #[test]
-fn init_mcp_with_existing_entry_keeps_the_register_mcp_follow_up() -> Result<(), String> {
-    let workspace = make_temp_workspace(None)?;
-    let root = workspace.display().to_string();
-    std::fs::write(
-        workspace.join(".mcp.json"),
-        "{\"mcpServers\":{\"ripr\":{\"command\":\"/removed/ripr\"}}}\n",
-    )
-    .map_err(|e| format!("write .mcp.json: {e}"))?;
-    let out = run_ripr(&["init", "--root", &root, "--agents", "claude", "--mcp"]);
-    assert_success(&out);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("Register the MCP server"), "{stdout}");
+fn init_agents_optional_mcp_commands_quote_explicit_root() -> Result<(), String> {
+    for (prefix, cursor) in [
+        ("ripr init --mcp", false),
+        ("ripr init --agents cursor --mcp", true),
+    ] {
+        let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let project = scratch.path().join("Pat's project");
+        let decoy = scratch.path().join("foreign cwd");
+        std::fs::create_dir(&project).map_err(|e| e.to_string())?;
+        std::fs::create_dir(&decoy).map_err(|e| e.to_string())?;
+        let root = printed_path(&project);
+
+        let out = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&decoy),
+            &["init", "--root", &root, "--agents", "all"],
+        )
+        .map_err(|e| e.to_string())?;
+        assert_success(&out);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let command = stdout
+            .split('`')
+            .find(|text| text.starts_with(prefix))
+            .ok_or_else(|| format!("missing {prefix}: {stdout}"))?;
+        if !cfg!(windows) {
+            let powershell_root = root.replace('\'', "''");
+            let expected = format!("(PowerShell) {prefix} --root '{powershell_root}'");
+            assert!(stdout.lines().any(|line| line == expected), "{stdout}");
+        }
+
+        assert!(!project.join(".mcp.json").exists());
+        assert!(!project.join(".cursor/mcp.json").exists());
+        assert_success(&replay_printed_ripr(command, &decoy)?);
+        assert!(project.join(".mcp.json").is_file(), "{command}");
+        assert_eq!(
+            project.join(".cursor/mcp.json").is_file(),
+            cursor,
+            "{command}"
+        );
+        assert!(!decoy.join(".mcp.json").exists());
+        assert!(!decoy.join(".cursor/mcp.json").exists());
+    }
+    Ok(())
+}
+
+/// The config-specific hints replace the generic setup suggestion even if the
+/// project has a matching or custom entry that init does not rewrite.
+#[test]
+fn init_mcp_keeps_existing_config_and_offers_client_hints() -> Result<(), String> {
+    for custom in [false, true] {
+        let workspace = make_temp_workspace(None)?;
+        let root = workspace.display().to_string();
+        let config = workspace.join(".mcp.json");
+        if custom {
+            std::fs::write(
+                &config,
+                "{\"mcpServers\":{\"ripr\":{\"command\":\"/removed/ripr\"}}}\n",
+            )
+            .map_err(|e| format!("write .mcp.json: {e}"))?;
+        } else {
+            assert_success(&run_ripr(&["init", "--root", &root, "--mcp"]));
+        }
+        let before = std::fs::read(&config).map_err(|e| e.to_string())?;
+        assert!(!workspace.join("CLAUDE.md").exists());
+        let out = run_ripr(&["init", "--root", &root, "--agents", "claude", "--mcp"]);
+        assert_success(&out);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("Commit the agent instruction file(s)"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("Claude Code reads `.mcp.json`"), "{stdout}");
+        assert_eq!(
+            stdout
+                .matches("codex mcp add ripr -- ripr mcp --stdio")
+                .count(),
+            1,
+            "{stdout}"
+        );
+        assert!(!stdout.contains("docs/AGENT_QUICKSTART.md"), "{stdout}");
+        assert!(!stdout.contains("MCP is optional"), "{stdout}");
+        assert!(workspace.join("CLAUDE.md").is_file());
+        assert_eq!(std::fs::read(&config).map_err(|e| e.to_string())?, before);
+        ignore_remove_dir_all(&workspace);
+    }
     Ok(())
 }
 
@@ -18329,10 +18436,10 @@ fn init_agents_appends_marked_section_idempotently_and_never_clobbers() -> Resul
         "{first_stdout}"
     );
     assert!(!first_stdout.contains("For Cursor add"), "{first_stdout}");
-    // `--mcp` in the same run already registers the server, so the
-    // "register the MCP server" follow-up is not repeated.
+    // Fresh project config already gets client-specific hints.
+    assert!(!first_stdout.contains("MCP is optional"), "{first_stdout}");
     assert!(
-        !first_stdout.contains("Register the MCP server"),
+        !first_stdout.contains("docs/AGENT_QUICKSTART.md"),
         "{first_stdout}"
     );
     let after_claude = std::fs::read_to_string(&claude).map_err(|e| e.to_string())?;
@@ -18437,6 +18544,11 @@ fn init_agents_writes_language_appropriate_instructions() -> Result<(), String> 
                 &std::fs::read_to_string(workspace.join(file)).map_err(|e| e.to_string())?,
             );
         }
+        assert!(
+            combined.contains("Do not read target/ripr/pilot/*.json"),
+            "{marker}"
+        );
+        assert!(!combined.contains("docs/OUTPUT_SCHEMA.md"), "{marker}");
         for needle in wanted {
             assert!(combined.contains(needle), "{marker}: missing {needle:?}");
         }

@@ -98,7 +98,7 @@ Optional guided repair (Rust seams ripr can bind to one test file):
   `ripr repair <seam-id-or-probe-id> --root .` -> edit only the named test file -> `ripr continue`
   If it refuses (exit 2 or 3), fall back to steps 3-5. `ripr status --root .` resumes an attempt.
 
-Do not read target/ripr/pilot/*.json (2-4 MB) or docs/OUTPUT_SCHEMA.md (1 MB).
+Do not read target/ripr/pilot/*.json (2-4 MB).
 MCP is optional and read-only; the CLI above is cheaper. Setup: ripr init --mcp
 ```
 

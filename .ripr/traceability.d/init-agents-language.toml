@@ -14,8 +14,9 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::init_agents_writes_language_appropriate_instructions",
   "crates/ripr/tests/cli_smoke.rs::init_agents_appends_marked_section_idempotently_and_never_clobbers",
   "crates/ripr/tests/cli_smoke.rs::init_mcp_without_cursor_still_offers_the_cursor_route",
-  "crates/ripr/tests/cli_smoke.rs::init_agents_without_mcp_keeps_the_register_mcp_follow_up",
-  "crates/ripr/tests/cli_smoke.rs::init_mcp_with_existing_entry_keeps_the_register_mcp_follow_up",
+  "crates/ripr/tests/cli_smoke.rs::init_agents_without_mcp_offers_copyable_client_setup",
+  "crates/ripr/tests/cli_smoke.rs::init_agents_optional_mcp_commands_quote_explicit_root",
+  "crates/ripr/tests/cli_smoke.rs::init_mcp_keeps_existing_config_and_offers_client_hints",
 ]
 code = [
   "crates/ripr/src/cli/commands/init_agents.rs",

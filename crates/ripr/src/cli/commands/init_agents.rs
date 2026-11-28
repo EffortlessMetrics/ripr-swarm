@@ -21,12 +21,6 @@ const BEGIN_PREFIX: &str = "<!-- ripr:agents:begin";
 const BEGIN_LINE: &str = "<!-- ripr:agents:begin (written by `ripr init --agents`; `--force` refreshes this section, keep your own notes outside the markers) -->";
 const END_LINE: &str = "<!-- ripr:agents:end -->";
 
-pub(super) const FOLLOW_UP: &str = "Commit the agent instruction file(s) so every session sees them. Register the MCP server only if your agent prefers tools over the CLI: see docs/AGENT_QUICKSTART.md.";
-/// Used when the same run already plans the MCP config, so the registration
-/// hint would tell the user to do what `--mcp` just did.
-pub(super) const FOLLOW_UP_WITH_MCP: &str =
-    "Commit the agent instruction file(s) so every session sees them.";
-
 /// The instruction block. `docs/AGENT_QUICKSTART.md` carries the identical
 /// text; a unit test keeps the two equal.
 pub(super) const AGENT_BLOCK: &str = r#"## ripr: static test-gap finder (Rust). Run it after you change behavior.
@@ -67,7 +61,7 @@ Optional guided repair (Rust seams ripr can bind to one test file):
   `ripr repair <seam-id-or-probe-id> --root .` -> edit only the named test file -> `ripr continue`
   If it refuses (exit 2 or 3), fall back to steps 3-5. `ripr status --root .` resumes an attempt.
 
-Do not read target/ripr/pilot/*.json (2-4 MB) or docs/OUTPUT_SCHEMA.md (1 MB).
+Do not read target/ripr/pilot/*.json (2-4 MB).
 MCP is optional and read-only; the CLI above is cheaper. Setup: ripr init --mcp
 "#;
 
@@ -233,7 +227,7 @@ STOP and report instead of looping when:
 `ripr repair` and `--seam-id` are Rust only. If `ripr check` prints a
 `ripr agent repair --gap-id ...` start, run that exact command; otherwise use the manual loop.
 
-Do not read target/ripr/pilot/*.json (2-4 MB) or docs/OUTPUT_SCHEMA.md (1 MB).
+Do not read target/ripr/pilot/*.json (2-4 MB).
 MCP is optional and read-only; the CLI above is cheaper. Setup: ripr init --mcp
 "#,
             label = self.preview_label(),
