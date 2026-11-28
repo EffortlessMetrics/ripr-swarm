@@ -22847,6 +22847,7 @@ mod table_loop_tests;
 mod tool_config_tests;
 mod typed_loose_equality_tests;
 mod unemitted_stage_unknown_tests;
+mod unexported_class_import_tests;
 mod unused_default_tests;
 mod value_hiding_tests;
 mod var_runner_binding_tests;

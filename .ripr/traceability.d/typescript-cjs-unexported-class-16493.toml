@@ -1,0 +1,12 @@
+[[extend]]
+id = "RIPR-SPEC-0243"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/unexported_class_import_tests.rs::a_require_of_a_class_name_the_module_does_not_export_is_not_related",
+  "crates/ripr/src/analysis/language/typescript/tests/unexported_class_import_tests.rs::a_require_of_an_exported_class_name_stays_related",
+  "crates/ripr/src/analysis/language/typescript/tests/unexported_class_import_tests.rs::a_module_with_unreadable_exports_keeps_the_relation",
+  "fixtures/javascript_jest_cjs_unexported_class",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+  "crates/ripr/src/analysis/language/typescript/mod.rs",
+]

@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- A JavaScript or TypeScript test that destructures a class name its module does not export (`const { Cart } = require('./cart')` when the module only sets `exports.Basket = Cart`) is no longer linked to that class. `Cart` is `undefined` in such a test, so it cannot tell an edit apart. It read `exposed` or `weakly_exposed` before. A module whose exports cannot be read in full keeps the link (#16493).

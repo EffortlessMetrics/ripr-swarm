@@ -1200,6 +1200,46 @@ impl ReExportIndex {
         exposed
     }
 
+    /// Whether the owner's own `module` provably exports nothing under `name`
+    /// (#16493): the module was indexed, its own ES or CommonJS exports are
+    /// known and name something, `name` is not among them, and no re-export
+    /// (`export ... from`, `export *`, `export * as`, an import-then-export or
+    /// a `module.exports = require(...)` forward) could supply it. A named
+    /// binding of `name` then reads `undefined` at runtime. Every unknown
+    /// stays `false`, so the guard can only withhold a relation the module's
+    /// own export facts refute.
+    pub(crate) fn module_provably_lacks_own_export(&self, module: &str, name: &str) -> bool {
+        let canonical = self.canonical_module(module);
+        if !self.indexed_modules.contains(&canonical)
+            || self.ambiguous_modules.contains(&canonical)
+            || self.commonjs_forwards.contains_key(&canonical)
+            || self
+                .star_edges
+                .iter()
+                .any(|(intermediate, _)| *intermediate == canonical)
+            || self
+                .namespace_exports
+                .keys()
+                .any(|(intermediate, _)| *intermediate == canonical)
+            || self
+                .entries
+                .contains_key(&(canonical.clone(), name.to_string()))
+            || self
+                .import_forwards
+                .contains_key(&(canonical.clone(), name.to_string()))
+        {
+            return false;
+        }
+        let es_names = self.local_exports.get(&canonical);
+        let commonjs_names = self.commonjs_own_names.get(&canonical);
+        let known: Vec<&HashSet<String>> = [es_names, commonjs_names]
+            .into_iter()
+            .flatten()
+            .filter(|names| !names.is_empty())
+            .collect();
+        !known.is_empty() && known.iter().all(|names| !names.contains(name))
+    }
+
     /// Whether `source` exports `name` itself: its whole value (`default`), an
     /// ES declaration export, or a CommonJS `exports.NAME` write (#15284).
     /// `require()` of an ES module returns its namespace object, not the
@@ -1962,6 +2002,78 @@ impl ReExportIndex {
         }
         // Set once per run; a repeated call keeps the first (equal) answer.
         let _ = self.class_barrel_locals.set(locals);
+    }
+
+    /// Drops each named import (`import { Cart }`, `const { Cart } =
+    /// require(...)`) of a class its module declares but provably does not
+    /// export under that name (#16493): `class Cart {}` with only
+    /// `exports.Basket = Cart`. The binding is `undefined` at runtime, so
+    /// `new Cart()` throws and the test cannot tell any edit of the class
+    /// apart. Runs after [`Self::rewrite_class_barrel_imports`], so a barrel
+    /// import already reads as the declaring module's export. A module whose
+    /// export facts are unknown, ambiguous or forwarded keeps every import.
+    pub(crate) fn drop_unexported_class_imports(
+        &self,
+        tests: &mut [TypeScriptTest],
+        classes: &ExportedClasses,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) {
+        if classes.named.is_empty() {
+            return;
+        }
+        let mut filtered: HashMap<*const Vec<TypeScriptImport>, Option<Shared<TypeScriptImport>>> =
+            HashMap::new();
+        for test in tests {
+            let imports = filtered
+                .entry(test.imports_in_file.identity())
+                .or_insert_with(|| {
+                    let kept: Vec<TypeScriptImport> = test
+                        .imports_in_file
+                        .iter()
+                        .filter(|import| {
+                            !self.import_names_unexported_class(
+                                import,
+                                &test.file,
+                                classes,
+                                alias_map,
+                                workspace_root,
+                            )
+                        })
+                        .cloned()
+                        .collect();
+                    (kept.len() != test.imports_in_file.len()).then(|| Shared::from(kept))
+                });
+            if let Some(imports) = imports {
+                test.imports_in_file = imports.clone();
+            }
+        }
+    }
+
+    fn import_names_unexported_class(
+        &self,
+        import: &TypeScriptImport,
+        test_file: &Path,
+        classes: &ExportedClasses,
+        alias_map: Option<&TsAliasMap>,
+        workspace_root: Option<&Path>,
+    ) -> bool {
+        if import.namespace {
+            return false;
+        }
+        let Some(imported) = import.imported.as_deref().filter(|name| *name != "default") else {
+            return false;
+        };
+        let Some(module) =
+            normalized_relative_import_module(test_file, &import.source, alias_map, workspace_root)
+        else {
+            return false;
+        };
+        let module = self.canonical_module(&module);
+        classes
+            .named
+            .contains(&(module.clone(), imported.to_string()))
+            && self.module_provably_lacks_own_export(&module, imported)
     }
 
     /// Whether the test reaches the owner's class through an import that

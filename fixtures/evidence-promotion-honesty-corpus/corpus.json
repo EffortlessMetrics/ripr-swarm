@@ -3289,6 +3289,34 @@
       ]
     },
     {
+      "id": "javascript_jest_cjs_unexported_class",
+      "language": "javascript",
+      "tier": "pure",
+      "source_fixture": "fixtures/javascript_jest_cjs_unexported_class",
+      "vector": "require_of_unexported_class_name_is_not_related",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "no_static_path"
+        },
+        {
+          "type": "expected_finding_owner",
+          "owner": "javascript:src/cart.js::total"
+        }
+      ]
+    },
+    {
       "id": "typescript_vitest_renamed_reexport_boundary",
       "language": "typescript",
       "tier": "pure",

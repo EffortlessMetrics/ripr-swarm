@@ -1,0 +1,11 @@
+diff --git a/src/cart.js b/src/cart.js
+--- a/src/cart.js
++++ b/src/cart.js
+@@ -1,6 +1,6 @@
+ class Cart {
+   total(n) {
+-    if (n > 50) {
++    if (n >= 50) {
+       return n - 5;
+     }
+     return n;

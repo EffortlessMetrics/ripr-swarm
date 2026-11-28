@@ -1162,9 +1162,18 @@ impl TypeScriptAdapter {
 
         // A named import of a class through a re-export barrel reads as the
         // direct import of the declaring module (#13592 B3).
+        let exported_classes = related_tests::ExportedClasses::from_owners(&all_owners);
         reexport_index.rewrite_class_barrel_imports(
             &mut all_tests,
-            &related_tests::ExportedClasses::from_owners(&all_owners),
+            &exported_classes,
+            alias_map_ref,
+            Some(&options.root),
+        );
+        // A named import of a class its module does not export under that
+        // name binds `undefined`, so it names no class (#16493).
+        reexport_index.drop_unexported_class_imports(
+            &mut all_tests,
+            &exported_classes,
             alias_map_ref,
             Some(&options.root),
         );
