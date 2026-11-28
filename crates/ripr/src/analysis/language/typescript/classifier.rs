@@ -3764,12 +3764,27 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         }
         let observed_text = rewrite_inline_new_receivers(written_observed, inline_new_constructors);
         let observed = observed_text.as_ref();
-        let mut argument_lists = owner_call_arguments(observed, &owner.name, &witness_receivers);
+        let mut argument_lists = owner_call_arguments(observed, &owner.name, &owner_receivers);
         // #16458: when the asserted value is one whole owner call, only its
         // own arguments count. A nested `owner(90, owner(100))` asserts the
         // outer result, which the inner call's boundary input need not move.
-        if observed_is_one_owner_call_spelling(observed, &owner.name, &witness_receivers) {
+        if observed_is_one_owner_call_spelling(observed, &owner.name, &owner_receivers) {
             argument_lists.truncate(1);
+        }
+        // #16482: a method receiver witnesses only when the asserted value is
+        // the whole method call (`expect(cart.discount(100))`), as a renamed
+        // import does below. A comparison (`cart.discount(100) > 0`), an
+        // arithmetic wrapper or a call spelled only in a comment can map both
+        // sides of the boundary to one passing value. Only the outer call's
+        // arguments count.
+        if witness_receivers.len() > owner_receivers.len()
+            && observed_is_one_owner_call_spelling(observed, &owner.name, &witness_receivers)
+            && let Some(outer_method_arguments) =
+                owner_call_arguments(observed, &owner.name, &witness_receivers)
+                    .into_iter()
+                    .next()
+        {
+            argument_lists = vec![outer_method_arguments];
         }
         // A renamed import witnesses only when the asserted value is the
         // whole alias call (`expect(d(100))`): a wrapper such as

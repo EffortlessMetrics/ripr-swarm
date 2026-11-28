@@ -30,7 +30,7 @@ pub(super) fn rewrite_inline_new_receivers<'a>(
     if constructors.is_empty() || !observed.contains("new") {
         return Cow::Borrowed(observed);
     }
-    let mut out = String::new();
+    let mut out = String::with_capacity(observed.len());
     let mut copied = 0;
     let mut search = 0;
     while let Some(found) = observed[search..].find("new") {

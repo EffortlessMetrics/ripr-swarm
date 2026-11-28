@@ -3894,8 +3894,13 @@ pub(crate) fn method_call_receivers(
         OwnerKind::Method => {
             let constructors =
                 constructor_names_for_method_owner(test, owner, alias_map, workspace_root);
+            // A name declared more than once in the body (`const cart = new
+            // Cart()`, then `{ const cart = new Other(); ... }`) may name a
+            // different object at the asserted call, so it witnesses nothing.
+            let mut bound = constructed_method_receivers(test, &constructors);
+            bound.retain(|name| body_declaration_count(&test.body_text, name) <= 1);
             Some(MethodCallReceivers {
-                bound: constructed_method_receivers(test, &constructors),
+                bound,
                 constructors,
             })
         }
@@ -3905,6 +3910,35 @@ pub(crate) fn method_call_receivers(
         }),
         _ => None,
     }
+}
+
+/// How many `const`, `let` or `var` declarations of `name` the body text
+/// spells. Comments and strings are not masked, so a spelling there only
+/// raises the count, which can only withhold a witness.
+fn body_declaration_count(body: &str, name: &str) -> usize {
+    ["const", "let", "var"]
+        .iter()
+        .map(|keyword| {
+            body.match_indices(keyword)
+                .filter(|(at, _)| {
+                    let starts_word = body[..*at]
+                        .chars()
+                        .next_back()
+                        .is_none_or(|ch| !is_javascript_identifier_char(ch));
+                    let rest = &body[at + keyword.len()..];
+                    let declared = rest.trim_start();
+                    starts_word
+                        && declared.len() < rest.len()
+                        && declared.strip_prefix(name).is_some_and(|after| {
+                            after
+                                .chars()
+                                .next()
+                                .is_none_or(|ch| !is_javascript_identifier_char(ch))
+                        })
+                })
+                .count()
+        })
+        .sum()
 }
 
 /// Getter owner (#13592-B4) observed only as a literal key of a property

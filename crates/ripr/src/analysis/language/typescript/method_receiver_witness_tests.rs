@@ -190,6 +190,17 @@ fn a_method_receiver_keeps_the_boundary_guards() -> Result<(), String> {
             "nested call",
             "  const c = new Cart();\n  expect(c.discount(90 + 0 * c.discount(100))).toBe(90);",
         ),
+        // The asserted value must be the whole method call: a comparison or
+        // an arithmetic wrapper can map both sides of the boundary to one
+        // passing value, and a call spelled in a comment is not a call.
+        (
+            "comparison",
+            "  const c = new Cart();\n  expect(c.discount(100) > 0).toBe(true);",
+        ),
+        (
+            "call in a comment",
+            "  expect(new Cart().discount(50) /* new Cart().discount(100) */ + 40).toBe(90);",
+        ),
         (
             "unrelated receiver",
             "  const c = new Cart();\n  c.discount(1);\n  const o = { discount: (_n: number) => 90 };\n  expect(o.discount(100)).toBe(90);",
@@ -208,6 +219,18 @@ fn a_method_receiver_keeps_the_boundary_guards() -> Result<(), String> {
         other_class.activation,
         A::Witnessed,
         "a same-named method of another class"
+    );
+    // The block-local `cart` is another object at the asserted call.
+    let shadowed_receiver = related(
+        &[("src/other.ts", OTHER_SOURCE)],
+        "import { Cart } from '../src/cart';\nimport { Other } from '../src/other';",
+        "  const cart = new Cart();\n  cart.discount(50);\n  {\n    const cart = new Other();\n    expect(cart.discount(100)).toBe(90);\n  }",
+        "shadowed receiver",
+    )?;
+    assert_ne!(
+        shadowed_receiver.activation,
+        A::Witnessed,
+        "a receiver name declared twice"
     );
     Ok(())
 }
